@@ -75,6 +75,13 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Docker container** for CI/CD pipelines
 - **CLI scriptable** — all features accessible from command line
 
+### Mastering & Compliance
+- **DCDM creation** — Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
+- **Forensic watermarking** — NexGuard, Civolution, or internal spatial watermark
+- **Trailer packaging** — ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders
+- **Content version tracker** — SQLite database of which version delivered where and when
+- **Accessibility compliance** — verify AD/HI/SL tracks against CVAA, EAA, AODA, Ofcom standards
+
 ## Installation
 
 ### Prerequisites
@@ -258,6 +265,11 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Desktop GUI | ✅ (Tauri) | ✅ (native) |
 | REST API / Docker | ✅ | ❌ |
 | Watch folder automation | ✅ | ❌ |
+| Forensic watermarking | ✅ | ❌ |
+| DCDM intermediate format | ✅ | ❌ |
+| Trailer packaging (ratings/leaders) | ✅ | ❌ |
+| Content version tracking | ✅ | ❌ |
+| Accessibility compliance (CVAA/EAA) | ✅ | ❌ |
 | Open source | ✅ (GPL-3.0) | ❌ |
 | **Price** | **Free** | **€2,998 or €138/mo** |
 
