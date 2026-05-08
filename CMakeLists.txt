@@ -69,6 +69,7 @@ add_library(dcpwizard_core STATIC
     src/report.cpp
     src/info.cpp
     src/profiles.cpp
+    src/preferences.cpp
     src/watch.cpp
     src/shell_completion.cpp
     src/geometry.cpp
