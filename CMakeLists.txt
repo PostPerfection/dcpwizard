@@ -70,7 +70,16 @@ add_library(dcpwizard_core STATIC
     src/info.cpp
     src/profiles.cpp
     src/watch.cpp
-    src/shell_completion.cpp)
+    src/shell_completion.cpp
+    src/geometry.cpp
+    src/import.cpp
+    src/j2k_transcode.cpp
+    src/multi_cpl.cpp
+    src/dtsx.cpp
+    src/hfr.cpp
+    src/kdm_advanced.cpp
+    src/export.cpp
+    src/qc.cpp)
 
 target_include_directories(dcpwizard_core PUBLIC
     ${CMAKE_SOURCE_DIR}/include

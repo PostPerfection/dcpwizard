@@ -27,6 +27,7 @@ struct DCPConfig
   Resolution resolution = Resolution::TwoK;
   uint32_t frame_rate_num = 24;
   uint32_t frame_rate_den = 1;
+  uint32_t max_bitrate_mbps = 250;  // up to 500 for HBR
   bool encrypt = false;
   bool stereo_3d = false;
   std::filesystem::path output_dir;
