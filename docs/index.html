@@ -324,6 +324,7 @@
         </a>
         <ul class="nav-links">
             <li><a href="#features">Features</a></li>
+            <li><a href="#comparison">vs easyDCP</a></li>
             <li><a href="#install">Install</a></li>
             <li><a href="#usage">Usage</a></li>
             <li><a href="https://github.com/DcpDoctor/dcpwizard">GitHub</a></li>
@@ -501,6 +502,84 @@
 
 <span class="comment"># Start REST API for headless operation</span>
 <span class="cmd">dcpwizard</span> serve <span class="flag">--port</span> <span class="val">8080</span></code></div>
+</section>
+
+<section class="section" id="comparison">
+    <h2 class="section-title">Comparison</h2>
+    <p class="section-subtitle">How DCP Wizard stacks up against easyDCP Creator+ (€2,998 perpetual / €138/month).</p>
+
+    <style>
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 2rem;
+            font-size: 0.9rem;
+        }
+        .comparison-table th, .comparison-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        .comparison-table th {
+            color: var(--text-primary);
+            font-weight: 600;
+            background: var(--bg-secondary);
+            position: sticky;
+            top: 60px;
+        }
+        .comparison-table td:first-child { color: var(--text-secondary); }
+        .comparison-table .yes { color: var(--green); font-weight: 600; text-align: center; }
+        .comparison-table .no { color: var(--rose); font-weight: 600; text-align: center; }
+        .comparison-table tr:hover { background: var(--bg-card); }
+    </style>
+
+    <table class="comparison-table">
+        <thead>
+            <tr><th>Feature</th><th style="text-align:center;">DCP Wizard</th><th style="text-align:center;">easyDCP Creator+</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>SMPTE Bv2.1 &amp; Interop</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Version Files (VF)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Multi-CPL timeline</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>2K &amp; 4K resolution</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>HFR up to 120fps</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>High Bitrate (500 Mbps)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Stereoscopic 3D</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DPX/TIFF/PNG/EXR/BMP/J2K input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>QuickTime/MXF/MP4 import</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Scale / Crop / Letterbox</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>J2K Transcoder</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Colour conversion (Rec.709/P3/XYZ)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Audio 2.0–7.1</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Dolby Atmos (IAB)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DTS:X</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>SRT → SMPTE subtitles</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Multilingual CineCanvas</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Subtitle burn-in</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>AES-128 encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>KDM (Interop + SMPTE + Atmos)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DKDM &amp; Trusted Devices</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Integrated QC</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>CLI scriptable</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Desktop GUI</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DCP Export / Frame extraction</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Loudness measurement (R128)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td colspan="3" style="color:var(--accent);font-weight:600;padding-top:20px;">DCP Wizard exclusive</td></tr>
+            <tr><td>REST API / Docker</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Watch folder automation</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Camera ingest (ARRI, RED, Sony, Canon)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>EDL/AAF conform</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Dolby Vision / HDR metadata</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Frame-accurate preview</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Analytics dashboard / Prometheus</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Python bindings (SWIG)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Shell completion (bash/zsh/fish)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Portable / USB deployment</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>X.509 certificate management</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Open source (GPL-3.0)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td><strong>Price</strong></td><td class="yes"><strong>Free</strong></td><td class="no"><strong>€2,998</strong></td></tr>
+        </tbody>
+    </table>
 </section>
 
 <footer>
