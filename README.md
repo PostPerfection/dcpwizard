@@ -86,6 +86,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 | libxml2 | Yes | XML processing |
 | OpenSSL | Yes | Cryptography (encryption, hashing, KDM) |
 | Xerces-C | Yes | XML Schema validation |
+| SQLite3 | Yes | Caching and metadata storage |
 | ffmpeg | Optional | Video transcoding and import |
 | grok | Optional | Fast JPEG 2000 encoding (GPU-capable) |
 | OpenJPEG | Optional | JPEG 2000 encoding (fallback) |
@@ -100,7 +101,7 @@ sudo apt-get update
 sudo apt-get install -y \
     cmake ninja-build pkg-config \
     libxml2-dev libssl-dev libxerces-c-dev \
-    ffmpeg
+    libsqlite3-dev ffmpeg
 
 # Clone and build
 git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
@@ -119,7 +120,7 @@ sudo cmake --install build
 
 ```bash
 # Install dependencies
-brew install cmake ninja pkg-config libxml2 openssl@3 xerces-c ffmpeg
+brew install cmake ninja pkg-config libxml2 openssl@3 xerces-c sqlite ffmpeg
 
 # Clone and build
 git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
@@ -138,7 +139,7 @@ cd build && ctest --output-on-failure
 
 ```powershell
 # Install dependencies via vcpkg
-vcpkg install libxml2 openssl xerces-c --triplet x64-windows
+vcpkg install libxml2 openssl xerces-c sqlite3 --triplet x64-windows
 
 # Clone and build
 git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
