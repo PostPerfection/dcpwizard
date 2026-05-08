@@ -38,7 +38,8 @@ jobs:
             pkg-config \
             libxml2-dev \
             libssl-dev \
-            libxerces-c-dev
+            libxerces-c-dev \
+            libsqlite3-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -49,13 +50,14 @@ jobs:
             pkg-config \
             libxml2 \
             openssl@3 \
-            xerces-c
+            xerces-c \
+            sqlite
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
           $env:VCPKG_BUILD_TYPE="release"
-          vcpkg install libxml2 openssl xerces-c --triplet x64-windows
+          vcpkg install libxml2 openssl xerces-c sqlite3 --triplet x64-windows
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
