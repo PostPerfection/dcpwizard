@@ -40,6 +40,9 @@ add_subdirectory(extern/asdcplib EXCLUDE_FROM_ALL)
 # dcpdoctor (validation/QC library)
 add_subdirectory(extern/dcpdoctor EXCLUDE_FROM_ALL)
 
+# postkit (common post-production library)
+add_subdirectory(extern/postkit EXCLUDE_FROM_ALL)
+
 # Core library
 add_library(dcpwizard_core STATIC
     src/dcp.cpp
@@ -96,6 +99,7 @@ if(WIN32)
         libasdcp
         libkumu
         dcpdoctor_core
+        postkit_core
         ws2_32)
 else()
     target_link_libraries(dcpwizard_core PUBLIC
@@ -105,7 +109,8 @@ else()
         spdlog::spdlog
         libasdcp
         libkumu
-        dcpdoctor_core)
+        dcpdoctor_core
+        postkit_core)
 endif()
 
 # CLI tool
