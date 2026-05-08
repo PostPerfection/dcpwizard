@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DCP Wizard</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="drop-overlay" class="drop-overlay" hidden>
+    <div class="drop-content">
+      <span class="drop-icon">📂</span>
+      <span>Drop files here to import</span>
+    </div>
+  </div>
+  <div id="app">
+    <header>
+      <h1>DCP Wizard</h1>
+      <p class="subtitle">Digital Cinema Package Creator</p>
+    </header>
+
+    <div id="recent-projects" class="recent-bar" style="display:none;">
+      <span class="recent-label">Recent:</span>
+      <div id="recent-list" class="recent-list"></div>
+    </div>
+
+    <nav class="nav-tabs">
+      <button class="active" data-page="create-page">Create</button>
+      <button data-page="encode-page">Encode</button>
+      <button data-page="transcode-page">Transcode</button>
+      <button data-page="subtitle-page">Subtitles</button>
+      <button data-page="audio-page">Audio</button>
+      <button data-page="encrypt-page">Encrypt</button>
+      <button data-page="kdm-page">KDM</button>
+      <button data-page="verify-page">Verify</button>
+      <button data-page="copy-page">Copy</button>
+      <button data-page="loudness-page">Loudness</button>
+      <button data-page="report-page">Report</button>
+      <button data-page="jobs-page">Jobs</button>
+      <span class="nav-spacer"></span>
+      <button id="shortcuts-btn" title="Keyboard shortcuts">⌨️</button>
+      <button id="theme-toggle" title="Toggle dark/light theme">🌙</button>
+    </nav>
+
+    <main>
+      <section class="page active" id="create-page">
+        <section class="panel">
+          <h2>Create DCP</h2>
+          <form id="create-form">
+            <div class="field">
+              <label for="preset">Delivery Profile</label>
+              <select id="preset">
+                <option value="custom">Custom</option>
+                <option value="cinema2k">Cinema 2K (SMPTE)</option>
+                <option value="cinema4k">Cinema 4K (SMPTE)</option>
+                <option value="cinema2k_encrypted">Cinema 2K Encrypted</option>
+                <option value="interop">Interop 2K</option>
+                <option value="trailer">Trailer</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="title">Title</label>
+              <input id="title" type="text" placeholder="My Feature Film" />
+            </div>
+            <div class="field">
+              <label for="video-input">Video / Image Sequence</label>
+              <button type="button" id="browse-video">Browse…</button>
+              <span id="video-path" class="path-display">No folder selected</span>
+            </div>
+            <div class="field">
+              <label for="audio-input">Audio (WAV)</label>
+              <button type="button" id="browse-audio">Browse…</button>
+              <span id="audio-path" class="path-display">No file selected</span>
+            </div>
+            <div class="field">
+              <label for="output-dir">Output Directory</label>
+              <button type="button" id="browse-output">Browse…</button>
+              <span id="output-path" class="path-display">No folder selected</span>
+            </div>
+            <div class="field">
+              <label for="standard">Standard</label>
+              <select id="standard">
+                <option value="smpte">SMPTE</option>
+                <option value="interop">Interop</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="resolution">Resolution</label>
+              <select id="resolution">
+                <option value="2k">2K (2048×1080)</option>
+                <option value="4k">4K (4096×2160)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="frame-rate">Frame Rate</label>
+              <select id="frame-rate">
+                <option value="24">24 fps</option>
+                <option value="25">25 fps</option>
+                <option value="30">30 fps</option>
+                <option value="48">48 fps (HFR)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="encrypt-check" /> Encrypt</label>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="stereo3d-check" /> Stereoscopic 3D</label>
+            </div>
+            <button type="submit" class="btn-primary">Create DCP</button>
+          </form>
+        </section>
+      </section>
+
+      <section class="page" id="verify-page">
+        <section class="panel">
+          <h2>Verify DCP</h2>
+          <p>Validate an existing DCP using dcpdoctor.</p>
+          <button type="button" id="browse-verify">Select DCP folder…</button>
+          <span id="verify-path" class="path-display">No folder selected</span>
+          <button type="button" id="run-verify" class="btn-primary" disabled>Verify</button>
+          <div id="verify-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="jobs-page">
+        <section class="panel">
+          <h2>Job Queue</h2>
+          <div id="job-list" class="job-list">
+            <p class="empty-state">No jobs running</p>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

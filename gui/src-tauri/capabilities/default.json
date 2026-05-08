@@ -1,0 +1,47 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for DCP Wizard",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "dcpwizard",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "dcpwizard",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill",
+    "dialog:allow-open",
+    "notification:default",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "/tmp/**" },
+        { "path": "$TEMP/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "/tmp/**" },
+        { "path": "$TEMP/**" }
+      ]
+    }
+  ]
+}

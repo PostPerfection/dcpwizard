@@ -1,0 +1,44 @@
+app-id: com.dcpwizard.desktop
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: dcpwizard-gui
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --filesystem=/tmp
+  - --share=network
+
+modules:
+  - name: openjpeg
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: archive
+        url: https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.2.tar.gz
+        sha256: FIXME
+
+  - name: asdcplib
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: archive
+        url: https://github.com/cinecert/asdcplib/archive/refs/tags/rel_2_13_3.tar.gz
+        sha256: FIXME
+
+  - name: dcpwizard
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: dir
+        path: .
