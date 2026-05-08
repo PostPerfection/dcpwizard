@@ -261,6 +261,30 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Open source | ✅ (GPL-3.0) | ❌ |
 | **Price** | **Free** | **€2,998 or €138/mo** |
 
+## Architecture
+
+```
+dcpwizard/
+├── include/dcpwizard/   # Public headers
+├── src/                 # Core library + CLI
+├── tests/               # Unit + integration tests
+├── gui/                 # Tauri 2 desktop application
+│   ├── src/             # Frontend (Vite + vanilla JS)
+│   └── src-tauri/       # Rust backend (plugin shell)
+├── bindings/python/     # SWIG Python bindings
+├── docs/                # GitHub Pages site
+└── extern/              # Git submodules
+    ├── asdcplib/        # AS-DCP MXF library (BSD)
+    ├── CLI11/           # CLI parsing (BSD)
+    ├── dcpdoctor/       # DCP/IMF validation & QC
+    ├── postkit/         # Shared post-production library
+    └── spdlog/          # Logging (MIT)
+```
+
+DCP Wizard shares common functionality with [IMF Wizard](https://github.com/DcpDoctor/imfwizard)
+via the [postkit](https://github.com/DcpDoctor/postkit) library (encoding, transcoding, hashing,
+job queue, preferences, REST API, watch folders, and more).
+
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE).
