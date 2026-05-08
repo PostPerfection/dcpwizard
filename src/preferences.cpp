@@ -1,4 +1,5 @@
 #include "dcpwizard/preferences.h"
+#include "postkit/preferences.h"
 
 #include <spdlog/spdlog.h>
 
@@ -6,8 +7,35 @@
 #include <fstream>
 #include <sstream>
 
+// Current preferences schema version.
+// Bump this and add a migration when adding new fields.
+static constexpr uint32_t CURRENT_PREFS_VERSION = 1;
+
+// Migrations: each upgrades from (version-1) to version.
+static std::vector<postkit::PrefsMigration> migrations()
+{
+  return {
+    {1, "Initial versioned schema", [](std::string const& json) {
+      // Version 1: ensure all baseline fields exist with defaults
+      auto j = postkit::json_insert_if_missing(json, "default_standard", "\"SMPTE\"");
+      j = postkit::json_insert_if_missing(j, "default_resolution", "\"2K\"");
+      j = postkit::json_insert_if_missing(j, "default_frame_rate", "24");
+      j = postkit::json_insert_if_missing(j, "preferred_encoder", "\"grok\"");
+      j = postkit::json_insert_if_missing(j, "default_bandwidth_mbps", "250");
+      j = postkit::json_insert_if_missing(j, "default_colour_space", "\"Rec.709\"");
+      j = postkit::json_insert_if_missing(j, "gpu_device", "-1");
+      j = postkit::json_insert_if_missing(j, "kdm_annotation_pattern", "\"%t_%d\"");
+      j = postkit::json_insert_if_missing(j, "kdm_validity_hours", "168");
+      j = postkit::json_insert_if_missing(j, "default_channel_config", "\"5.1\"");
+      j = postkit::json_insert_if_missing(j, "loudness_target_lufs", "-24.0");
+      j = postkit::json_insert_if_missing(j, "theme", "\"dark\"");
+      j = postkit::json_insert_if_missing(j, "show_advanced_options", "false");
+      return j;
+    }},
+  };
+}
+
 // Minimal JSON read/write without external dependency.
-// Uses a simple key-value approach for flat + array fields.
 
 namespace dcpwizard
 {
@@ -101,6 +129,22 @@ Preferences load_preferences()
   std::ostringstream ss;
   ss << f.rdbuf();
   std::string json = ss.str();
+  f.close();
+
+  // Run schema migrations if needed
+  uint32_t file_version = postkit::prefs_version(json);
+  if (file_version < CURRENT_PREFS_VERSION)
+  {
+    spdlog::info("Migrating preferences from version {} to {}", file_version, CURRENT_PREFS_VERSION);
+    json = postkit::migrate_preferences(json, migrations());
+    // Re-save migrated prefs
+    std::ofstream out(path);
+    if (out.is_open())
+    {
+      out << json;
+      out.close();
+    }
+  }
 
   auto s = [&](const std::string& key, std::string& field) {
     auto v = json_string(json, key);
@@ -157,6 +201,7 @@ int save_preferences(const Preferences& prefs)
   }
 
   f << "{\n";
+  f << "  \"version\": " << CURRENT_PREFS_VERSION << ",\n";
   f << "  \"default_standard\": \"" << escape_json(prefs.default_standard) << "\",\n";
   f << "  \"default_resolution\": \"" << escape_json(prefs.default_resolution) << "\",\n";
   f << "  \"default_frame_rate\": " << prefs.default_frame_rate << ",\n";
