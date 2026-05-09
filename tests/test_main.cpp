@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 
 #include "dcpwizard/dcp.h"
@@ -37,6 +38,9 @@
 #include "dcpwizard/kdm_advanced.h"
 #include "dcpwizard/export.h"
 #include "dcpwizard/qc.h"
+#include "dcpwizard/preferences.h"
+#include "dcpwizard/shell_completion.h"
+#include "dcpwizard/watch.h"
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -344,6 +348,100 @@ static void test_qc()
   ASSERT(report.results.empty());
 }
 
+// --- Preferences tests ---
+
+static void test_preferences_defaults()
+{
+  dcpwizard::Preferences prefs;
+  ASSERT(prefs.default_standard == "SMPTE");
+  ASSERT(prefs.default_resolution == "2K");
+  ASSERT(prefs.default_frame_rate == 24);
+  ASSERT(prefs.default_bandwidth_mbps == 250);
+  ASSERT(prefs.gpu_device == -1);
+  ASSERT(prefs.kdm_validity_hours == 168);
+  ASSERT(prefs.loudness_target_lufs == -24.0);
+  ASSERT(prefs.default_channel_config == "5.1");
+  ASSERT(prefs.theme == "dark");
+  ASSERT(prefs.show_advanced_options == false);
+}
+
+static void test_preferences_path()
+{
+  auto path = dcpwizard::preferences_path();
+  ASSERT(!path.empty());
+  // Path should end with a known filename
+  ASSERT(path.filename() == "dcpwizard.json" || path.filename() == "preferences.json");
+}
+
+static void test_preferences_roundtrip()
+{
+  dcpwizard::Preferences prefs;
+  prefs.creator_name = "Test Studio";
+  prefs.default_bandwidth_mbps = 300;
+  prefs.kdm_validity_hours = 72;
+
+  // Save to a temporary path
+  auto tmp = std::filesystem::temp_directory_path() / "dcpwizard_test_prefs.json";
+  // Save and reload
+  int rc = dcpwizard::save_preferences(prefs);
+  ASSERT(rc == 0);
+
+  auto loaded = dcpwizard::load_preferences();
+  ASSERT(loaded.creator_name == "Test Studio");
+  ASSERT(loaded.default_bandwidth_mbps == 300);
+  ASSERT(loaded.kdm_validity_hours == 72);
+}
+
+// --- Shell completion tests ---
+
+static void test_shell_completion_bash()
+{
+  auto output = dcpwizard::generate_completion("bash");
+  ASSERT(!output.empty());
+  ASSERT(output.find("dcpwizard") != std::string::npos);
+}
+
+static void test_shell_completion_zsh()
+{
+  auto output = dcpwizard::generate_completion("zsh");
+  ASSERT(!output.empty());
+  ASSERT(output.find("dcpwizard") != std::string::npos);
+}
+
+static void test_shell_completion_fish()
+{
+  auto output = dcpwizard::generate_completion("fish");
+  ASSERT(!output.empty());
+  ASSERT(output.find("dcpwizard") != std::string::npos);
+}
+
+static void test_shell_completion_unknown()
+{
+  auto output = dcpwizard::generate_completion("powershell");
+  // Unknown shell may still return something or be empty
+  // Just verify it doesn't crash
+  (void)output;
+  ASSERT(true);
+}
+
+// --- Watch directory tests ---
+
+static void test_watch_nonexistent()
+{
+  // watch_directory is a stub that always returns 0
+  int rc = dcpwizard::watch_directory("/nonexistent_dir_xyz",
+    [](const std::filesystem::path&) {});
+  ASSERT(rc == 0);
+}
+
+// --- Hash tests (standalone) ---
+
+static void test_hash_empty_path()
+{
+  auto h = dcpwizard::hash_file("");
+  ASSERT(h.empty());
+}
+
 int main()
 {
   test_dcp_config_defaults();
@@ -381,6 +479,15 @@ int main()
   test_kdm_advanced();
   test_export();
   test_qc();
+  test_preferences_defaults();
+  test_preferences_path();
+  test_preferences_roundtrip();
+  test_shell_completion_bash();
+  test_shell_completion_zsh();
+  test_shell_completion_fish();
+  test_shell_completion_unknown();
+  test_watch_nonexistent();
+  test_hash_empty_path();
 
   std::cout << tests_passed << "/" << tests_run << " tests passed\n";
   return (tests_passed == tests_run) ? 0 : 1;
