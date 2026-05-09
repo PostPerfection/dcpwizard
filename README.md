@@ -1,5 +1,9 @@
 # DCP Wizard
 
+[![CI](https://github.com/PostPerfection/dcpwizard/actions/workflows/ci.yml/badge.svg)](https://github.com/PostPerfection/dcpwizard/actions/workflows/ci.yml)
+
+[Documentation](https://postperfection.github.io/dcpwizard/)
+
 Digital Cinema Package (DCP) creator — CLI tool and desktop GUI.
 
 ## Overview
