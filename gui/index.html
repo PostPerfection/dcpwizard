@@ -107,7 +107,7 @@
             <div class="field">
               <label><input type="checkbox" id="stereo3d-check" /> Stereoscopic 3D</label>
             </div>
-            <button type="submit" class="btn-primary">Create DCP</button>
+            <button type="submit" id="create-form-btn" class="btn-primary" disabled>Create DCP</button>
           </form>
         </section>
       </section>
@@ -156,7 +156,7 @@
               <option value="48">48 fps (HFR)</option>
             </select>
           </div>
-          <button type="button" id="run-encode" class="btn-primary">Encode</button>
+          <button type="button" id="run-encode" class="btn-primary" disabled>Encode</button>
           <div id="encode-results" class="results-box"></div>
         </section>
       </section>
@@ -184,7 +184,7 @@
               <option value="png">PNG</option>
             </select>
           </div>
-          <button type="button" id="run-transcode" class="btn-primary">Transcode</button>
+          <button type="button" id="run-transcode" class="btn-primary" disabled>Transcode</button>
           <div id="transcode-results" class="results-box"></div>
         </section>
       </section>
@@ -243,7 +243,7 @@
             <button type="button" id="crypt-browse-cert">Browse…</button>
             <span id="crypt-cert-path" class="path-display">No file selected</span>
           </div>
-          <button type="button" id="run-encrypt" class="btn-primary">Encrypt</button>
+          <button type="button" id="run-encrypt" class="btn-primary" disabled>Encrypt</button>
           <div id="encrypt-results" class="results-box"></div>
         </section>
       </section>
@@ -275,7 +275,7 @@
             <button type="button" id="kdm-browse-output">Browse…</button>
             <span id="kdm-output-path" class="path-display">No folder selected</span>
           </div>
-          <button type="button" id="run-kdm" class="btn-primary">Generate KDM</button>
+          <button type="button" id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
           <div id="kdm-results" class="results-box"></div>
         </section>
       </section>
@@ -297,7 +297,7 @@
           <div class="field">
             <label><input type="checkbox" id="copy-verify" checked /> Verify after copy</label>
           </div>
-          <button type="button" id="run-copy" class="btn-primary">Copy DCP</button>
+          <button type="button" id="run-copy" class="btn-primary" disabled>Copy DCP</button>
           <div id="copy-results" class="results-box"></div>
         </section>
       </section>
@@ -311,7 +311,7 @@
             <button type="button" id="loud-browse-input">Browse…</button>
             <span id="loud-input-path" class="path-display">No file selected</span>
           </div>
-          <button type="button" id="run-loudness" class="btn-primary">Measure</button>
+          <button type="button" id="run-loudness" class="btn-primary" disabled>Measure</button>
           <div id="loudness-results" class="results-box"></div>
         </section>
       </section>
@@ -333,7 +333,7 @@
               <option value="pdf">PDF</option>
             </select>
           </div>
-          <button type="button" id="run-report" class="btn-primary">Generate Report</button>
+          <button type="button" id="run-report" class="btn-primary" disabled>Generate Report</button>
           <div id="report-results" class="results-box"></div>
         </section>
       </section>
