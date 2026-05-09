@@ -1,11 +1,25 @@
 """CLI integration tests for dcpwizard."""
 
+import os
 import subprocess
 import sys
 
+
+def _find_exe():
+    """Locate the dcpwizard executable in the build tree."""
+    name = "dcpwizard.exe" if os.name == "nt" else "dcpwizard"
+    # Multi-config generators (Visual Studio) put binaries under Release/Debug
+    for subdir in [".", "Release", "Debug", "RelWithDebInfo", "MinSizeRel"]:
+        candidate = os.path.join(subdir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    # Fallback — let the OS resolve it
+    return name
+
+
 def run(args):
     result = subprocess.run(
-        ["./dcpwizard"] + args,
+        [_find_exe()] + args,
         capture_output=True, text=True, timeout=30
     )
     return result
