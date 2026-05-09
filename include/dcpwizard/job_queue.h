@@ -65,4 +65,16 @@ std::optional<Job> get_job(uint64_t job_id);
 /// List all jobs.
 std::vector<Job> list_jobs();
 
+/// Convert JobType to string.
+std::string job_type_to_string(JobType type);
+
+/// Convert string to JobType.
+JobType job_type_from_string(const std::string& s);
+
+/// Convert JobState to string.
+std::string job_state_to_string(JobState state);
+
+/// Convert string to JobState.
+JobState job_state_from_string(const std::string& s);
+
 } // namespace dcpwizard

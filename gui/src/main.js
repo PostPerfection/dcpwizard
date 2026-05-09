@@ -160,3 +160,106 @@ document.getElementById("run-verify")?.addEventListener("click", async () => {
     box.innerHTML = `<p class="fail">❌ Verification failed</p><pre>${result.stderr}</pre>`;
   }
 });
+
+// === Jobs page ===
+let jobsPollInterval = null;
+
+async function refreshJobs() {
+  const statusBadge = document.getElementById("jobs-daemon-status");
+  try {
+    const ping = Command.sidecar("dcpwizard", ["batch", "list"]);
+    const result = await ping.execute();
+    if (result.code !== 0) {
+      statusBadge.textContent = "Daemon offline";
+      statusBadge.className = "status-badge offline";
+      document.getElementById("jobs-tbody").innerHTML =
+        '<tr><td colspan="6" style="text-align:center">Daemon not running</td></tr>';
+      return;
+    }
+    statusBadge.textContent = "Daemon online";
+    statusBadge.className = "status-badge online";
+
+    const lines = result.stdout.trim().split("\n");
+    const tbody = document.getElementById("jobs-tbody");
+
+    if (lines.length <= 1 || lines[0].startsWith("No jobs")) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No jobs in queue</td></tr>';
+      return;
+    }
+
+    const jobLines = lines.slice(2).filter(l => l.trim());
+    tbody.innerHTML = jobLines.map(line => {
+      const parts = line.trim().split(/\s+/);
+      const id = parts[0];
+      const state = parts[1];
+      const progress = parts[2];
+      const type = parts[3];
+      const desc = parts.slice(4).join(" ");
+      const cancelBtn = (state === "queued" || state === "running")
+        ? `<button class="btn-cancel" data-job-id="${id}">Cancel</button>`
+        : "";
+      const stateClass = `state-${state}`;
+      return `<tr>
+        <td>${id}</td>
+        <td>${type}</td>
+        <td>${desc}</td>
+        <td><span class="${stateClass}">${state}</span></td>
+        <td>${progress}</td>
+        <td>${cancelBtn}</td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll(".btn-cancel").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const jobId = btn.dataset.jobId;
+        await Command.sidecar("dcpwizard", ["batch", "cancel", jobId]).execute();
+        refreshJobs();
+      });
+    });
+  } catch (err) {
+    statusBadge.textContent = "Error";
+    statusBadge.className = "status-badge offline";
+    document.getElementById("jobs-tbody").innerHTML =
+      `<tr><td colspan="6" style="text-align:center;color:var(--accent)">${err}</td></tr>`;
+  }
+}
+
+document.getElementById("jobs-refresh")?.addEventListener("click", refreshJobs);
+
+document.getElementById("jobs-start-daemon")?.addEventListener("click", async () => {
+  Command.sidecar("dcpwizard", ["daemon"]).spawn();
+  await new Promise(r => setTimeout(r, 1500));
+  refreshJobs();
+});
+
+document.getElementById("job-submit")?.addEventListener("click", async () => {
+  const type = document.getElementById("job-type").value;
+  const desc = document.getElementById("job-desc").value;
+  const argsStr = document.getElementById("job-args").value;
+  if (!desc) { alert("Enter a description"); return; }
+  if (!argsStr) { alert("Enter arguments"); return; }
+
+  const args = ["batch", "add", "-T", type, "-d", desc, "--"].concat(argsStr.split(/\s+/));
+  const result = await Command.sidecar("dcpwizard", args).execute();
+  if (result.code === 0) {
+    document.getElementById("job-desc").value = "";
+    document.getElementById("job-args").value = "";
+    refreshJobs();
+  } else {
+    alert("Failed to submit: " + result.stderr);
+  }
+});
+
+// Auto-refresh jobs when tab is active
+document.querySelectorAll(".nav-tabs button[data-page]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.page === "jobs-page") {
+      refreshJobs();
+      if (!jobsPollInterval) {
+        jobsPollInterval = setInterval(refreshJobs, 3000);
+      }
+    } else {
+      if (jobsPollInterval) { clearInterval(jobsPollInterval); jobsPollInterval = null; }
+    }
+  });
+});

@@ -218,3 +218,66 @@ body.light .field select option {
 }
 
 .job-list .empty-state { opacity: 0.6; font-style: italic; }
+
+.jobs-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.status-badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-badge.online {
+  background: #1a7f37;
+  color: #fff;
+}
+
+.status-badge.offline {
+  background: #6e4040;
+  color: #ffb3b3;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.jobs-table th,
+.jobs-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.jobs-table th {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.state-queued { color: var(--text-muted); }
+.state-running { color: #58a6ff; }
+.state-completed { color: #3fb950; }
+.state-failed { color: #f85149; }
+.state-cancelled { color: #8b949e; }
+
+.btn-cancel {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: #f85149;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.btn-cancel:hover {
+  background: #f8514920;
+}

@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <thread>
 
 #include "dcpwizard/dcpwizard.h"
 #include "dcpwizard/encode.h"
@@ -133,6 +134,29 @@ int main(int argc, char** argv)
   std::string shell_name = "bash";
   completion_cmd->add_option("shell", shell_name, "Shell (bash|zsh|fish)");
 
+  // --- daemon ---
+  auto* daemon_cmd = app.add_subcommand("daemon", "Start job queue daemon");
+  std::string daemon_socket = "/tmp/dcpwizard.sock";
+  daemon_cmd->add_option("--socket,-s", daemon_socket, "Unix socket path");
+
+  // --- batch ---
+  auto* batch_cmd = app.add_subcommand("batch", "Manage job queue");
+  auto* batch_list_cmd = batch_cmd->add_subcommand("list", "List all jobs");
+  auto* batch_add_cmd  = batch_cmd->add_subcommand("add", "Submit a new job");
+  auto* batch_cancel_cmd = batch_cmd->add_subcommand("cancel", "Cancel a job");
+  batch_cmd->require_subcommand(1);
+
+  std::string batch_type_str = "create";
+  std::string batch_desc;
+  std::vector<std::string> batch_args;
+  uint64_t batch_cancel_id = 0;
+
+  batch_add_cmd->add_option("-T,--type", batch_type_str, "Job type")->required();
+  batch_add_cmd->add_option("-d,--desc", batch_desc, "Job description")->required();
+  batch_add_cmd->add_option("args", batch_args, "Job arguments");
+
+  batch_cancel_cmd->add_option("id", batch_cancel_id, "Job ID to cancel")->required();
+
   CLI11_PARSE(app, argc, argv);
 
   if (verbose)
@@ -232,6 +256,65 @@ int main(int argc, char** argv)
   {
     fmt::print("{}", dcpwizard::generate_completion(shell_name));
     return 0;
+  }
+
+  if (daemon_cmd->parsed())
+  {
+    spdlog::info("Starting job queue daemon (socket: {})", daemon_socket);
+    dcpwizard::start_job_queue(daemon_socket);
+    // Keep running until terminated
+    while (true)
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    dcpwizard::stop_job_queue();
+    return 0;
+  }
+
+  if (batch_cmd->parsed())
+  {
+    if (batch_list_cmd->parsed())
+    {
+      auto jobs = dcpwizard::list_jobs();
+      if (jobs.empty())
+      {
+        fmt::print("No jobs in queue\n");
+        return 0;
+      }
+      fmt::print("{:<6} {:<12} {:<10} {:<10} {}\n", "ID", "State", "Progress", "Type", "Description");
+      fmt::print("{:-<6} {:-<12} {:-<10} {:-<10} {:-<20}\n", "", "", "", "", "");
+      for (const auto& j : jobs)
+      {
+        fmt::print("{:<6} {:<12} {:<10.0f}% {:<10} {}\n",
+          j.id,
+          dcpwizard::job_state_to_string(j.state),
+          j.progress * 100.0f,
+          dcpwizard::job_type_to_string(j.type),
+          j.description);
+      }
+      return 0;
+    }
+    if (batch_add_cmd->parsed())
+    {
+      dcpwizard::Job job;
+      job.type = dcpwizard::job_type_from_string(batch_type_str);
+      job.description = batch_desc;
+      job.args = batch_args;
+      auto id = dcpwizard::submit_job(job);
+      fmt::print("Submitted job {}\n", id);
+      return 0;
+    }
+    if (batch_cancel_cmd->parsed())
+    {
+      if (dcpwizard::cancel_job(batch_cancel_id))
+      {
+        fmt::print("Cancelled job {}\n", batch_cancel_id);
+        return 0;
+      }
+      else
+      {
+        fmt::print("Could not cancel job {}\n", batch_cancel_id);
+        return 1;
+      }
+    }
   }
 
   return 0;

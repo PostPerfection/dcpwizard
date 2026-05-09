@@ -68,4 +68,56 @@ std::vector<Job> list_jobs()
   return g_jobs;
 }
 
+std::string job_type_to_string(JobType type)
+{
+  switch (type)
+  {
+    case JobType::Transcode: return "transcode";
+    case JobType::Encode:    return "encode";
+    case JobType::Create:    return "create";
+    case JobType::Validate:  return "validate";
+    case JobType::Loudness:  return "loudness";
+    case JobType::QC:        return "qc";
+    case JobType::Copy:      return "copy";
+    case JobType::KDM:       return "kdm";
+  }
+  return "unknown";
+}
+
+JobType job_type_from_string(const std::string& s)
+{
+  if (s == "transcode") return JobType::Transcode;
+  if (s == "encode")    return JobType::Encode;
+  if (s == "create")    return JobType::Create;
+  if (s == "validate")  return JobType::Validate;
+  if (s == "loudness")  return JobType::Loudness;
+  if (s == "qc")        return JobType::QC;
+  if (s == "copy")      return JobType::Copy;
+  if (s == "kdm")       return JobType::KDM;
+  return JobType::Transcode;
+}
+
+std::string job_state_to_string(JobState state)
+{
+  switch (state)
+  {
+    case JobState::Queued:    return "queued";
+    case JobState::Running:   return "running";
+    case JobState::Completed: return "completed";
+    case JobState::Failed:    return "failed";
+    case JobState::Cancelled: return "cancelled";
+  }
+  return "unknown";
+}
+
+JobState job_state_from_string(const std::string& s)
+{
+  if (s == "queued")    return JobState::Queued;
+  if (s == "running")   return JobState::Running;
+  if (s == "completed") return JobState::Completed;
+  if (s == "failed")    return JobState::Failed;
+  if (s == "cancelled") return JobState::Cancelled;
+  return JobState::Queued;
+}
+
 } // namespace dcpwizard

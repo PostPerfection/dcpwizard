@@ -341,8 +341,51 @@
       <section class="page" id="jobs-page">
         <section class="panel">
           <h2>Job Queue</h2>
-          <div id="job-list" class="job-list">
-            <p class="empty-state">No jobs running</p>
+          <div class="jobs-toolbar">
+            <button id="jobs-refresh" class="btn-secondary">Refresh</button>
+            <button id="jobs-start-daemon" class="btn-primary">Start Daemon</button>
+            <span id="jobs-daemon-status" class="status-badge">Unknown</span>
+          </div>
+          <table class="jobs-table" id="jobs-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th>State</th>
+                <th>Progress</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-tbody">
+            </tbody>
+          </table>
+          <div class="field" style="margin-top:1rem">
+            <h3>Submit New Job</h3>
+            <div class="field-row">
+              <div class="field">
+                <label for="job-type">Type</label>
+                <select id="job-type">
+                  <option value="create">Create</option>
+                  <option value="encode">Encode</option>
+                  <option value="transcode">Transcode</option>
+                  <option value="validate">Validate</option>
+                  <option value="loudness">Loudness</option>
+                  <option value="qc">QC</option>
+                  <option value="copy">Copy</option>
+                  <option value="kdm">KDM</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="job-desc">Description</label>
+                <input type="text" id="job-desc" placeholder="Job description" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="job-args">Arguments</label>
+              <input type="text" id="job-args" placeholder="e.g. create --title MyDCP --video /path --output /tmp/out" />
+            </div>
+            <button id="job-submit" class="btn-primary">Submit Job</button>
           </div>
         </section>
       </section>
