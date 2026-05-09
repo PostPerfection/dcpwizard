@@ -2,6 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { Command } from "@tauri-apps/plugin-shell";
 import { open } from "@tauri-apps/plugin-dialog";
 
+// Drop overlay
+const dropOverlay = document.getElementById("drop-overlay");
+
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  if (dropOverlay) dropOverlay.hidden = false;
+});
+
+document.addEventListener("dragleave", (e) => {
+  if (e.relatedTarget === null && dropOverlay) dropOverlay.hidden = true;
+});
+
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (dropOverlay) dropOverlay.hidden = true;
+});
+
 // Tab navigation
 document.querySelectorAll(".nav-tabs button[data-page]").forEach((btn) => {
   btn.addEventListener("click", () => {

@@ -9,7 +9,7 @@
 	url = https://github.com/gabime/spdlog.git
 [submodule "extern/dcpdoctor"]
 	path = extern/dcpdoctor
-	url = https://github.com/DcpDoctor/dcpdoctor.git
+	url = https://github.com/PostPerfection/dcpdoctor.git
 [submodule "extern/postkit"]
 	path = extern/postkit
-	url = https://github.com/DcpDoctor/postkit.git
+	url = https://github.com/PostPerfection/postkit.git

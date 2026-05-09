@@ -123,6 +123,221 @@
         </section>
       </section>
 
+      <section class="page" id="encode-page">
+        <section class="panel">
+          <h2>Encode to JPEG 2000</h2>
+          <div class="field">
+            <label>Input (image sequence folder)</label>
+            <button type="button" id="enc-browse-input">Browse…</button>
+            <span id="enc-input-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label>Output Directory</label>
+            <button type="button" id="enc-browse-output">Browse…</button>
+            <span id="enc-output-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label for="enc-resolution">Resolution</label>
+            <select id="enc-resolution">
+              <option value="2k">2K (2048×1080)</option>
+              <option value="4k">4K (4096×2160)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="enc-bandwidth">Bandwidth (Mbps)</label>
+            <input type="number" id="enc-bandwidth" value="250" min="50" max="500">
+          </div>
+          <div class="field">
+            <label for="enc-framerate">Frame Rate</label>
+            <select id="enc-framerate">
+              <option value="24">24 fps</option>
+              <option value="25">25 fps</option>
+              <option value="30">30 fps</option>
+              <option value="48">48 fps (HFR)</option>
+            </select>
+          </div>
+          <button type="button" id="run-encode" class="btn-primary">Encode</button>
+          <div id="encode-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="transcode-page">
+        <section class="panel">
+          <h2>Transcode Video</h2>
+          <p>Convert video files to image sequences for DCP encoding.</p>
+          <div class="field">
+            <label>Input Video File</label>
+            <button type="button" id="tc-browse-input">Browse…</button>
+            <span id="tc-input-path" class="path-display">No file selected</span>
+          </div>
+          <div class="field">
+            <label>Output Directory</label>
+            <button type="button" id="tc-browse-output">Browse…</button>
+            <span id="tc-output-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label for="tc-format">Format</label>
+            <select id="tc-format">
+              <option value="tiff">TIFF</option>
+              <option value="dpx">DPX</option>
+              <option value="exr">EXR</option>
+              <option value="png">PNG</option>
+            </select>
+          </div>
+          <button type="button" id="run-transcode" class="btn-primary">Transcode</button>
+          <div id="transcode-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="subtitle-page">
+        <section class="panel">
+          <h2>Subtitles</h2>
+          <p>Add subtitle tracks to your DCP.</p>
+          <div class="field">
+            <label>Subtitle File (TTML / XML)</label>
+            <button type="button" id="sub-browse-input">Browse…</button>
+            <span id="sub-input-path" class="path-display">No file selected</span>
+          </div>
+          <div class="field">
+            <label for="sub-language">Language</label>
+            <input type="text" id="sub-language" placeholder="en" maxlength="5">
+          </div>
+          <div class="field">
+            <label><input type="checkbox" id="sub-burn-in" /> Burn-in (hardcode)</label>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="audio-page">
+        <section class="panel">
+          <h2>Audio</h2>
+          <p>Configure audio channels and mapping.</p>
+          <div class="field">
+            <label>Audio File (WAV)</label>
+            <button type="button" id="aud-browse-input">Browse…</button>
+            <span id="aud-input-path" class="path-display">No file selected</span>
+          </div>
+          <div class="field">
+            <label for="aud-channels">Channel Configuration</label>
+            <select id="aud-channels">
+              <option value="mono">Mono</option>
+              <option value="stereo">Stereo</option>
+              <option value="5.1" selected>5.1</option>
+              <option value="7.1">7.1</option>
+            </select>
+          </div>
+        </section>
+      </section>
+
+      <section class="page" id="encrypt-page">
+        <section class="panel">
+          <h2>Encrypt DCP</h2>
+          <p>Encrypt an existing DCP with SMPTE encryption.</p>
+          <div class="field">
+            <label>DCP Directory</label>
+            <button type="button" id="crypt-browse-dcp">Browse…</button>
+            <span id="crypt-dcp-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label for="crypt-cert">Recipient Certificate</label>
+            <button type="button" id="crypt-browse-cert">Browse…</button>
+            <span id="crypt-cert-path" class="path-display">No file selected</span>
+          </div>
+          <button type="button" id="run-encrypt" class="btn-primary">Encrypt</button>
+          <div id="encrypt-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="kdm-page">
+        <section class="panel">
+          <h2>Generate KDM</h2>
+          <p>Create Key Delivery Messages for encrypted DCPs.</p>
+          <div class="field">
+            <label>Encrypted DCP</label>
+            <button type="button" id="kdm-browse-dcp">Browse…</button>
+            <span id="kdm-dcp-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label>Recipient Certificate</label>
+            <button type="button" id="kdm-browse-cert">Browse…</button>
+            <span id="kdm-cert-path" class="path-display">No file selected</span>
+          </div>
+          <div class="field">
+            <label for="kdm-valid-from">Valid From</label>
+            <input type="datetime-local" id="kdm-valid-from">
+          </div>
+          <div class="field">
+            <label for="kdm-valid-to">Valid To</label>
+            <input type="datetime-local" id="kdm-valid-to">
+          </div>
+          <div class="field">
+            <label>Output Directory</label>
+            <button type="button" id="kdm-browse-output">Browse…</button>
+            <span id="kdm-output-path" class="path-display">No folder selected</span>
+          </div>
+          <button type="button" id="run-kdm" class="btn-primary">Generate KDM</button>
+          <div id="kdm-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="copy-page">
+        <section class="panel">
+          <h2>Copy DCP</h2>
+          <p>Copy a DCP to an external drive with verification.</p>
+          <div class="field">
+            <label>Source DCP</label>
+            <button type="button" id="copy-browse-source">Browse…</button>
+            <span id="copy-source-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label>Destination</label>
+            <button type="button" id="copy-browse-dest">Browse…</button>
+            <span id="copy-dest-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label><input type="checkbox" id="copy-verify" checked /> Verify after copy</label>
+          </div>
+          <button type="button" id="run-copy" class="btn-primary">Copy DCP</button>
+          <div id="copy-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="loudness-page">
+        <section class="panel">
+          <h2>Loudness Measurement</h2>
+          <p>Measure audio loudness per EBU R128 / SMPTE ST 2095.</p>
+          <div class="field">
+            <label>Audio File (WAV)</label>
+            <button type="button" id="loud-browse-input">Browse…</button>
+            <span id="loud-input-path" class="path-display">No file selected</span>
+          </div>
+          <button type="button" id="run-loudness" class="btn-primary">Measure</button>
+          <div id="loudness-results" class="results-box"></div>
+        </section>
+      </section>
+
+      <section class="page" id="report-page">
+        <section class="panel">
+          <h2>QC Report</h2>
+          <p>Generate a quality-control report for an existing DCP.</p>
+          <div class="field">
+            <label>DCP Directory</label>
+            <button type="button" id="report-browse-dcp">Browse…</button>
+            <span id="report-dcp-path" class="path-display">No folder selected</span>
+          </div>
+          <div class="field">
+            <label for="report-format">Output Format</label>
+            <select id="report-format">
+              <option value="text">Plain Text</option>
+              <option value="html">HTML</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </div>
+          <button type="button" id="run-report" class="btn-primary">Generate Report</button>
+          <div id="report-results" class="results-box"></div>
+        </section>
+      </section>
+
       <section class="page" id="jobs-page">
         <section class="panel">
           <h2>Job Queue</h2>
