@@ -27,7 +27,7 @@ struct Preferences
   std::string isdcf_facility_code;               // e.g. "MST"
 
   // Encoding
-  std::string preferred_encoder = "grok";        // "grok" or "openjpeg"
+  std::string preferred_encoder = "grok";
   uint32_t default_bandwidth_mbps = 250;
   std::string default_colour_space = "Rec.709";  // "Rec.709", "P3-D65", "P3-DCI"
   int gpu_device = -1;                           // -1 = auto

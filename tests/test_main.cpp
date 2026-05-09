@@ -80,7 +80,6 @@ static void test_encode()
   config.input_dir = "/tmp";
   config.output_dir = "/tmp";
   config.bandwidth_mbps = 250;
-  ASSERT(config.encoder == dcpwizard::Encoder::OpenJPEG);
   ASSERT(dcpwizard::encode_j2k(config) == 0);
 }
 

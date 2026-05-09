@@ -7,15 +7,8 @@
 namespace dcpwizard
 {
 
-enum class Encoder
-{
-  Grok,
-  OpenJPEG
-};
-
 struct EncodeConfig
 {
-  Encoder encoder = Encoder::OpenJPEG;
   uint32_t bandwidth_mbps = 250;
   uint32_t threads = 0; // 0 = auto-detect
   std::filesystem::path input_dir;

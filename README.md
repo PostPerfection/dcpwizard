@@ -24,7 +24,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **SHA-1 hashing** for integrity verification
 
 ### Encoding & Transcoding
-- **JPEG 2000 encoding** via grok or OpenJPEG
+- **JPEG 2000 encoding** via grok (GPU and CPU)
 - **Video file import** — QuickTime (.mov), MP4, MXF, AVI, MKV, MJ2
 - **Video transcoding** — ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
 - **Image sequence input** — DPX, TIFF, EXR, PNG, BMP, JPEG
@@ -95,8 +95,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 | Xerces-C | Yes | XML Schema validation |
 | SQLite3 | Yes | Caching and metadata storage |
 | ffmpeg | Optional | Video transcoding and import |
-| grok | Optional | Fast JPEG 2000 encoding (GPU-capable) |
-| OpenJPEG | Optional | JPEG 2000 encoding (fallback) |
+| grok | Optional | JPEG 2000 encoding (GPU and CPU) |
 | Node.js + npm | Optional | GUI frontend |
 | Rust toolchain | Optional | GUI backend (Tauri) |
 

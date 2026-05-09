@@ -63,12 +63,10 @@ int main(int argc, char** argv)
   std::string encode_input;
   std::string encode_output;
   uint32_t bandwidth = 250;
-  std::string encoder_str = "openjpeg";
 
   encode_cmd->add_option("--input,-i", encode_input, "Input image directory")->required();
   encode_cmd->add_option("--output,-o", encode_output, "Output J2K directory")->required();
   encode_cmd->add_option("--bandwidth", bandwidth, "Target bitrate (Mbps)");
-  encode_cmd->add_option("--encoder", encoder_str, "Encoder (grok|openjpeg)");
 
   // --- transcode ---
   auto* transcode_cmd = app.add_subcommand("transcode", "Transcode video to image sequence");
@@ -179,8 +177,6 @@ int main(int argc, char** argv)
     config.input_dir = encode_input;
     config.output_dir = encode_output;
     config.bandwidth_mbps = bandwidth;
-    config.encoder = (encoder_str == "grok") ? dcpwizard::Encoder::Grok
-                                             : dcpwizard::Encoder::OpenJPEG;
     return dcpwizard::encode_j2k(config);
   }
 
