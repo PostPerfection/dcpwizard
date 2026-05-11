@@ -235,9 +235,31 @@ async function refreshJobs() {
 document.getElementById("jobs-refresh")?.addEventListener("click", refreshJobs);
 
 document.getElementById("jobs-start-daemon")?.addEventListener("click", async () => {
-  Command.sidecar("dcpwizard", ["daemon"]).spawn();
-  await new Promise(r => setTimeout(r, 1500));
-  refreshJobs();
+  const statusBadge = document.getElementById("jobs-daemon-status");
+  statusBadge.textContent = "Starting...";
+  statusBadge.className = "status-badge";
+  try {
+    const child = await Command.sidecar("dcpwizard", ["daemon"]).spawn();
+    console.log("Daemon spawned, pid:", child.pid);
+  } catch (err) {
+    console.error("Failed to spawn daemon:", err);
+    statusBadge.textContent = "Failed to start";
+    statusBadge.className = "status-badge offline";
+    return;
+  }
+  // Poll until daemon is reachable (up to 5 seconds)
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const result = await Command.sidecar("dcpwizard", ["batch", "list"]).execute();
+      if (result.code === 0) {
+        refreshJobs();
+        return;
+      }
+    } catch (_) {}
+  }
+  statusBadge.textContent = "Failed to start";
+  statusBadge.className = "status-badge offline";
 });
 
 document.getElementById("job-submit")?.addEventListener("click", async () => {
