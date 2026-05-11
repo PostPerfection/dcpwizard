@@ -305,6 +305,8 @@ fn main() {
         }
 
         Commands::Daemon => {
+            let addr = dcpwizard_core::job_queue::daemon_addr();
+            println!("Starting dcpwizard daemon on {addr}...");
             let queue = dcpwizard_core::job_queue::JobQueue::new();
             dcpwizard_core::job_queue::start_daemon_ipc(&queue)
         }
@@ -344,6 +346,10 @@ fn main() {
                     }
                 }
                 BatchAction::Add { r#type, params } => {
+                    if !dcpwizard_core::job_queue::is_daemon_running() {
+                        tracing::error!("Daemon is not running. Start it with: dcpwizard daemon");
+                        std::process::exit(1);
+                    }
                     let job_type = match r#type.as_str() {
                         "create-dcp" => dcpwizard_core::job_queue::JobType::CreateDcp,
                         "verify-dcp" => dcpwizard_core::job_queue::JobType::VerifyDcp,
