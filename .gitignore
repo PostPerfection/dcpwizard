@@ -36,3 +36,4 @@ GSYMS
 GTAGS
 TAGS
 Testing/
+rust/target/

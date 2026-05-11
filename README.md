@@ -300,6 +300,31 @@ DCP Wizard shares common functionality with [IMF Wizard](https://github.com/DcpD
 via the [postkit](https://github.com/DcpDoctor/postkit) library (encoding, transcoding, hashing,
 job queue, preferences, REST API, watch folders, and more).
 
+## Rust Port
+
+A complete Rust rewrite lives in `rust/`:
+
+```bash
+cd rust
+cargo build --release
+cargo test
+cargo clippy --all-targets
+```
+
+Workspace crates:
+
+| Crate | Description |
+|---|---|
+| `dcpwizard-core` | Core library — DCP creation, encoding, encryption, KDM, QC, REST API |
+| `dcpwizard-cli` | CLI binary (`dcpwizard`) with subcommands |
+
+The CLI binary is installed as `dcpwizard`:
+
+```bash
+cargo install --path rust/crates/dcpwizard-cli
+dcpwizard --help
+```
+
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE).

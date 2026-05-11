@@ -1,0 +1,369 @@
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(
+    name = "dcpwizard",
+    about = "DCP Wizard — Digital Cinema Package creator"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Enable verbose output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Create a new DCP
+    Create {
+        /// DCP title
+        #[arg(short, long)]
+        title: String,
+        /// Video/image sequence directory
+        #[arg(long)]
+        video: String,
+        /// Audio WAV file
+        #[arg(long)]
+        audio: Option<String>,
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+        /// DCP standard (smpte|interop)
+        #[arg(long, default_value = "smpte")]
+        standard: String,
+        /// Delivery profile
+        #[arg(long)]
+        profile: Option<String>,
+        /// Encrypt the DCP
+        #[arg(long)]
+        encrypt: bool,
+    },
+    /// Encode images to JPEG 2000
+    Encode {
+        /// Input image directory
+        #[arg(short, long)]
+        input: String,
+        /// Output J2K directory
+        #[arg(short, long)]
+        output: String,
+        /// Target bitrate (Mbps)
+        #[arg(long, default_value = "250")]
+        bandwidth: u32,
+    },
+    /// Transcode video to image sequence
+    Transcode {
+        /// Input video file
+        #[arg(short, long)]
+        input: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Verify an existing DCP
+    Verify {
+        /// DCP directory
+        dcp_dir: String,
+    },
+    /// Show DCP metadata
+    Info {
+        /// DCP directory
+        dcp_dir: String,
+    },
+    /// Generate KDM for encrypted DCP
+    Kdm {
+        /// CPL ID
+        #[arg(long)]
+        cpl_id: String,
+        /// Content title
+        #[arg(long)]
+        content_title: String,
+        /// Recipient certificate
+        #[arg(long)]
+        cert: String,
+        /// Output KDM file
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Copy DCP to drive
+    Copy {
+        /// DCP directory
+        #[arg(long)]
+        src: String,
+        /// Destination drive/directory
+        #[arg(long)]
+        dst: String,
+    },
+    /// Measure audio loudness
+    Loudness {
+        /// Audio file
+        audio_file: String,
+    },
+    /// Generate QC report
+    Report {
+        /// DCP directory
+        #[arg(long)]
+        dcp: String,
+        /// Output HTML file
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Start REST API server
+    Serve {
+        /// Listen address (host:port)
+        #[arg(short, long, default_value = "127.0.0.1:8080")]
+        bind: String,
+    },
+    /// Watch directory for auto-DCP creation
+    Watch {
+        /// Directory to watch
+        dir: String,
+    },
+    /// Generate shell completion
+    Completion {
+        /// Shell (bash|zsh|fish)
+        #[arg(default_value = "bash")]
+        shell: String,
+    },
+    /// Start job queue daemon
+    Daemon,
+    /// Manage job queue
+    Batch {
+        #[command(subcommand)]
+        action: BatchAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BatchAction {
+    /// List all jobs
+    List,
+    /// Submit a new job
+    Add {
+        /// Job type (create-dcp|verify-dcp|export-dcp|import-video|encode-j2k|wrap-mxf|copy-to-drive)
+        #[arg(short = 'T', long)]
+        r#type: String,
+        /// Job parameters (JSON string)
+        #[arg(short, long)]
+        params: String,
+    },
+    /// Cancel a job
+    Cancel {
+        /// Job ID to cancel
+        id: String,
+    },
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    let filter = if cli.verbose { "debug" } else { "info" };
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    let code = match cli.command {
+        Commands::Create {
+            title,
+            output,
+            standard,
+            encrypt,
+            ..
+        } => {
+            let config = dcpwizard_core::dcp::DcpConfig {
+                title,
+                standard: if standard == "interop" {
+                    dcpwizard_core::Standard::Interop
+                } else {
+                    dcpwizard_core::Standard::Smpte
+                },
+                encrypt,
+                output_dir: PathBuf::from(output),
+                frame_rate_num: 24,
+                frame_rate_den: 1,
+                ..Default::default()
+            };
+            dcpwizard_core::dcp::create_dcp(&config)
+        }
+
+        Commands::Encode {
+            input,
+            output,
+            bandwidth,
+        } => {
+            let config = dcpwizard_core::encode::EncodeConfig {
+                input_dir: PathBuf::from(input),
+                output_dir: PathBuf::from(output),
+                bandwidth_mbps: bandwidth,
+                ..Default::default()
+            };
+            dcpwizard_core::encode::encode_j2k(&config)
+        }
+
+        Commands::Transcode { input, output } => {
+            let config = dcpwizard_core::transcode::TranscodeConfig {
+                input_file: PathBuf::from(input),
+                output_dir: PathBuf::from(output),
+                ..Default::default()
+            };
+            dcpwizard_core::transcode::transcode_to_sequence(&config)
+        }
+
+        Commands::Verify { dcp_dir } => {
+            let result = dcpwizard_core::verify::verify_dcp(&PathBuf::from(dcp_dir));
+            if result.valid {
+                tracing::info!("DCP verification PASSED");
+                0
+            } else {
+                for e in &result.errors {
+                    tracing::error!("{e}");
+                }
+                for w in &result.warnings {
+                    tracing::warn!("{w}");
+                }
+                1
+            }
+        }
+
+        Commands::Info { dcp_dir } => {
+            match dcpwizard_core::info::inspect_dcp(&PathBuf::from(dcp_dir)) {
+                Ok(info) => {
+                    tracing::info!("Title: {}", info.title);
+                    tracing::info!("Standard: {}", info.standard);
+                    tracing::info!("Frame rate: {}", info.frame_rate);
+                    tracing::info!("Duration: {} frames", info.duration_frames);
+                    tracing::info!("Reels: {}", info.reel_count);
+                    tracing::info!("Encrypted: {}", if info.encrypted { "yes" } else { "no" });
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("{e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Kdm {
+            cpl_id,
+            content_title,
+            cert,
+            output,
+        } => {
+            let config = dcpwizard_core::kdm::KdmConfig {
+                cpl_id,
+                content_title,
+                recipient_cert_file: PathBuf::from(cert),
+                output_file: PathBuf::from(output),
+                ..Default::default()
+            };
+            dcpwizard_core::kdm::generate_kdm(&config)
+        }
+
+        Commands::Copy { src, dst } => {
+            dcpwizard_core::copy_drive::copy_to_drive(&PathBuf::from(src), &PathBuf::from(dst))
+        }
+
+        Commands::Loudness { audio_file } => {
+            match dcpwizard_core::loudness::measure_loudness(&PathBuf::from(audio_file)) {
+                Ok(result) => {
+                    tracing::info!("Integrated: {:.1} LUFS", result.integrated_lufs);
+                    tracing::info!("True Peak: {:.1} dBTP", result.true_peak_dbtp);
+                    tracing::info!("LRA: {:.1} LU", result.loudness_range_lu);
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("{e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Report { dcp, output } => {
+            dcpwizard_core::report::generate_report(&PathBuf::from(dcp), &PathBuf::from(output))
+        }
+
+        Commands::Serve { bind } => dcpwizard_core::rest_api::start_rest_api(&bind),
+
+        Commands::Watch { dir } => {
+            dcpwizard_core::watch::watch_directory(
+                &PathBuf::from(dir),
+                std::time::Duration::from_secs(5),
+                &|| false,
+                |p| {
+                    tracing::info!("New DCP detected: {}", p.display());
+                },
+            );
+            0
+        }
+
+        Commands::Completion { shell } => {
+            print!(
+                "{}",
+                dcpwizard_core::shell_completion::generate_completion(&shell, "dcpwizard")
+            );
+            0
+        }
+
+        Commands::Daemon => {
+            let queue = dcpwizard_core::job_queue::JobQueue::new();
+            dcpwizard_core::job_queue::start_job_queue(&queue);
+            tracing::info!("Job queue daemon started");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+
+        Commands::Batch { action } => {
+            let queue = dcpwizard_core::job_queue::JobQueue::new();
+            match action {
+                BatchAction::List => {
+                    let jobs = queue.list();
+                    if jobs.is_empty() {
+                        println!("No jobs in queue");
+                    } else {
+                        println!(
+                            "{:<38} {:<12} {:<10} {:<14} Message",
+                            "ID", "State", "Progress", "Type"
+                        );
+                        for j in &jobs {
+                            println!(
+                                "{:<38} {:?} {:<10}% {:?} {}",
+                                j.id, j.state, j.progress_percent, j.job_type, j.message
+                            );
+                        }
+                    }
+                    0
+                }
+                BatchAction::Add { r#type, params } => {
+                    let job_type = match r#type.as_str() {
+                        "create-dcp" => dcpwizard_core::job_queue::JobType::CreateDcp,
+                        "verify-dcp" => dcpwizard_core::job_queue::JobType::VerifyDcp,
+                        "export-dcp" => dcpwizard_core::job_queue::JobType::ExportDcp,
+                        "import-video" => dcpwizard_core::job_queue::JobType::ImportVideo,
+                        "encode-j2k" => dcpwizard_core::job_queue::JobType::EncodeJ2k,
+                        "wrap-mxf" => dcpwizard_core::job_queue::JobType::WrapMxf,
+                        "copy-to-drive" => dcpwizard_core::job_queue::JobType::CopyToDrive,
+                        other => {
+                            tracing::error!("Unknown job type: {other}");
+                            std::process::exit(1);
+                        }
+                    };
+                    let id = queue.submit(job_type, &params);
+                    println!("Submitted job {id}");
+                    0
+                }
+                BatchAction::Cancel { id } => {
+                    if queue.cancel(&id) {
+                        println!("Cancelled job {id}");
+                        0
+                    } else {
+                        println!("Could not cancel job {id}");
+                        1
+                    }
+                }
+            }
+        }
+    };
+
+    std::process::exit(code);
+}
