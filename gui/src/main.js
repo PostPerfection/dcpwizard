@@ -125,6 +125,10 @@ function checkFormReady() {
 document.addEventListener("input", checkFormReady);
 setTimeout(checkFormReady, 0);
 
+// Disable job submit until daemon status is known
+const jobSubmitBtn = document.getElementById("job-submit");
+if (jobSubmitBtn) jobSubmitBtn.disabled = true;
+
 // === Create form submission ===
 document.getElementById("create-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -166,18 +170,21 @@ let jobsPollInterval = null;
 
 async function refreshJobs() {
   const statusBadge = document.getElementById("jobs-daemon-status");
+  const submitBtn = document.getElementById("job-submit");
   try {
     const ping = Command.sidecar("dcpwizard", ["batch", "list"]);
     const result = await ping.execute();
     if (result.code !== 0) {
       statusBadge.textContent = "Daemon offline";
       statusBadge.className = "status-badge offline";
+      if (submitBtn) submitBtn.disabled = true;
       document.getElementById("jobs-tbody").innerHTML =
         '<tr><td colspan="6" style="text-align:center">Daemon not running</td></tr>';
       return;
     }
     statusBadge.textContent = "Daemon online";
     statusBadge.className = "status-badge online";
+    if (submitBtn) submitBtn.disabled = false;
 
     const lines = result.stdout.trim().split("\n");
     const tbody = document.getElementById("jobs-tbody");
@@ -219,6 +226,7 @@ async function refreshJobs() {
   } catch (err) {
     statusBadge.textContent = "Error";
     statusBadge.className = "status-badge offline";
+    if (submitBtn) submitBtn.disabled = true;
     document.getElementById("jobs-tbody").innerHTML =
       `<tr><td colspan="6" style="text-align:center;color:var(--accent)">${err}</td></tr>`;
   }
@@ -234,15 +242,12 @@ document.getElementById("jobs-start-daemon")?.addEventListener("click", async ()
 
 document.getElementById("job-submit")?.addEventListener("click", async () => {
   const type = document.getElementById("job-type").value;
-  const desc = document.getElementById("job-desc").value;
-  const argsStr = document.getElementById("job-args").value;
-  if (!desc) { alert("Enter a description"); return; }
-  if (!argsStr) { alert("Enter arguments"); return; }
+  const paramsStr = document.getElementById("job-args").value;
+  if (!paramsStr) { alert("Enter job parameters (JSON)"); return; }
 
-  const args = ["batch", "add", "-T", type, "-d", desc, "--"].concat(argsStr.split(/\s+/));
+  const args = ["batch", "add", "-T", type, "-p", paramsStr];
   const result = await Command.sidecar("dcpwizard", args).execute();
   if (result.code === 0) {
-    document.getElementById("job-desc").value = "";
     document.getElementById("job-args").value = "";
     refreshJobs();
   } else {

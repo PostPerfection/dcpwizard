@@ -367,23 +367,19 @@
                 <label for="job-type">Type</label>
                 <select id="job-type">
                   <option value="create">Create</option>
-                  <option value="encode">Encode</option>
-                  <option value="transcode">Transcode</option>
-                  <option value="validate">Validate</option>
-                  <option value="loudness">Loudness</option>
-                  <option value="qc">QC</option>
-                  <option value="copy">Copy</option>
-                  <option value="kdm">KDM</option>
+                  <option value="create-dcp">Create DCP</option>
+                  <option value="verify-dcp">Verify DCP</option>
+                  <option value="export-dcp">Export DCP</option>
+                  <option value="import-video">Import Video</option>
+                  <option value="encode-j2k">Encode J2K</option>
+                  <option value="wrap-mxf">Wrap MXF</option>
+                  <option value="copy-to-drive">Copy to Drive</option>
                 </select>
-              </div>
-              <div class="field">
-                <label for="job-desc">Description</label>
-                <input type="text" id="job-desc" placeholder="Job description" />
               </div>
             </div>
             <div class="field">
-              <label for="job-args">Arguments</label>
-              <input type="text" id="job-args" placeholder="e.g. create --title MyDCP --video /path --output /tmp/out" />
+              <label for="job-args">Parameters (JSON)</label>
+              <input type="text" id="job-args" placeholder='e.g. {"title":"MyDCP","video":"/path","output":"/tmp/out"}' />
             </div>
             <button id="job-submit" class="btn-primary">Submit Job</button>
           </div>
