@@ -38,6 +38,25 @@ pub struct Job {
     pub params: String,
 }
 
+/// IPC request sent from CLI client to daemon.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum IpcRequest {
+    List,
+    Submit { job_type: JobType, params: String },
+    Cancel { id: String },
+    Status { id: String },
+}
+
+/// IPC response sent from daemon to CLI client.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum IpcResponse {
+    Jobs(Vec<Job>),
+    Submitted { id: String },
+    Cancelled(bool),
+    JobStatus(Option<Job>),
+    Error(String),
+}
+
 /// Thread-safe in-memory job queue.
 #[derive(Clone)]
 pub struct JobQueue {
@@ -266,4 +285,113 @@ fn current_epoch_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Get the Unix socket path for the daemon IPC.
+pub fn socket_path() -> std::path::PathBuf {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    runtime_dir.join("dcpwizard-daemon.sock")
+}
+
+/// Start the daemon IPC listener on a Unix socket.
+/// This blocks the current thread and processes client requests.
+pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+
+    let sock = socket_path();
+
+    // Remove stale socket file
+    let _ = std::fs::remove_file(&sock);
+
+    let listener = match UnixListener::bind(&sock) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("failed to bind socket {}: {e}", sock.display());
+            return -1;
+        }
+    };
+
+    tracing::info!("Daemon listening on {}", sock.display());
+
+    // Start the job processor thread
+    start_job_queue(queue);
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(mut stream) => {
+                let queue = queue.clone();
+                std::thread::spawn(move || {
+                    let reader = BufReader::new(match stream.try_clone() {
+                        Ok(s) => s,
+                        Err(_) => return,
+                    });
+
+                    for line in reader.lines() {
+                        let line = match line {
+                            Ok(l) => l,
+                            Err(_) => break,
+                        };
+
+                        let request: IpcRequest = match serde_json::from_str(&line) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let resp = IpcResponse::Error(format!("invalid request: {e}"));
+                                let _ = writeln!(stream, "{}", serde_json::to_string(&resp).unwrap_or_default());
+                                continue;
+                            }
+                        };
+
+                        let response = match request {
+                            IpcRequest::List => IpcResponse::Jobs(queue.list()),
+                            IpcRequest::Submit { job_type, params } => {
+                                let id = queue.submit(job_type, &params);
+                                IpcResponse::Submitted { id }
+                            }
+                            IpcRequest::Cancel { id } => {
+                                IpcResponse::Cancelled(queue.cancel(&id))
+                            }
+                            IpcRequest::Status { id } => {
+                                IpcResponse::JobStatus(queue.get(&id))
+                            }
+                        };
+
+                        let json = serde_json::to_string(&response).unwrap_or_default();
+                        if writeln!(stream, "{json}").is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::error!("accept error: {e}");
+            }
+        }
+    }
+
+    // Clean up socket on exit
+    let _ = std::fs::remove_file(&sock);
+    0
+}
+
+/// Send an IPC request to the running daemon and return the response.
+pub fn send_ipc_request(request: &IpcRequest) -> Result<IpcResponse, String> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let sock = socket_path();
+    let mut stream = UnixStream::connect(&sock)
+        .map_err(|e| format!("cannot connect to daemon at {}: {e} (is the daemon running?)", sock.display()))?;
+
+    let json = serde_json::to_string(request).map_err(|e| format!("serialize error: {e}"))?;
+    writeln!(stream, "{json}").map_err(|e| format!("write error: {e}"))?;
+
+    let reader = BufReader::new(stream);
+    let line = reader.lines().next()
+        .ok_or_else(|| "no response from daemon".to_string())?
+        .map_err(|e| format!("read error: {e}"))?;
+
+    serde_json::from_str(&line).map_err(|e| format!("invalid response: {e}"))
 }
