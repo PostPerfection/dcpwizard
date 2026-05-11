@@ -287,34 +287,30 @@ fn current_epoch_secs() -> u64 {
         .as_secs()
 }
 
-/// Get the Unix socket path for the daemon IPC.
-pub fn socket_path() -> std::path::PathBuf {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
-    runtime_dir.join("dcpwizard-daemon.sock")
+/// Get the daemon address.
+/// Uses TCP localhost on a fixed port for cross-platform compatibility.
+pub fn daemon_addr() -> String {
+    std::env::var("DCPWIZARD_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:9457".to_string())
 }
 
-/// Start the daemon IPC listener on a Unix socket.
-/// This blocks the current thread and processes client requests.
+/// Start the daemon IPC listener.
+/// Binds a TCP listener on localhost and processes client requests.
+/// This blocks the current thread.
 pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixListener;
+    use std::net::TcpListener;
 
-    let sock = socket_path();
+    let addr = daemon_addr();
 
-    // Remove stale socket file
-    let _ = std::fs::remove_file(&sock);
-
-    let listener = match UnixListener::bind(&sock) {
+    let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
         Err(e) => {
-            tracing::error!("failed to bind socket {}: {e}", sock.display());
+            tracing::error!("failed to bind {addr}: {e}");
             return -1;
         }
     };
 
-    tracing::info!("Daemon listening on {}", sock.display());
+    tracing::info!("Daemon listening on {addr}");
 
     // Start the job processor thread
     start_job_queue(queue);
@@ -371,19 +367,17 @@ pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
         }
     }
 
-    // Clean up socket on exit
-    let _ = std::fs::remove_file(&sock);
     0
 }
 
 /// Send an IPC request to the running daemon and return the response.
 pub fn send_ipc_request(request: &IpcRequest) -> Result<IpcResponse, String> {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
+    use std::net::TcpStream;
 
-    let sock = socket_path();
-    let mut stream = UnixStream::connect(&sock)
-        .map_err(|e| format!("cannot connect to daemon at {}: {e} (is the daemon running?)", sock.display()))?;
+    let addr = daemon_addr();
+    let mut stream = TcpStream::connect(&addr)
+        .map_err(|e| format!("cannot connect to daemon at {addr}: {e} (is the daemon running?)"))?;
 
     let json = serde_json::to_string(request).map_err(|e| format!("serialize error: {e}"))?;
     writeln!(stream, "{json}").map_err(|e| format!("write error: {e}"))?;
@@ -394,4 +388,14 @@ pub fn send_ipc_request(request: &IpcRequest) -> Result<IpcResponse, String> {
         .map_err(|e| format!("read error: {e}"))?;
 
     serde_json::from_str(&line).map_err(|e| format!("invalid response: {e}"))
+}
+
+/// Check if the daemon is running by attempting a connection.
+pub fn is_daemon_running() -> bool {
+    use std::net::TcpStream;
+    let addr = daemon_addr();
+    TcpStream::connect_timeout(
+        &addr.parse().unwrap_or_else(|_| "127.0.0.1:9457".parse().unwrap()),
+        std::time::Duration::from_millis(500),
+    ).is_ok()
 }

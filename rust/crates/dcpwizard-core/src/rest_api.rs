@@ -7,6 +7,7 @@ use std::net::TcpListener;
 /// - POST /create — Create a DCP from JSON config
 /// - POST /verify — Verify a DCP
 /// - GET /jobs — List all jobs
+/// - GET /daemon-status — Check if job daemon is running
 /// - GET /health — Health check
 pub fn start_rest_api(bind_addr: &str) -> i32 {
     let listener = match TcpListener::bind(bind_addr) {
@@ -63,6 +64,11 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
             match (method, path) {
                 ("GET", "/health") => {
                     let response = serde_json::json!({"status": "ok"}).to_string();
+                    let _ = send_json(&mut stream, 200, &response);
+                }
+                ("GET", "/daemon-status") => {
+                    let running = crate::job_queue::is_daemon_running();
+                    let response = serde_json::json!({"daemon_running": running}).to_string();
                     let _ = send_json(&mut stream, 200, &response);
                 }
                 ("GET", "/jobs") => {
