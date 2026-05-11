@@ -80,6 +80,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "asdcplib"
+version = "0.1.0"
+source = "git+https://github.com/PostPerfection/asdcplib-rs.git?branch=master#603f2b22bf83eab1516cf03a80d03b2e65a2527f"
+dependencies = [
+ "asdcplib-sys",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "asdcplib-sys"
+version = "0.1.0"
+source = "git+https://github.com/PostPerfection/asdcplib-rs.git?branch=master#603f2b22bf83eab1516cf03a80d03b2e65a2527f"
+dependencies = [
+ "cc",
+ "cmake",
+ "pkg-config",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +227,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +298,7 @@ dependencies = [
 name = "dcpwizard-core"
 version = "0.1.0"
 dependencies = [
+ "asdcplib",
  "dcpdoctor-core",
  "postkit",
  "serde",
