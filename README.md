@@ -88,81 +88,20 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ## Installation
 
-### Prerequisites
-
-| Dependency | Required | Notes |
-|-----------|----------|-------|
-| CMake ≥ 3.25 | Yes | Build system |
-| C++23 compiler | Yes | GCC 13+, Clang 17+, or MSVC 2022+ |
-| libxml2 | Yes | XML processing |
-| OpenSSL | Yes | Cryptography (encryption, hashing, KDM) |
-| Xerces-C | Yes | XML Schema validation |
-| SQLite3 | Yes | Caching and metadata storage |
-| ffmpeg | Optional | Video transcoding and import |
-| grok | Optional | JPEG 2000 encoding (GPU and CPU) |
-| Node.js + npm | Optional | GUI frontend |
-| Rust toolchain | Optional | GUI backend (Tauri) |
-
-### Linux (Ubuntu/Debian)
-
 ```bash
-# Install dependencies
-sudo apt-get update
-sudo apt-get install -y \
-    cmake ninja-build pkg-config \
-    libxml2-dev libssl-dev libxerces-c-dev \
-    libsqlite3-dev ffmpeg
-
-# Clone and build
-git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
-cd dcpwizard
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-
-# Run tests
-cd build && ctest --output-on-failure
-
-# Install (optional)
-sudo cmake --install build
+cd rust
+cargo build --release
+cargo test
 ```
 
-### macOS
+The Rust workspace uses [postkit](https://github.com/PostPerfection/postkit), [dcpdoctor-core](https://github.com/PostPerfection/dcpdoctor), and [asdcplib-rs](https://github.com/PostPerfection/asdcplib-rs) as dependencies.
 
-```bash
-# Install dependencies
-brew install cmake ninja pkg-config libxml2 openssl@3 xerces-c sqlite ffmpeg
+### Optional runtime dependencies
 
-# Clone and build
-git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
-cd dcpwizard
-cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
-    -DCMAKE_PREFIX_PATH="$(brew --prefix libxml2);$(brew --prefix xerces-c)"
-cmake --build build --parallel
-
-# Run tests
-cd build && ctest --output-on-failure
-```
-
-### Windows
-
-```powershell
-# Install dependencies via vcpkg
-vcpkg install libxml2 openssl xerces-c sqlite3 --triplet x64-windows
-
-# Clone and build
-git clone --recurse-submodules https://github.com/DcpDoctor/dcpwizard.git
-cd dcpwizard
-cmake -B build -G "Visual Studio 17 2022" -A x64 `
-    -DCMAKE_BUILD_TYPE=Release `
-    -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-cmake --build build --config Release --parallel
-
-# Run tests
-cd build
-ctest --output-on-failure --build-config Release
-```
+| Dependency | Notes |
+|-----------|-------|
+| ffmpeg | Video transcoding and import |
+| grok | JPEG 2000 encoding (GPU and CPU) |
 
 ### Docker
 
@@ -280,50 +219,20 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 
 ```
 dcpwizard/
-├── include/dcpwizard/   # Public headers
-├── src/                 # Core library + CLI
-├── tests/               # Unit + integration tests
+├── rust/                # Rust workspace
+│   ├── crates/
+│   │   ├── dcpwizard-core/  # Core library — DCP creation, encoding, encryption, KDM, QC
+│   │   └── dcpwizard-cli/   # CLI binary (dcpwizard)
+│   └── Cargo.toml
 ├── gui/                 # Tauri 2 desktop application
 │   ├── src/             # Frontend (Vite + vanilla JS)
 │   └── src-tauri/       # Rust backend (plugin shell)
-├── bindings/python/     # SWIG Python bindings
-├── docs/                # GitHub Pages site
-└── extern/              # Git submodules
-    ├── asdcplib/        # AS-DCP MXF library (BSD)
-    ├── CLI11/           # CLI parsing (BSD)
-    ├── dcpdoctor/       # DCP/IMF validation & QC
-    ├── postkit/         # Shared post-production library
-    └── spdlog/          # Logging (MIT)
+└── docs/                # GitHub Pages site
 ```
 
 DCP Wizard shares common functionality with [IMF Wizard](https://github.com/DcpDoctor/imfwizard)
 via the [postkit](https://github.com/DcpDoctor/postkit) library (encoding, transcoding, hashing,
 job queue, preferences, REST API, watch folders, and more).
-
-## Rust Port
-
-A complete Rust rewrite lives in `rust/`:
-
-```bash
-cd rust
-cargo build --release
-cargo test
-cargo clippy --all-targets
-```
-
-Workspace crates:
-
-| Crate | Description |
-|---|---|
-| `dcpwizard-core` | Core library — DCP creation, encoding, encryption, KDM, QC, REST API |
-| `dcpwizard-cli` | CLI binary (`dcpwizard`) with subcommands |
-
-The CLI binary is installed as `dcpwizard`:
-
-```bash
-cargo install --path rust/crates/dcpwizard-cli
-dcpwizard --help
-```
 
 ## License
 
