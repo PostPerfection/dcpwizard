@@ -29,13 +29,18 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 #app {
   max-width: 1400px;
   margin: 0 auto;
   padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 header {
@@ -77,6 +82,12 @@ header h1 { font-size: 1.8rem; }
 }
 
 .nav-spacer { flex: 1; }
+
+main {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
 
 .page { display: none; }
 .page.active { display: block; }
@@ -280,4 +291,62 @@ body.light .field select option {
 
 .btn-cancel:hover {
   background: #f8514920;
+}
+
+/* Preview player */
+#preview-container {
+  margin-top: 1rem;
+}
+
+#preview-video {
+  width: 100%;
+  max-height: 60vh;
+  background: #000;
+  border-radius: 6px;
+  display: block;
+}
+
+#preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: #161b22;
+  border-radius: 6px;
+}
+
+#preview-controls button {
+  background: none;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #e6edf3;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+#preview-controls button:hover {
+  background: #30363d;
+}
+
+#prev-time {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #8b949e;
+  min-width: 140px;
+}
+
+#prev-scrub {
+  flex: 1;
+  cursor: pointer;
+}
+
+#prev-speed {
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.2rem;
+  font-size: 0.8rem;
 }

@@ -7,7 +7,23 @@ pub struct CplConfig {
     pub title: String,
     pub content_kind: String,
     pub rating: String,
-    pub reel_ids: Vec<String>,
+    pub reels: Vec<CplReel>,
+}
+
+/// A single reel in the CPL.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CplReel {
+    pub reel_id: String,
+    pub picture_id: String,
+    pub picture_edit_rate_num: u32,
+    pub picture_edit_rate_den: u32,
+    pub picture_duration: u64,
+    pub picture_entry_point: u64,
+    pub sound_id: Option<String>,
+    pub sound_edit_rate_num: u32,
+    pub sound_edit_rate_den: u32,
+    pub sound_duration: u64,
+    pub sound_entry_point: u64,
 }
 
 /// Generate a Composition Playlist XML.
@@ -37,13 +53,62 @@ pub fn generate_cpl(config: &CplConfig, output_file: &Path) -> i32 {
     }
 
     xml.push_str("  <ReelList>\n");
-    for (i, reel_id) in config.reel_ids.iter().enumerate() {
+    for (i, reel) in config.reels.iter().enumerate() {
         xml.push_str("    <Reel>\n");
-        xml.push_str(&format!("      <Id>urn:uuid:{reel_id}</Id>\n"));
+        xml.push_str(&format!("      <Id>urn:uuid:{}</Id>\n", reel.reel_id));
         xml.push_str(&format!(
             "      <AnnotationText>Reel {}</AnnotationText>\n",
             i + 1
         ));
+        xml.push_str("      <AssetList>\n");
+        // MainPicture
+        xml.push_str("        <MainPicture>\n");
+        xml.push_str(&format!("          <Id>urn:uuid:{}</Id>\n", reel.picture_id));
+        xml.push_str(&format!(
+            "          <EditRate>{} {}</EditRate>\n",
+            reel.picture_edit_rate_num, reel.picture_edit_rate_den
+        ));
+        xml.push_str(&format!(
+            "          <IntrinsicDuration>{}</IntrinsicDuration>\n",
+            reel.picture_duration
+        ));
+        xml.push_str(&format!(
+            "          <EntryPoint>{}</EntryPoint>\n",
+            reel.picture_entry_point
+        ));
+        xml.push_str(&format!(
+            "          <Duration>{}</Duration>\n",
+            reel.picture_duration
+        ));
+        xml.push_str(&format!(
+            "          <FrameRate>{} {}</FrameRate>\n",
+            reel.picture_edit_rate_num, reel.picture_edit_rate_den
+        ));
+        xml.push_str("          <ScreenAspectRatio>1998 1080</ScreenAspectRatio>\n");
+        xml.push_str("        </MainPicture>\n");
+        // MainSound (optional)
+        if let Some(ref sound_id) = reel.sound_id {
+            xml.push_str("        <MainSound>\n");
+            xml.push_str(&format!("          <Id>urn:uuid:{sound_id}</Id>\n"));
+            xml.push_str(&format!(
+                "          <EditRate>{} {}</EditRate>\n",
+                reel.sound_edit_rate_num, reel.sound_edit_rate_den
+            ));
+            xml.push_str(&format!(
+                "          <IntrinsicDuration>{}</IntrinsicDuration>\n",
+                reel.sound_duration
+            ));
+            xml.push_str(&format!(
+                "          <EntryPoint>{}</EntryPoint>\n",
+                reel.sound_entry_point
+            ));
+            xml.push_str(&format!(
+                "          <Duration>{}</Duration>\n",
+                reel.sound_duration
+            ));
+            xml.push_str("        </MainSound>\n");
+        }
+        xml.push_str("      </AssetList>\n");
         xml.push_str("    </Reel>\n");
     }
     xml.push_str("  </ReelList>\n");

@@ -32,15 +32,13 @@
     {
       "identifier": "fs:allow-read-file",
       "allow": [
-        { "path": "/tmp/**" },
-        { "path": "$TEMP/**" }
+        { "path": "/**" }
       ]
     },
     {
       "identifier": "fs:allow-exists",
       "allow": [
-        { "path": "/tmp/**" },
-        { "path": "$TEMP/**" }
+        { "path": "/**" }
       ]
     }
   ]

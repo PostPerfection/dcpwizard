@@ -1,4 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// pipeline + preview
+
+#[allow(unused_imports)]
+use tauri::Manager;
+
+mod pipeline;
+mod preview_server;
 
 #[cfg(unix)]
 fn fork_terminal_guard() {
@@ -40,11 +47,28 @@ pub fn run() {
     #[cfg(unix)]
     fork_terminal_guard();
 
+    let mpv = preview_server::MpvPlayer::new();
+    let job_queue = pipeline::JobQueue::new();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(mpv)
+        .manage(job_queue)
+        .invoke_handler(tauri::generate_handler![
+            preview_server::preview_load,
+            preview_server::preview_play_pause,
+            preview_server::preview_seek,
+            preview_server::preview_stop,
+            preview_server::preview_load_dcp,
+            pipeline::submit_job,
+            pipeline::cancel_job,
+            pipeline::pause_job,
+            pipeline::resume_job,
+            pipeline::list_jobs,
+        ])
         .setup(|_app| {
             Ok(())
         })

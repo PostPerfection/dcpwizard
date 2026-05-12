@@ -65,8 +65,10 @@
             </div>
             <div class="field">
               <label for="video-input">Video / Image Sequence</label>
-              <button type="button" id="browse-video">Browse…</button>
-              <span id="video-path" class="path-display">No folder selected</span>
+              <button type="button" id="browse-video">File…</button>
+              <button type="button" id="browse-video-folder">Folder…</button>
+              <button type="button" id="preview-source" class="btn-sm" title="Preview source video">▶</button>
+              <span id="video-path" class="path-display">No file/folder selected</span>
             </div>
             <div class="field">
               <label for="audio-input">Audio (WAV)</label>
@@ -107,8 +109,35 @@
             <div class="field">
               <label><input type="checkbox" id="stereo3d-check" /> Stereoscopic 3D</label>
             </div>
+            <div class="field">
+              <label><input type="checkbox" id="validate-check" /> Validate after creation</label>
+            </div>
             <button type="submit" id="create-form-btn" class="btn-primary" disabled>Create DCP</button>
           </form>
+          <div id="pipeline-progress" style="display:none; margin-top: 1rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+              <span id="pipeline-stage"></span>
+              <span id="pipeline-stats"></span>
+              <span>
+                <button type="button" id="pipeline-pause" class="btn-sm" title="Pause">⏸</button>
+                <button type="button" id="pipeline-cancel" class="btn-sm" title="Cancel">✕</button>
+              </span>
+            </div>
+            <progress id="pipeline-bar" max="100" value="0" style="width:100%; height:1.5rem;"></progress>
+            <div id="pipeline-message" style="margin-top:0.25rem; font-size:0.85rem; opacity:0.8;"></div>
+            <div id="validation-results" style="display:none; margin-top:0.5rem; padding:0.5rem; border-radius:4px; font-size:0.85rem; max-height:10rem; overflow-y:auto;"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Preview DCP</h2>
+          <div class="field">
+            <button type="button" id="prev-replay-dcp">Open DCP folder...</button>
+            <span id="prev-dcp-path" class="path-display">No DCP selected</span>
+          </div>
+          <div id="preview-controls">
+            <span id="prev-time"></span>
+          </div>
         </section>
       </section>
 
@@ -409,6 +438,15 @@
               <div class="field">
                 <label for="pref-framerate">Default Frame Rate</label>
                 <input type="number" id="pref-framerate" value="24" min="24" max="120">
+              </div>
+              <div class="field">
+                <label><input type="checkbox" id="pref-encrypt" /> Encrypt by default</label>
+              </div>
+              <div class="field">
+                <label><input type="checkbox" id="pref-stereo3d" /> Stereoscopic 3D by default</label>
+              </div>
+              <div class="field">
+                <label><input type="checkbox" id="pref-validate" checked /> Validate after creation</label>
               </div>
               <div class="field">
                 <label for="pref-creator">Creator Name</label>

@@ -1,6 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Command } from "@tauri-apps/plugin-shell";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open as _open } from "@tauri-apps/plugin-dialog";
+import { documentDir, join } from "@tauri-apps/api/path";
+import { initPreview, previewDcp } from "./preview.js";
+
+// Wrapper that remembers last browse location
+let lastBrowseDir = null;
+async function open(opts = {}) {
+  const result = await _open({ ...opts, defaultPath: opts.defaultPath || lastBrowseDir || undefined });
+  if (result) {
+    lastBrowseDir = opts.directory ? result : result.replace(/[/\\][^/\\]*$/, '');
+  }
+  return result;
+}
 
 // Drop overlay
 const dropOverlay = document.getElementById("drop-overlay");
@@ -36,6 +49,143 @@ themeToggle?.addEventListener("click", () => {
   themeToggle.textContent = document.body.classList.contains("light") ? "☀️" : "🌙";
 });
 
+// === Preferences (localStorage, versioned) ===
+const PREFS_KEY = "dcpwizard-preferences";
+const PREFS_VERSION = 2; // Bump when adding/removing/renaming pref keys
+
+const PREF_DEFAULTS = {
+  standard: "SMPTE",
+  resolution: "2K",
+  framerate: 24,
+  encrypt: false,
+  stereo3d: false,
+  validate: true,
+  creator: "",
+  facility: "",
+  encoder: "grok",
+  bandwidth: 250,
+  colourspace: "Rec.709",
+  gpu: -1,
+  signingCert: "",
+  signingKey: "",
+  ca: "",
+  kdmPattern: "%t_%d",
+  kdmValidity: 168,
+  channels: "5.1",
+  loudness: -24,
+  outputDir: "",
+  naming: "",
+};
+
+function getPrefs() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+    if ((stored._version || 0) < PREFS_VERSION) {
+      // Migrate: keep existing values, fill in new defaults
+      const migrated = { ...PREF_DEFAULTS, ...stored, _version: PREFS_VERSION };
+      savePrefs(migrated);
+      return migrated;
+    }
+    return { ...PREF_DEFAULTS, ...stored };
+  } catch { return { ...PREF_DEFAULTS, _version: PREFS_VERSION }; }
+}
+
+function savePrefs(prefs) {
+  prefs._version = PREFS_VERSION;
+  localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+}
+
+// Preference field mappings: pref element id -> { type, key }
+const prefFields = [
+  { id: "pref-standard", type: "select", key: "standard" },
+  { id: "pref-resolution", type: "select", key: "resolution" },
+  { id: "pref-framerate", type: "number", key: "framerate" },
+  { id: "pref-encrypt", type: "checkbox", key: "encrypt" },
+  { id: "pref-stereo3d", type: "checkbox", key: "stereo3d" },
+  { id: "pref-validate", type: "checkbox", key: "validate" },
+  { id: "pref-creator", type: "text", key: "creator" },
+  { id: "pref-facility", type: "text", key: "facility" },
+  { id: "pref-encoder", type: "select", key: "encoder" },
+  { id: "pref-bandwidth", type: "number", key: "bandwidth" },
+  { id: "pref-colourspace", type: "select", key: "colourspace" },
+  { id: "pref-gpu", type: "number", key: "gpu" },
+  { id: "pref-signing-cert", type: "text", key: "signingCert" },
+  { id: "pref-signing-key", type: "text", key: "signingKey" },
+  { id: "pref-ca", type: "text", key: "ca" },
+  { id: "pref-kdm-pattern", type: "text", key: "kdmPattern" },
+  { id: "pref-kdm-validity", type: "number", key: "kdmValidity" },
+  { id: "pref-channels", type: "select", key: "channels" },
+  { id: "pref-loudness", type: "number", key: "loudness" },
+  { id: "pref-output-dir", type: "text", key: "outputDir" },
+  { id: "pref-naming", type: "text", key: "naming" },
+];
+
+// Load prefs into the preference form and apply defaults to the Create form
+function loadPrefs() {
+  const prefs = getPrefs();
+
+  // Populate preference form
+  for (const f of prefFields) {
+    const el = document.getElementById(f.id);
+    if (!el || !(f.key in prefs)) continue;
+    if (f.type === "checkbox") el.checked = prefs[f.key];
+    else el.value = prefs[f.key];
+  }
+
+  // Apply to Create form defaults
+  const stdMap = { "SMPTE": "smpte", "Interop": "interop" };
+  const resMap = { "2K": "2k", "4K": "4k" };
+  if (prefs.standard) {
+    const stdEl = document.getElementById("standard");
+    if (stdEl) stdEl.value = stdMap[prefs.standard] || "smpte";
+  }
+  if (prefs.resolution) {
+    const resEl = document.getElementById("resolution");
+    if (resEl) resEl.value = resMap[prefs.resolution] || "2k";
+  }
+  if (prefs.framerate) {
+    const frEl = document.getElementById("frame-rate");
+    if (frEl) frEl.value = String(prefs.framerate);
+  }
+  if ("encrypt" in prefs) {
+    const encEl = document.getElementById("encrypt-check");
+    if (encEl) encEl.checked = prefs.encrypt;
+  }
+  if ("stereo3d" in prefs) {
+    const s3dEl = document.getElementById("stereo3d-check");
+    if (s3dEl) s3dEl.checked = prefs.stereo3d;
+  }
+  if ("validate" in prefs) {
+    const valEl = document.getElementById("validate-check");
+    if (valEl) valEl.checked = prefs.validate;
+  }
+}
+
+// Save preferences from the form
+document.getElementById("preferences-form")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const prefs = {};
+  for (const f of prefFields) {
+    const el = document.getElementById(f.id);
+    if (!el) continue;
+    if (f.type === "checkbox") prefs[f.key] = el.checked;
+    else if (f.type === "number") prefs[f.key] = parseFloat(el.value) || 0;
+    else prefs[f.key] = el.value;
+  }
+  savePrefs(prefs);
+  loadPrefs(); // re-apply to Create form
+  alert("Preferences saved.");
+});
+
+// Reset preferences
+document.getElementById("pref-reset")?.addEventListener("click", () => {
+  localStorage.removeItem(PREFS_KEY);
+  location.reload();
+});
+
+// Load on startup
+loadPrefs();
+
 // === Helper: check if a path display has been set ===
 function pathSet(id) {
   const el = document.getElementById(id);
@@ -62,7 +212,27 @@ async function browseFile(displayId) {
 }
 
 // Create page
-document.getElementById("browse-video")?.addEventListener("click", () => browseFolder("video-path"));
+document.getElementById("browse-video")?.addEventListener("click", async () => {
+  const path = await open({
+    directory: false,
+    multiple: false,
+    filters: [
+      { name: 'Video', extensions: ['mp4', 'mkv', 'mov', 'avi', 'mxf', 'webm'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  if (path) {
+    document.getElementById("video-path").textContent = path;
+    checkFormReady();
+  }
+});
+document.getElementById("browse-video-folder")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) {
+    document.getElementById("video-path").textContent = dir;
+    checkFormReady();
+  }
+});
 document.getElementById("browse-audio")?.addEventListener("click", () => browseFile("audio-path"));
 document.getElementById("browse-output")?.addEventListener("click", () => browseFolder("output-path"));
 
@@ -104,7 +274,7 @@ document.getElementById("report-browse-dcp")?.addEventListener("click", () => br
 
 // === Form validation — disable action buttons until required fields are filled ===
 const formRules = {
-  "create-form-btn": () => pathSet("video-path") && pathSet("output-path") && document.getElementById("title")?.value?.trim(),
+  "create-form-btn": () => pathSet("video-path") && document.getElementById("title")?.value?.trim(),
   "run-verify": () => pathSet("verify-path"),
   "run-encode": () => pathSet("enc-input-path") && pathSet("enc-output-path"),
   "run-transcode": () => pathSet("tc-input-path") && pathSet("tc-output-path"),
@@ -125,32 +295,150 @@ function checkFormReady() {
 document.addEventListener("input", checkFormReady);
 setTimeout(checkFormReady, 0);
 
+// Auto-set output directory based on title
+const titleInput = document.getElementById("title");
+titleInput?.addEventListener("input", async () => {
+  const title = titleInput.value.trim();
+  if (title) {
+    const docs = await documentDir();
+    const outputPath = await join(docs, title);
+    document.getElementById("output-path").textContent = outputPath;
+    checkFormReady();
+  }
+});
+
 // Disable job submit until daemon status is known
 const jobSubmitBtn = document.getElementById("job-submit");
 if (jobSubmitBtn) jobSubmitBtn.disabled = true;
 
-// === Create form submission ===
+// === Create DCP — submits a job to the queue ===
+let currentJobId = null;
+let paused = false;
+
 document.getElementById("create-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const title = document.getElementById("title").value;
+  const title = document.getElementById("title").value.trim();
   const video = document.getElementById("video-path").textContent;
   const audio = document.getElementById("audio-path").textContent;
   const output = document.getElementById("output-path").textContent;
-  const standard = document.getElementById("standard").value;
-  const encrypt = document.getElementById("encrypt-check").checked;
 
-  const args = ["create", "--title", title, "--video", video, "--output", output, "--standard", standard];
-  if (pathSet("audio-path")) args.push("--audio", audio);
-  if (encrypt) args.push("--encrypt");
+  const progressDiv = document.getElementById("pipeline-progress");
+  const progressBar = document.getElementById("pipeline-bar");
+  const stageEl = document.getElementById("pipeline-stage");
+  const statsEl = document.getElementById("pipeline-stats");
+  const msgEl = document.getElementById("pipeline-message");
+  const validationDiv = document.getElementById("validation-results");
 
-  const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
-  if (result.code === 0) {
-    alert("DCP created successfully!");
-  } else {
-    alert("Error: " + result.stderr);
+  progressDiv.style.display = "block";
+  validationDiv.style.display = "none";
+  validationDiv.innerHTML = "";
+  progressBar.value = 0;
+  stageEl.textContent = "Queued...";
+  statsEl.textContent = "";
+  msgEl.textContent = "";
+  paused = false;
+  document.getElementById("pipeline-pause").textContent = "⏸";
+
+  document.getElementById("create-form-btn").disabled = true;
+
+  const unlisten = await listen("pipeline-progress", (event) => {
+    const p = event.payload;
+    if (currentJobId && p.job_id !== currentJobId) return;
+
+    progressBar.value = p.percent;
+    stageEl.textContent = p.stage.charAt(0).toUpperCase() + p.stage.slice(1);
+    msgEl.textContent = p.message;
+
+    const elapsed = formatTime(p.elapsed_secs);
+    let remaining = "";
+    if (p.percent > 0 && p.percent < 100) {
+      const eta = (p.elapsed_secs / p.percent) * (100 - p.percent);
+      remaining = ` | ETA: ${formatTime(eta)}`;
+    }
+    const fpsStr = p.fps > 0 ? ` | ${p.fps.toFixed(1)} fps` : "";
+    statsEl.textContent = `${elapsed}${fpsStr}${remaining}`;
+
+    if (p.stage === "done") {
+      document.getElementById("create-form-btn").disabled = false;
+      // Show the output path in the DCP preview field (don't auto-play)
+      const output = document.getElementById("output-path").textContent;
+      if (output && !output.startsWith("No ")) {
+        document.getElementById("prev-dcp-path").textContent = output;
+      }
+      unlisten();
+      unlistenValidation();
+    } else if (p.stage === "error") {
+      document.getElementById("create-form-btn").disabled = false;
+      unlisten();
+      unlistenValidation();
+    }
+  });
+
+  const unlistenValidation = await listen("validation-result", (event) => {
+    const v = event.payload;
+    if (currentJobId && v.job_id !== currentJobId) return;
+
+    validationDiv.style.display = "block";
+    let html = "";
+    if (v.valid) {
+      validationDiv.style.background = "var(--success-bg, #1a3a1a)";
+      html = "<strong>✓ DCP is valid</strong>";
+    } else {
+      validationDiv.style.background = "var(--error-bg, #3a1a1a)";
+      html = "<strong>✗ Validation issues found</strong><br>";
+    }
+    for (const err of v.errors || []) {
+      html += `<div style="color:#ff6b6b;">ERROR: ${err}</div>`;
+    }
+    for (const warn of v.warnings || []) {
+      html += `<div style="color:#ffa500;">WARNING: ${warn}</div>`;
+    }
+    validationDiv.innerHTML = html;
+  });
+
+  try {
+    currentJobId = await invoke("submit_job", {
+      videoPath: video,
+      title: title,
+      outputDir: output,
+      audioPath: pathSet("audio-path") ? audio : null,
+      validate: document.getElementById("validate-check")?.checked || false,
+    });
+  } catch (e) {
+    msgEl.textContent = "Error: " + e;
+    stageEl.textContent = "Failed";
+    document.getElementById("create-form-btn").disabled = false;
+    unlisten();
+    unlistenValidation();
   }
 });
+
+// Pause / Resume
+document.getElementById("pipeline-pause")?.addEventListener("click", async () => {
+  if (paused) {
+    await invoke("resume_job");
+    paused = false;
+    document.getElementById("pipeline-pause").textContent = "⏸";
+  } else {
+    await invoke("pause_job");
+    paused = true;
+    document.getElementById("pipeline-pause").textContent = "▶";
+    document.getElementById("pipeline-stage").textContent += " (paused)";
+  }
+});
+
+// Cancel
+document.getElementById("pipeline-cancel")?.addEventListener("click", async () => {
+  if (currentJobId) {
+    await invoke("cancel_job", { jobId: currentJobId });
+  }
+});
+
+function formatTime(secs) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 // === Verify ===
 document.getElementById("run-verify")?.addEventListener("click", async () => {
@@ -290,3 +578,6 @@ document.querySelectorAll(".nav-tabs button[data-page]").forEach(btn => {
     }
   });
 });
+
+// Initialize preview player
+initPreview();

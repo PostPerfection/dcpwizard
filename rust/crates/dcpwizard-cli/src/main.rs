@@ -53,6 +53,27 @@ enum Commands {
         #[arg(long, default_value = "250")]
         bandwidth: u32,
     },
+    /// Full pipeline: video → J2K → DCP (streaming, no intermediate files)
+    Pipeline {
+        /// Input video file (or image/J2K directory)
+        #[arg(short, long)]
+        input: String,
+        /// DCP title
+        #[arg(short, long)]
+        title: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+        /// Audio WAV file
+        #[arg(long)]
+        audio: Option<String>,
+        /// Compression ratio (default: 10)
+        #[arg(long, default_value = "10")]
+        ratio: f64,
+        /// Frame rate (default: 24)
+        #[arg(long, default_value = "24")]
+        fps: u32,
+    },
     /// Transcode video to image sequence
     Transcode {
         /// Input video file
@@ -165,6 +186,8 @@ fn main() {
     let code = match cli.command {
         Commands::Create {
             title,
+            video,
+            audio,
             output,
             standard,
             encrypt,
@@ -178,9 +201,11 @@ fn main() {
                     dcpwizard_core::Standard::Smpte
                 },
                 encrypt,
-                output_dir: PathBuf::from(output),
+                output_dir: PathBuf::from(&output),
                 frame_rate_num: 24,
                 frame_rate_den: 1,
+                j2k_dir: Some(PathBuf::from(video)),
+                audio_path: audio.map(PathBuf::from),
                 ..Default::default()
             };
             dcpwizard_core::dcp::create_dcp(&config)
@@ -198,6 +223,92 @@ fn main() {
                 ..Default::default()
             };
             dcpwizard_core::encode::encode_j2k(&config)
+        }
+
+        Commands::Pipeline {
+            input,
+            title,
+            output,
+            audio,
+            ratio,
+            fps,
+        } => {
+            use postkit::encode::{StreamEncodeOptions, find_compressor, stream_encode};
+            use std::sync::atomic::AtomicBool;
+            use std::sync::Arc;
+
+            let input_path = PathBuf::from(&input);
+            let output_dir = PathBuf::from(&output);
+
+            if !input_path.exists() {
+                tracing::error!("Input not found: {input}");
+                std::process::exit(1);
+            }
+
+            let _ = std::fs::create_dir_all(&output_dir);
+            let j2k_dir = output_dir.join("j2k");
+            let _ = std::fs::create_dir_all(&j2k_dir);
+
+            let (compressor_path, lib_dir) = match find_compressor() {
+                Some(c) => c,
+                None => {
+                    tracing::error!("grk_compress not found");
+                    std::process::exit(1);
+                }
+            };
+
+            tracing::info!("Pipeline: {} -> {}", input, output);
+            tracing::info!("Compressor: {}", compressor_path.display());
+
+            let opts = StreamEncodeOptions {
+                input: input_path.clone(),
+                output_dir: j2k_dir.clone(),
+                compression_ratio: ratio,
+                num_resolutions: 6,
+                codeblock_size: 32,
+                progression: "CPRL".to_string(),
+                fps,
+                compressor_path,
+                lib_dir,
+            };
+
+            let cancel = Arc::new(AtomicBool::new(false));
+            let pause = Arc::new(AtomicBool::new(false));
+
+            // Handle Ctrl+C
+            let cancel_clone = cancel.clone();
+            let _ = ctrlc::set_handler(move || {
+                cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+
+            let result = stream_encode(&opts, &cancel, &pause, |p| {
+                let percent = if p.total_frames > 0 {
+                    (p.frame as f64 / p.total_frames as f64) * 100.0
+                } else { 0.0 };
+                eprint!("\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                    p.frame, p.total_frames, percent, p.fps);
+            });
+            eprintln!();
+
+            if !result.success {
+                tracing::error!("Encode failed: {}", result.error);
+                1
+            } else {
+                tracing::info!("Encoded {} frames", result.frames_encoded);
+
+                // Package
+                let config = dcpwizard_core::dcp::DcpConfig {
+                    title,
+                    standard: dcpwizard_core::Standard::Smpte,
+                    output_dir: output_dir.clone(),
+                    frame_rate_num: fps,
+                    frame_rate_den: 1,
+                    j2k_dir: Some(j2k_dir),
+                    audio_path: audio.map(PathBuf::from),
+                    ..Default::default()
+                };
+                dcpwizard_core::dcp::create_dcp(&config)
+            }
         }
 
         Commands::Transcode { input, output } => {
