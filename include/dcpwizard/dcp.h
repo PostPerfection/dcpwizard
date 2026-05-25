@@ -30,6 +30,8 @@ struct DCPConfig
   uint32_t max_bitrate_mbps = 250;  // up to 500 for HBR
   bool encrypt = false;
   bool stereo_3d = false;
+  std::filesystem::path video_dir;   // input image sequence directory
+  std::filesystem::path audio_file;  // optional WAV audio input
   std::filesystem::path output_dir;
 };
 

@@ -167,7 +167,13 @@ int main(int argc, char** argv)
     config.standard = (standard_str == "interop") ? dcpwizard::Standard::Interop
                                                   : dcpwizard::Standard::SMPTE;
     config.encrypt = encrypt;
+    config.video_dir = video_dir;
+    config.audio_file = audio_file;
     config.output_dir = output_dir;
+    if (!profile_name.empty())
+    {
+      // TODO: apply profile settings
+    }
     return dcpwizard::create_dcp(config);
   }
 

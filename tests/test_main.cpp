@@ -138,6 +138,7 @@ static void test_reel_planning()
 static void test_cpl()
 {
   dcpwizard::CPLConfig config;
+  config.id = "00000000-0000-0000-0000-000000000001";
   config.title = "Test CPL";
   config.content_kind = "feature";
   ASSERT(dcpwizard::generate_cpl(config, "/tmp/cpl.xml") == 0);
@@ -145,14 +146,18 @@ static void test_cpl()
 
 static void test_pkl()
 {
-  std::vector<dcpwizard::PKLEntry> entries;
-  ASSERT(dcpwizard::generate_pkl(entries, "/tmp/pkl.xml") == 0);
+  dcpwizard::PKLConfig config;
+  config.id = "00000000-0000-0000-0000-000000000002";
+  config.annotation = "Test PKL";
+  ASSERT(dcpwizard::generate_pkl(config, "/tmp/pkl.xml") == 0);
 }
 
 static void test_assetmap()
 {
-  std::vector<dcpwizard::AssetMapEntry> entries;
-  ASSERT(dcpwizard::generate_assetmap(entries, "/tmp") == 0);
+  dcpwizard::AssetMapConfig config;
+  config.id = "00000000-0000-0000-0000-000000000003";
+  config.annotation = "Test ASSETMAP";
+  ASSERT(dcpwizard::generate_assetmap(config, "/tmp") == 0);
 }
 
 static void test_mxf_wrap()
