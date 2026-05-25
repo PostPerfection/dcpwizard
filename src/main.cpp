@@ -51,8 +51,8 @@ int main(int argc, char** argv)
   bool encrypt = false;
 
   create_cmd->add_option("--title,-t", title, "DCP title")->required();
-  create_cmd->add_option("--video", video_dir, "Video/image sequence directory")->required();
-  create_cmd->add_option("--audio", audio_file, "Audio WAV file");
+  create_cmd->add_option("--video", video_dir, "Video file or image sequence directory")->required();
+  create_cmd->add_option("--audio", audio_file, "Audio WAV file (auto-extracted from video if omitted)");
   create_cmd->add_option("--output,-o", output_dir, "Output directory")->required();
   create_cmd->add_option("--standard", standard_str, "DCP standard (smpte|interop)");
   create_cmd->add_option("--profile", profile_name, "Delivery profile");
@@ -191,7 +191,8 @@ int main(int argc, char** argv)
     dcpwizard::TranscodeConfig config;
     config.input_file = transcode_input;
     config.output_dir = transcode_output;
-    return dcpwizard::transcode_to_sequence(config);
+    auto result = dcpwizard::transcode_to_sequence(config);
+    return result.success ? 0 : 1;
   }
 
   if (verify_cmd->parsed())

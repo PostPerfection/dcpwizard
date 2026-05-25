@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 
 #include "dcpwizard/dcp.h"
@@ -174,7 +175,9 @@ static void test_transcode()
   dcpwizard::TranscodeConfig config;
   config.input_file = "/tmp/movie.mov";
   config.output_dir = "/tmp/frames";
-  ASSERT(dcpwizard::transcode_to_sequence(config) == 0);
+  auto result = dcpwizard::transcode_to_sequence(config);
+  // Will fail because file doesn't exist, but function should return gracefully
+  ASSERT(!result.success);
 }
 
 static void test_atmos()
@@ -446,6 +449,154 @@ static void test_hash_empty_path()
   ASSERT(h.empty());
 }
 
+static void test_is_video_file()
+{
+  // Should detect common video extensions
+  ASSERT(dcpwizard::is_video_file("/tmp/test.mp4") == false); // doesn't exist
+  // Test with a file that actually exists
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "test_video_detect.mp4";
+  { std::ofstream f(tmp); f << "fake"; }
+  ASSERT(dcpwizard::is_video_file(tmp));
+  fs::remove(tmp);
+
+  // Non-video file
+  auto txt = fs::temp_directory_path() / "test.txt";
+  { std::ofstream f(txt); f << "text"; }
+  ASSERT(!dcpwizard::is_video_file(txt));
+  fs::remove(txt);
+}
+
+static void test_transcode_missing_input()
+{
+  dcpwizard::TranscodeConfig config;
+  config.input_file = "/nonexistent/video.mp4";
+  config.output_dir = "/tmp/transcode_test_out";
+  auto result = dcpwizard::transcode_to_sequence(config);
+  ASSERT(!result.success);
+  ASSERT(!result.error.empty());
+}
+
+static void test_transcode_result_fields()
+{
+  dcpwizard::TranscodeResult result;
+  ASSERT(result.frame_count == 0);
+  ASSERT(result.width == 0);
+  ASSERT(result.height == 0);
+  ASSERT(result.fps == 0.0);
+  ASSERT(!result.success);
+  ASSERT(result.error.empty());
+  ASSERT(result.audio_file.empty());
+}
+
+static void test_ffmpeg_available()
+{
+  // ffmpeg should be available on this system
+  ASSERT(dcpwizard::ffmpeg_available());
+}
+
+static void test_cpl_xml_structure()
+{
+  dcpwizard::CPLConfig cpl;
+  cpl.id = "urn:uuid:00000000-0000-0000-0000-000000000001";
+  cpl.title = "Unit Test CPL";
+  cpl.content_kind = "test";
+  cpl.frame_rate_num = 24;
+  cpl.frame_rate_den = 1;
+
+  dcpwizard::CPLReel reel;
+  reel.id = "urn:uuid:00000000-0000-0000-0000-000000000002";
+  reel.picture.id = "urn:uuid:00000000-0000-0000-0000-000000000003";
+  reel.picture.asset_id = "urn:uuid:00000000-0000-0000-0000-000000000004";
+  reel.picture.duration = 100;
+  reel.picture.frame_rate_num = 24;
+  reel.picture.frame_rate_den = 1;
+  cpl.reels.push_back(reel);
+
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "test_cpl.xml";
+  int rc = dcpwizard::generate_cpl(cpl, tmp);
+  ASSERT(rc == 0);
+  ASSERT(fs::exists(tmp));
+  ASSERT(fs::file_size(tmp) > 100);
+  fs::remove(tmp);
+}
+
+static void test_pkl_xml_structure()
+{
+  dcpwizard::PKLConfig pkl;
+  pkl.id = "urn:uuid:00000000-0000-0000-0000-000000000010";
+  pkl.annotation = "Unit Test PKL";
+
+  dcpwizard::PKLEntry entry;
+  entry.id = "urn:uuid:00000000-0000-0000-0000-000000000011";
+  entry.type = "application/mxf";
+  entry.hash = "dGVzdA=="; // base64 of "test"
+  entry.size = 12345;
+  entry.original_filename = "test.mxf";
+  pkl.entries.push_back(entry);
+
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "test_pkl.xml";
+  int rc = dcpwizard::generate_pkl(pkl, tmp);
+  ASSERT(rc == 0);
+  ASSERT(fs::exists(tmp));
+  ASSERT(fs::file_size(tmp) > 100);
+  fs::remove(tmp);
+}
+
+static void test_assetmap_xml_structure()
+{
+  dcpwizard::AssetMapConfig am;
+  am.id = "urn:uuid:00000000-0000-0000-0000-000000000020";
+  am.annotation = "Unit Test AM";
+  am.entries.push_back({"urn:uuid:00000000-0000-0000-0000-000000000021", "test.mxf", 1000});
+
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "test_assetmap";
+  fs::create_directories(tmp);
+  int rc = dcpwizard::generate_assetmap(am, tmp);
+  ASSERT(rc == 0);
+  ASSERT(fs::exists(tmp / "ASSETMAP.xml"));
+  ASSERT(fs::exists(tmp / "VOLINDEX.xml"));
+  fs::remove_all(tmp);
+}
+
+static void test_hash_file_base64()
+{
+  namespace fs = std::filesystem;
+  auto tmp = fs::temp_directory_path() / "test_hash_input.bin";
+  { std::ofstream f(tmp, std::ios::binary); f << "Hello, World!"; }
+  auto h = dcpwizard::hash_file_base64(tmp);
+  ASSERT(!h.empty());
+  // SHA-1 base64 of "Hello, World!" is known
+  ASSERT(h.length() > 20);
+  fs::remove(tmp);
+}
+
+static void test_hash_file_nonexistent()
+{
+  auto h = dcpwizard::hash_file_base64("/nonexistent/path/file.bin");
+  ASSERT(h.empty());
+}
+
+static void test_encode_config_defaults()
+{
+  dcpwizard::EncodeConfig config;
+  ASSERT(config.bandwidth_mbps == 250);
+  ASSERT(config.threads == 0);
+}
+
+static void test_dcp_create_invalid_input()
+{
+  dcpwizard::DCPConfig config;
+  config.title = "Test";
+  config.video_dir = "/nonexistent_dir_abc123";
+  config.output_dir = "/tmp/test_dcp_fail";
+  int rc = dcpwizard::create_dcp(config);
+  ASSERT(rc != 0);
+}
+
 int main()
 {
   test_dcp_config_defaults();
@@ -492,6 +643,17 @@ int main()
   test_shell_completion_unknown();
   test_watch_nonexistent();
   test_hash_empty_path();
+  test_is_video_file();
+  test_transcode_missing_input();
+  test_transcode_result_fields();
+  test_ffmpeg_available();
+  test_cpl_xml_structure();
+  test_pkl_xml_structure();
+  test_assetmap_xml_structure();
+  test_hash_file_base64();
+  test_hash_file_nonexistent();
+  test_encode_config_defaults();
+  test_dcp_create_invalid_input();
 
   std::cout << tests_passed << "/" << tests_run << " tests passed\n";
   return (tests_passed == tests_run) ? 0 : 1;

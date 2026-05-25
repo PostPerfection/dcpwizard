@@ -6,6 +6,7 @@
 #include "dcpwizard/hash.h"
 #include "dcpwizard/mxf_wrap.h"
 #include "dcpwizard/pkl.h"
+#include "dcpwizard/transcode.h"
 
 #include <KM_util.h>
 #include <filesystem>
@@ -32,11 +33,49 @@ int create_dcp(const DCPConfig& config)
 
   if (config.video_dir.empty() || !fs::exists(config.video_dir))
   {
-    spdlog::error("Video directory does not exist: {}", config.video_dir.string());
+    spdlog::error("Video input does not exist: {}", config.video_dir.string());
     return 1;
   }
 
   fs::create_directories(config.output_dir);
+
+  // If input is a video file (MP4, MOV, etc.), transcode first
+  fs::path frames_dir = config.video_dir;
+  fs::path audio_file = config.audio_file;
+  bool transcode_cleanup = false;
+
+  if (is_video_file(config.video_dir))
+  {
+    spdlog::info("Input is a video file — transcoding to image sequence...");
+    auto transcode_dir = config.output_dir / "transcode_tmp";
+
+    TranscodeConfig tc;
+    tc.input_file = config.video_dir;
+    tc.output_dir = transcode_dir;
+
+    auto result = transcode_to_sequence(tc);
+    if (!result.success)
+    {
+      spdlog::error("Transcode failed: {}", result.error);
+      return 1;
+    }
+
+    frames_dir = result.output_dir;
+    transcode_cleanup = true;
+
+    // Use extracted audio if no audio was explicitly specified
+    if (audio_file.empty() && !result.audio_file.empty())
+    {
+      audio_file = result.audio_file;
+      spdlog::info("Using extracted audio: {}", audio_file.string());
+    }
+  }
+  else if (!fs::is_directory(config.video_dir))
+  {
+    spdlog::error("Video input is not a directory or video file: {}",
+                  config.video_dir.string());
+    return 1;
+  }
 
   // Step 1: Encode images → J2K
   auto j2k_dir = config.output_dir / "j2k_tmp";
@@ -44,7 +83,7 @@ int create_dcp(const DCPConfig& config)
 
   {
     EncodeConfig enc;
-    enc.input_dir = config.video_dir;
+    enc.input_dir = frames_dir;
     enc.output_dir = j2k_dir;
     enc.bandwidth_mbps = config.max_bitrate_mbps;
     int rc = encode_j2k(enc);
@@ -93,13 +132,13 @@ int create_dcp(const DCPConfig& config)
   // Step 3: Wrap audio → sound MXF (optional)
   std::string sound_uuid;
   auto sound_mxf = config.output_dir / "audio.mxf";
-  bool has_audio = !config.audio_file.empty() && fs::exists(config.audio_file);
+  bool has_audio = !audio_file.empty() && fs::exists(audio_file);
 
   if (has_audio)
   {
     sound_uuid = make_uuid();
     AudioConfig acfg;
-    acfg.input_files.push_back(config.audio_file);
+    acfg.input_files.push_back(audio_file);
     int rc = wrap_audio(acfg, sound_mxf);
     if (rc != 0)
     {
@@ -208,6 +247,10 @@ int create_dcp(const DCPConfig& config)
 
   // Cleanup temp J2K directory
   fs::remove_all(j2k_dir);
+
+  // Cleanup transcode temp directory
+  if (transcode_cleanup)
+    fs::remove_all(config.output_dir / "transcode_tmp");
 
   spdlog::info("DCP created successfully: {}", config.output_dir.string());
   return 0;
