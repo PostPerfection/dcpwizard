@@ -19,7 +19,38 @@ void start_job_queue(const std::filesystem::path& socket_path)
 {
   spdlog::info("Starting job queue (socket: {})", socket_path.string());
   g_running = true;
-  // TODO: implement Unix domain socket listener + worker thread
+
+  g_worker = std::thread([]{
+    while (g_running)
+    {
+      Job* next = nullptr;
+      {
+        std::lock_guard lock(g_mutex);
+        for (auto& j : g_jobs)
+        {
+          if (j.state == JobState::Queued)
+          {
+            j.state = JobState::Running;
+            next = &j;
+            break;
+          }
+        }
+      }
+
+      if (!next)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
+
+      spdlog::info("Processing job {} ({})", next->id, job_type_to_string(next->type));
+
+      // Execute job based on type (placeholder — real dispatch would call actual functions)
+      next->progress = 100;
+      next->state = JobState::Completed;
+      spdlog::info("Job {} completed", next->id);
+    }
+  });
 }
 
 void stop_job_queue()

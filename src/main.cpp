@@ -172,7 +172,18 @@ int main(int argc, char** argv)
     config.output_dir = output_dir;
     if (!profile_name.empty())
     {
-      // TODO: apply profile settings
+      if (profile_name == "flat" || profile_name == "scope")
+      {
+        config.resolution = dcpwizard::Resolution::TwoK;
+      }
+      else if (profile_name == "4k-flat" || profile_name == "4k-scope" || profile_name == "imax")
+      {
+        config.resolution = dcpwizard::Resolution::FourK;
+      }
+      else
+      {
+        spdlog::warn("Unknown profile '{}', using defaults", profile_name);
+      }
     }
     return dcpwizard::create_dcp(config);
   }
