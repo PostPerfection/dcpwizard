@@ -24,7 +24,8 @@ static void test_create_dcp_stub()
   config.title = "Integration Test";
   config.output_dir = "/tmp/dcpwizard_test_output";
   int rc = dcpwizard::create_dcp(config);
-  ASSERT(rc == 0);
+  // No video_dir set → should fail gracefully
+  ASSERT(rc != 0);
 }
 
 static void test_inspect_nonexistent()
