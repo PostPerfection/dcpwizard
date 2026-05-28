@@ -126,7 +126,7 @@ impl JobQueue {
         match self.jobs.lock() {
             Ok(jobs) => {
                 let mut result: Vec<Job> = jobs.values().cloned().collect();
-                result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                result.sort_by_key(|j| std::cmp::Reverse(j.created_at));
                 result
             }
             Err(_) => Vec::new(),

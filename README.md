@@ -67,9 +67,23 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **DCP verification** — validate structure, hashes, XML schemas
 - **Markers** — FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC
 
+### HDR & Dolby Vision
+- **HDR detection** — auto-detect SDR, HDR10, HDR10+, Dolby Vision, HLG from source
+- **Dolby Vision RPU injection** via dovi_tool
+- **HDR10 static metadata** injection (SMPTE ST 2086 + CTA 861.3)
+- **HDR format conversion** — HDR10 ↔ HLG ↔ SDR tone mapping
+
+### Camera Ingest
+- **Camera raw detection** — ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon
+- **Media scanning** — auto-detect resolution, frame rate, codec, reel names
+- **Transcode to intermediate** — DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
+- **3D LUT application** during ingest
+- **Timeline conform** — assemble reels from EDL (CMX 3600), AAF, FCP XML, OTIO
+
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
 - **Frame extraction** — extract individual frames as images (thumbnails/preview)
+- **Frame-accurate preview** with display colourspace selection
 
 ### Delivery & Automation
 - **Copy to drive** with post-copy hash verification (USB/CRU)
@@ -78,6 +92,8 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **REST API** for headless/batch operation
 - **Docker container** for CI/CD pipelines
 - **CLI scriptable** — all features accessible from command line
+- **Version dashboard** — OV/VF management, territory tracking, distribution matrix export
+- **Webhook notifications** — HTTP callbacks on job completion/failure
 
 ### Mastering & Compliance
 - **DCDM creation** — Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
@@ -224,6 +240,10 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Trailer packaging (ratings/leaders) | ✅ | ❌ |
 | Content version tracking | ✅ | ❌ |
 | Accessibility compliance (CVAA/EAA) | ✅ | ❌ |
+| Dolby Vision / HDR10 / HLG | ✅ | ❌ |
+| Camera ingest (ARRI/RED/BRAW) | ✅ | ❌ |
+| Timeline conform (EDL/AAF/OTIO) | ✅ | ❌ |
+| Version dashboard & distribution matrix | ✅ | ❌ |
 | Open source | ✅ (GPL-3.0) | ❌ |
 | **Price** | **Free** | **€2,998 or €138/mo** |
 
@@ -233,7 +253,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 dcpwizard/
 ├── rust/                # Rust workspace
 │   ├── crates/
-│   │   ├── dcpwizard-core/  # Core library — DCP creation, encoding, encryption, KDM, QC
+│   │   ├── dcpwizard-core/  # Core library — 59 modules, DCP creation, encoding, encryption, KDM, QC
 │   │   └── dcpwizard-cli/   # CLI binary (dcpwizard)
 │   └── Cargo.toml
 ├── gui/                 # Tauri 2 desktop application
