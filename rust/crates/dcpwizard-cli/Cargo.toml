@@ -9,6 +9,10 @@ description = "DCP Wizard CLI — Digital Cinema Package creator"
 name = "dcpwizard"
 path = "src/main.rs"
 
+[features]
+default = []
+grok-ffi = ["postkit/grok-ffi"]
+
 [dependencies]
 clap.workspace = true
 dcpwizard-core = { path = "../dcpwizard-core" }
