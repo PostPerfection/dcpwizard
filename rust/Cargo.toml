@@ -10,7 +10,7 @@ version = "0.1.0"
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
 dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", branch = "master" }
-postkit = { path = "../extern/postkit" }
+postkit = { path = "../extern/postkit", features = ["grok-ffi", "openjpeg"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"

@@ -8,6 +8,7 @@ pub struct VideoInfo {
     pub fps_num: u32,
     pub fps_den: u32,
     pub has_audio: bool,
+    pub total_frames: u32,
 }
 
 /// Probe a video file using ffprobe to extract resolution and frame rate.
@@ -63,12 +64,38 @@ pub fn probe_video(path: &Path) -> Option<VideoInfo> {
         .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
         .unwrap_or(false);
 
+    // Get total frame count
+    let nb_output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "quiet",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .ok();
+    let total_frames = nb_output
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u32>()
+                .ok()
+        })
+        .unwrap_or(0);
+
     Some(VideoInfo {
         width,
         height,
         fps_num,
         fps_den,
         has_audio,
+        total_frames,
     })
 }
 

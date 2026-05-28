@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use postkit::grok;
+use postkit::grok_encoder::{self, CompressParams, RawFrame};
 
 /// Encode configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -10,14 +15,8 @@ pub struct EncodeConfig {
     pub output_dir: PathBuf,
 }
 
-/// Encode image sequence to JPEG 2000 codestream using grk_compress.
+/// Encode image sequence to JPEG 2000 using in-process Grok FFI pipeline.
 pub fn encode_j2k(config: &EncodeConfig) -> i32 {
-    if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
-        tracing::error!("Failed to create output directory: {e}");
-        return -1;
-    }
-
-    // Find input frames
     let mut frames: Vec<PathBuf> = std::fs::read_dir(&config.input_dir)
         .into_iter()
         .flatten()
@@ -36,51 +35,71 @@ pub fn encode_j2k(config: &EncodeConfig) -> i32 {
         return -1;
     }
 
-    let bandwidth = if config.bandwidth_mbps > 0 {
-        config.bandwidth_mbps
+    let ratio = if config.bandwidth_mbps > 0 {
+        // Convert target Mbps to compression ratio
+        // DCI 2K 24fps: uncompressed ≈ 2048*1080*3*12*24 bits/sec ≈ 2.28 Gbps
+        // ratio = uncompressed_bps / target_bps
+        let uncompressed_mbps = 2048.0 * 1080.0 * 3.0 * 12.0 * 24.0 / 1_000_000.0;
+        uncompressed_mbps / config.bandwidth_mbps as f64
     } else {
-        250
+        10.0
     };
 
-    for frame in &frames {
-        let stem = frame
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("frame");
-        let output = config.output_dir.join(format!("{stem}.j2c"));
+    let params = CompressParams {
+        compression_ratio: ratio,
+        ..CompressParams::default()
+    };
 
-        let result = std::process::Command::new("grk_compress")
-            .arg("-i")
-            .arg(frame)
-            .arg("-o")
-            .arg(&output)
-            .arg("-r")
-            .arg(format!("{}", bandwidth))
-            .arg("-cinema2K")
-            .arg("24")
-            .output();
+    let total_frames = frames.len() as u64;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut frame_iter = frames.into_iter().enumerate();
 
-        match result {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                tracing::error!(
-                    "grk_compress failed for {}: {}",
-                    stem,
-                    String::from_utf8_lossy(&o.stderr)
+    grok_encoder::initialize(0);
+
+    let result = grok_encoder::encode_pipeline(
+        &config.output_dir,
+        &params,
+        total_frames,
+        &cancel,
+        || {
+            let (idx, path) = frame_iter.next()?;
+            match grok::load_tiff(&path) {
+                Ok(tf) => Some(RawFrame::Planar {
+                    components: tf.components,
+                    width: tf.width,
+                    height: tf.height,
+                    precision: tf.precision,
+                    index: idx as u64,
+                }),
+                Err(e) => {
+                    tracing::error!("Failed to load {}: {e}", path.display());
+                    None
+                }
+            }
+        },
+        |progress| {
+            if progress.total_frames > 0 {
+                tracing::info!(
+                    "Encoding: {}/{} frames ({:.1} fps)",
+                    progress.frames_encoded,
+                    progress.total_frames,
+                    progress.fps,
                 );
-                return -1;
             }
-            Err(e) => {
-                tracing::error!("Failed to run grk_compress: {e}");
-                return -1;
-            }
-        }
+        },
+    );
+
+    grok_encoder::deinitialize();
+
+    if !result.success {
+        tracing::error!("Encode failed: {}", result.error);
+        return -1;
     }
 
     tracing::info!(
-        "Encoded {} frames to J2K at {} Mbps",
-        frames.len(),
-        bandwidth
+        "Encoded {} frames to J2K (ratio {:.1}:1)",
+        result.frames_encoded,
+        ratio,
     );
     0
 }

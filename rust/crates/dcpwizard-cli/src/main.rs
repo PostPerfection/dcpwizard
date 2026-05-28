@@ -40,6 +40,9 @@ enum Commands {
         /// Encrypt the DCP
         #[arg(long)]
         encrypt: bool,
+        /// J2K encoder: "grok" (default) or "openjpeg"
+        #[arg(long, default_value = "grok")]
+        encoder: String,
     },
     /// Encode images to JPEG 2000
     Encode {
@@ -183,6 +186,8 @@ fn main() {
     let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    postkit::grok_encoder::initialize(0);
+
     let code = match cli.command {
         Commands::Create {
             title,
@@ -191,6 +196,7 @@ fn main() {
             output,
             standard,
             encrypt,
+            encoder,
             ..
         } => {
             let video_path = PathBuf::from(&video);
@@ -225,24 +231,15 @@ fn main() {
 
             if is_video_file {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
-                use postkit::encode::{StreamEncodeOptions, find_compressor, stream_encode};
+                use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
                 use std::sync::Arc;
                 use std::sync::atomic::AtomicBool;
-
-                let (compressor_path, lib_dir) = match find_compressor() {
-                    Some(c) => c,
-                    None => {
-                        tracing::error!("grk_compress not found (required for video encoding)");
-                        std::process::exit(1);
-                    }
-                };
 
                 let _ = std::fs::create_dir_all(&output_dir);
                 let j2k_dir = output_dir.join("j2k");
                 let _ = std::fs::create_dir_all(&j2k_dir);
 
-                tracing::info!("Detected video file input — running full pipeline");
-                tracing::info!("Compressor: {}", compressor_path.display());
+                tracing::info!("Detected video file input — using {} encoder", encoder);
 
                 // Probe video for frame rate and resolution
                 let video_info = dcpwizard_core::probe::probe_video(&video_path);
@@ -250,45 +247,76 @@ fn main() {
                     .as_ref()
                     .map(|v| v.fps_num / v.fps_den.max(1))
                     .unwrap_or(24);
+                let (width, height, total_frames) = video_info
+                    .as_ref()
+                    .map(|v| (v.width, v.height, v.total_frames))
+                    .unwrap_or((2048, 1080, 0));
                 if let Some(ref info) = video_info {
                     tracing::info!(
-                        "Input: {}x{} @ {}/{} fps",
+                        "Input: {}x{} @ {}/{} fps, ~{} frames",
                         info.width,
                         info.height,
                         info.fps_num,
-                        info.fps_den
+                        info.fps_den,
+                        info.total_frames,
                     );
                 }
-                let opts = StreamEncodeOptions {
-                    input: video_path.clone(),
-                    output_dir: j2k_dir.clone(),
+
+                let params = CompressParams {
                     compression_ratio: 10.0,
-                    num_resolutions: 6,
-                    codeblock_size: 32,
-                    progression: "CPRL".to_string(),
-                    fps,
-                    compressor_path,
-                    lib_dir,
+                    frame_rate: fps as u16,
+                    ..CompressParams::default()
                 };
 
                 let cancel = Arc::new(AtomicBool::new(false));
-                let pause = Arc::new(AtomicBool::new(false));
                 let cancel_clone = cancel.clone();
                 let _ = ctrlc::set_handler(move || {
                     cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 });
 
-                let result = stream_encode(&opts, &cancel, &pause, |p| {
-                    let percent = if p.total_frames > 0 {
-                        (p.frame as f64 / p.total_frames as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    eprint!(
-                        "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
-                        p.frame, p.total_frames, percent, p.fps
-                    );
-                });
+                let result = if encoder == "openjpeg" {
+                    postkit::openjpeg_encoder::encode_video_pipeline_opj(
+                        &video_path,
+                        &j2k_dir,
+                        &params,
+                        total_frames as u64,
+                        width,
+                        height,
+                        &cancel,
+                        |p: EncodeProgress| {
+                            let percent = if p.total_frames > 0 {
+                                (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
+                            } else {
+                                0.0
+                            };
+                            eprint!(
+                                "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                                p.frames_encoded, p.total_frames, percent, p.fps
+                            );
+                        },
+                    )
+                } else {
+                    grok_encoder::encode_video_pipeline(
+                        &video_path,
+                        &j2k_dir,
+                        &params,
+                        total_frames as u64,
+                        width,
+                        height,
+                        &cancel,
+                        |p: EncodeProgress| {
+                            let percent = if p.total_frames > 0 {
+                                (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
+                            } else {
+                                0.0
+                            };
+                            eprint!(
+                                "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                                p.frames_encoded, p.total_frames, percent, p.fps
+                            );
+                        },
+                    )
+                };
                 eprintln!();
 
                 if !result.success {
@@ -389,7 +417,7 @@ fn main() {
             ratio,
             fps,
         } => {
-            use postkit::encode::{StreamEncodeOptions, find_compressor, stream_encode};
+            use postkit::encode::{StreamEncodeOptions, stream_encode_subprocess};
             use std::sync::Arc;
             use std::sync::atomic::AtomicBool;
 
@@ -405,16 +433,14 @@ fn main() {
             let j2k_dir = output_dir.join("j2k");
             let _ = std::fs::create_dir_all(&j2k_dir);
 
-            let (compressor_path, lib_dir) = match find_compressor() {
-                Some(c) => c,
-                None => {
-                    tracing::error!("grk_compress not found");
-                    std::process::exit(1);
-                }
-            };
+            tracing::info!("Pipeline (subprocess Grok): {} -> {}", input, output);
 
-            tracing::info!("Pipeline: {} -> {}", input, output);
-            tracing::info!("Compressor: {}", compressor_path.display());
+            let grk_bin = std::env::var("GRK_COMPRESS_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    PathBuf::from(home).join("bin/grok/bin/grk_compress")
+                });
 
             let opts = StreamEncodeOptions {
                 input: input_path.clone(),
@@ -424,12 +450,11 @@ fn main() {
                 codeblock_size: 32,
                 progression: "CPRL".to_string(),
                 fps,
-                compressor_path,
-                lib_dir,
+                compressor_path: grk_bin,
+                lib_dir: None,
             };
 
             let cancel = Arc::new(AtomicBool::new(false));
-            let pause = Arc::new(AtomicBool::new(false));
 
             // Handle Ctrl+C
             let cancel_clone = cancel.clone();
@@ -437,7 +462,7 @@ fn main() {
                 cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
             });
 
-            let result = stream_encode(&opts, &cancel, &pause, |p| {
+            let result = stream_encode_subprocess(&opts, &cancel, |p| {
                 let percent = if p.total_frames > 0 {
                     (p.frame as f64 / p.total_frames as f64) * 100.0
                 } else {
@@ -714,5 +739,6 @@ fn main() {
         }
     };
 
+    postkit::grok_encoder::deinitialize();
     std::process::exit(code);
 }
