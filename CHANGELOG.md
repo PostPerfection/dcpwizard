@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.0] — 2025-01-20
+## [1.0.0] — 2025-01-20
 
 ### Added
 - **CLI: Create subcommand** — Full DCP creation from JPEG 2000 + audio MXF inputs
