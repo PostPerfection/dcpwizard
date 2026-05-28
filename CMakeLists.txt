@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 project(dcpwizard
-    VERSION 0.1.0
+    VERSION 0.5.0
     DESCRIPTION "DCP Wizard — Digital Cinema Package creator"
     LANGUAGES CXX)
 
