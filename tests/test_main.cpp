@@ -93,7 +93,7 @@ static void test_encode()
 static void test_encrypt()
 {
   dcpwizard::EncryptionConfig config;
-  config.dcp_dir = "/tmp";
+  config.dcp_dir = std::filesystem::temp_directory_path().string();
   ASSERT(dcpwizard::encrypt_dcp(config) == 0);
 }
 
@@ -151,7 +151,8 @@ static void test_cpl()
   config.id = "00000000-0000-0000-0000-000000000001";
   config.title = "Test CPL";
   config.content_kind = "feature";
-  ASSERT(dcpwizard::generate_cpl(config, "/tmp/cpl.xml") == 0);
+  auto cpl_path = (std::filesystem::temp_directory_path() / "test_cpl.xml").string();
+  ASSERT(dcpwizard::generate_cpl(config, cpl_path) == 0);
 }
 
 static void test_pkl()
@@ -159,7 +160,8 @@ static void test_pkl()
   dcpwizard::PKLConfig config;
   config.id = "00000000-0000-0000-0000-000000000002";
   config.annotation = "Test PKL";
-  ASSERT(dcpwizard::generate_pkl(config, "/tmp/pkl.xml") == 0);
+  auto pkl_path = (std::filesystem::temp_directory_path() / "test_pkl.xml").string();
+  ASSERT(dcpwizard::generate_pkl(config, pkl_path) == 0);
 }
 
 static void test_assetmap()
@@ -167,7 +169,9 @@ static void test_assetmap()
   dcpwizard::AssetMapConfig config;
   config.id = "00000000-0000-0000-0000-000000000003";
   config.annotation = "Test ASSETMAP";
-  ASSERT(dcpwizard::generate_assetmap(config, "/tmp") == 0);
+  auto am_dir = (std::filesystem::temp_directory_path() / "test_assetmap").string();
+  std::filesystem::create_directories(am_dir);
+  ASSERT(dcpwizard::generate_assetmap(config, am_dir) == 0);
 }
 
 static void test_mxf_wrap()
