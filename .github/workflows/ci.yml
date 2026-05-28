@@ -28,68 +28,47 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             cmake \
-            ninja-build \
             pkg-config \
             libxml2-dev \
             libssl-dev \
-            libxerces-c-dev \
-            libsqlite3-dev
+            libxerces-c-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install \
-            cmake \
-            ninja \
-            pkg-config \
-            libxml2 \
-            openssl@3 \
-            xerces-c \
-            sqlite
+          brew install cmake pkg-config libxml2 openssl@3 xerces-c
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix libxml2);$(brew --prefix xerces-c)" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
           $env:VCPKG_BUILD_TYPE="release"
-          vcpkg install libxml2 openssl xerces-c sqlite3 --triplet x64-windows
-
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DBUILD_TESTING=ON
-
-      - name: Configure (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DBUILD_TESTING=ON \
-            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix libxml2);$(brew --prefix xerces-c)"
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
-            -DBUILD_TESTING=ON `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          vcpkg install libxml2 openssl xerces-c --triplet x64-windows
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        working-directory: rust
+        run: cargo build --release
 
       - name: Test
-        run: |
-          cd build
-          ctest --output-on-failure --build-config Release
+        working-directory: rust
+        run: cargo test
+
+      - name: Clippy
+        working-directory: rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Format check
+        working-directory: rust
+        run: cargo fmt -- --check
