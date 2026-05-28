@@ -6,7 +6,7 @@ license.workspace = true
 description = "DCP Wizard — Digital Cinema Package creation library"
 
 [dependencies]
-asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", branch = "master" }
+asdcplib.workspace = true
 chrono = "0.4"
 dcpdoctor-core.workspace = true
 postkit.workspace = true
