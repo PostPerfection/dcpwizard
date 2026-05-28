@@ -244,7 +244,21 @@ fn main() {
                 tracing::info!("Detected video file input — running full pipeline");
                 tracing::info!("Compressor: {}", compressor_path.display());
 
-                let fps = 24u32;
+                // Probe video for frame rate and resolution
+                let video_info = dcpwizard_core::probe::probe_video(&video_path);
+                let fps = video_info
+                    .as_ref()
+                    .map(|v| v.fps_num / v.fps_den.max(1))
+                    .unwrap_or(24);
+                if let Some(ref info) = video_info {
+                    tracing::info!(
+                        "Input: {}x{} @ {}/{} fps",
+                        info.width,
+                        info.height,
+                        info.fps_num,
+                        info.fps_den
+                    );
+                }
                 let opts = StreamEncodeOptions {
                     input: video_path.clone(),
                     output_dir: j2k_dir.clone(),

@@ -25,6 +25,7 @@ pub mod multi_cpl;
 pub mod mxf_wrap;
 pub mod pkl;
 pub mod preferences;
+pub mod probe;
 pub mod profiles;
 pub mod qc;
 pub mod reel;
