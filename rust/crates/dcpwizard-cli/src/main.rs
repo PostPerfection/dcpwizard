@@ -238,6 +238,34 @@ enum BatchAction {
 }
 
 fn main() {
+    // User-friendly panic handler
+    std::panic::set_hook(Box::new(|info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unexpected error".to_string()
+        };
+        let location = info
+            .location()
+            .map(|l| format!(" ({}:{})", l.file(), l.line()))
+            .unwrap_or_default();
+        eprintln!("\nerror: dcpwizard crashed: {payload}{location}");
+        eprintln!(
+            "This is a bug. Please report it at https://github.com/PostPerfection/dcpwizard/issues"
+        );
+        eprintln!("Include the command you ran and any input files if possible.");
+        if std::env::var("RUST_BACKTRACE").is_ok() {
+            eprintln!(
+                "\nBacktrace:\n{:?}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        } else {
+            eprintln!("Set RUST_BACKTRACE=1 for a detailed backtrace.");
+        }
+    }));
+
     let cli = Cli::parse();
 
     let filter = if cli.verbose { "debug" } else { "info" };
