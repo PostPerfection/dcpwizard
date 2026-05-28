@@ -27,12 +27,12 @@ int encode_j2k(const EncodeConfig& config)
 
   // Build command: batch encode with DCI cinema2K profile at 24fps
   // -w 24         : DCI 2K cinema profile, 24fps
-  // --batch-src   : input directory
+  // -batch_src    : input directory
   // -a            : output directory
   // -O J2K        : output raw J2K codestreams
   std::string cmd = grk_compress;
   cmd += " -w 24";
-  cmd += " --batch-src " + config.input_dir.string();
+  cmd += " -batch_src " + config.input_dir.string();
   cmd += " -a " + config.output_dir.string();
   cmd += " -O J2K";
 

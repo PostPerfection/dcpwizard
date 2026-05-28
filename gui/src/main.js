@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Command } from "@tauri-apps/plugin-shell";
 import { open as _open } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { initPreview, previewDcp } from "./preview.js";
+import { initPreview, previewDcp, previewFile } from "./preview.js";
 
 // === Browse wrapper (remembers last directory) ===
 let lastBrowseDir = null;
@@ -418,7 +418,12 @@ document.getElementById("progress-cancel")?.addEventListener("click", async () =
 document.getElementById("btn-preview")?.addEventListener("click", async () => {
   const output = document.getElementById("prop-output")?.value;
   if (output) {
+    // Try to preview the built DCP
     previewDcp(output);
+  } else {
+    // Preview the first video asset
+    const reel = project.reels[0];
+    if (reel?.picture) previewFile(reel.picture.path);
   }
 });
 
@@ -586,6 +591,138 @@ document.getElementById("prop-title")?.addEventListener("input", (e) => {
   const title = e.target.value.trim();
   document.getElementById("project-name").textContent = title || "Untitled Project";
   project.title = title;
+});
+
+// === Tools: Encode J2K ===
+document.getElementById("enc-browse-input")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("enc-input").value = dir; checkEncodeReady(); }
+});
+document.getElementById("enc-browse-output")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("enc-output").value = dir; checkEncodeReady(); }
+});
+
+function checkEncodeReady() {
+  const btn = document.getElementById("run-encode");
+  if (btn) btn.disabled = !(document.getElementById("enc-input")?.value && document.getElementById("enc-output")?.value);
+}
+
+document.getElementById("run-encode")?.addEventListener("click", async () => {
+  const input = document.getElementById("enc-input").value;
+  const output = document.getElementById("enc-output").value;
+  const resolution = document.getElementById("enc-resolution").value;
+  const bandwidth = document.getElementById("enc-bandwidth").value;
+  const framerate = document.getElementById("enc-framerate").value;
+  const resultsBox = document.getElementById("encode-results");
+  resultsBox.classList.add("visible");
+  resultsBox.textContent = "Encoding...";
+  const args = ["encode", input, "-o", output, "--resolution", resolution, "--bandwidth", bandwidth, "--framerate", framerate];
+  const cmd = Command.sidecar("dcpwizard", args);
+  const result = await cmd.execute();
+  resultsBox.textContent = result.code === 0
+    ? "✓ Encode complete\n\n" + result.stdout
+    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+});
+
+// === Tools: Transcode ===
+document.getElementById("tc-browse-input")?.addEventListener("click", async () => {
+  const file = await open({ directory: false, filters: [{ name: 'Video', extensions: ['mp4','mkv','mov','avi','mxf','webm'] }, { name: 'All', extensions: ['*'] }] });
+  if (file) { document.getElementById("tc-input").value = file; checkTranscodeReady(); }
+});
+document.getElementById("tc-browse-output")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("tc-output").value = dir; checkTranscodeReady(); }
+});
+
+function checkTranscodeReady() {
+  const btn = document.getElementById("tc-start");
+  if (btn) btn.disabled = !(document.getElementById("tc-input")?.value && document.getElementById("tc-output")?.value);
+}
+
+document.getElementById("tc-start")?.addEventListener("click", async () => {
+  const input = document.getElementById("tc-input").value;
+  const output = document.getElementById("tc-output").value;
+  const format = document.getElementById("tc-format").value;
+  const bitdepth = document.getElementById("tc-bitdepth").value;
+  const resultsBox = document.getElementById("tc-results");
+  resultsBox.classList.add("visible");
+  resultsBox.textContent = "Transcoding...";
+  const args = ["transcode", input, "-o", output, "--format", format, "--bit-depth", bitdepth];
+  const cmd = Command.sidecar("dcpwizard", args);
+  const result = await cmd.execute();
+  resultsBox.textContent = result.code === 0
+    ? "✓ Transcode complete\n\n" + result.stdout
+    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+});
+
+// === Tools: Loudness ===
+document.getElementById("loud-browse")?.addEventListener("click", async () => {
+  const file = await open({ directory: false, filters: [{ name: 'Audio', extensions: ['wav','aiff','flac','mp3'] }, { name: 'All', extensions: ['*'] }] });
+  if (file) { document.getElementById("loud-input").value = file; document.getElementById("loud-measure").disabled = false; }
+});
+
+document.getElementById("loud-measure")?.addEventListener("click", async () => {
+  const input = document.getElementById("loud-input").value;
+  const resultsBox = document.getElementById("loud-results");
+  resultsBox.classList.add("visible");
+  resultsBox.textContent = "Measuring loudness...";
+  const cmd = Command.sidecar("dcpwizard", ["loudness", input]);
+  const result = await cmd.execute();
+  resultsBox.textContent = result.code === 0
+    ? "✓ Loudness measured\n\n" + result.stdout
+    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+});
+
+// === Tools: Copy DCP ===
+document.getElementById("copy-browse-source")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("copy-source").value = dir; checkCopyReady(); }
+});
+document.getElementById("copy-browse-dest")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("copy-dest").value = dir; checkCopyReady(); }
+});
+
+function checkCopyReady() {
+  const btn = document.getElementById("copy-start");
+  if (btn) btn.disabled = !(document.getElementById("copy-source")?.value && document.getElementById("copy-dest")?.value);
+}
+
+document.getElementById("copy-start")?.addEventListener("click", async () => {
+  const source = document.getElementById("copy-source").value;
+  const dest = document.getElementById("copy-dest").value;
+  const verify = document.getElementById("copy-verify")?.checked;
+  const resultsBox = document.getElementById("copy-results");
+  resultsBox.classList.add("visible");
+  resultsBox.textContent = "Copying...";
+  const args = ["copy", source, dest];
+  if (verify) args.push("--verify");
+  const cmd = Command.sidecar("dcpwizard", args);
+  const result = await cmd.execute();
+  resultsBox.textContent = result.code === 0
+    ? "✓ Copy complete\n\n" + result.stdout
+    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+});
+
+// === Tools: QC Report ===
+document.getElementById("report-browse")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("report-dcp").value = dir; document.getElementById("report-start").disabled = false; }
+});
+
+document.getElementById("report-start")?.addEventListener("click", async () => {
+  const dcp = document.getElementById("report-dcp").value;
+  const format = document.getElementById("report-format").value;
+  const resultsBox = document.getElementById("report-results");
+  resultsBox.classList.add("visible");
+  resultsBox.textContent = "Generating report...";
+  const args = ["report", dcp, "--format", format];
+  const cmd = Command.sidecar("dcpwizard", args);
+  const result = await cmd.execute();
+  resultsBox.textContent = result.code === 0
+    ? result.stdout
+    : "✗ Failed\n\n" + (result.stderr || result.stdout);
 });
 
 // === Init ===

@@ -30,6 +30,9 @@
         <button class="sidebar-btn" data-view="security" title="Encryption & KDM">
           <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
         </button>
+        <button class="sidebar-btn" data-view="tools" title="Tools">
+          <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
+        </button>
         <button class="sidebar-btn" data-view="jobs" title="Jobs">
           <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4v2zm0 5h18V9H4v2zm0 5h18v-2H4v2zm0 5h18v-2H4v2z"/></svg>
         </button>
@@ -323,6 +326,153 @@
               </div>
               <button id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
               <div id="kdm-results" class="results-box"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- TOOLS VIEW -->
+        <div class="view" id="view-tools">
+          <div class="split-panels">
+            <section class="panel">
+              <h2>Encode to JPEG 2000</h2>
+              <div class="prop-field">
+                <label>Input (image sequence folder)</label>
+                <div class="input-with-btn">
+                  <input id="enc-input" type="text" placeholder="Select folder…" readonly>
+                  <button id="enc-browse-input" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Output Directory</label>
+                <div class="input-with-btn">
+                  <input id="enc-output" type="text" placeholder="Select folder…" readonly>
+                  <button id="enc-browse-output" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="prop-field">
+                  <label>Resolution</label>
+                  <select id="enc-resolution">
+                    <option value="2k">2K (2048×1080)</option>
+                    <option value="4k">4K (4096×2160)</option>
+                  </select>
+                </div>
+                <div class="prop-field">
+                  <label>Bandwidth (Mbps)</label>
+                  <input type="number" id="enc-bandwidth" value="250" min="50" max="500">
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Frame Rate</label>
+                <select id="enc-framerate">
+                  <option value="24">24 fps</option>
+                  <option value="25">25 fps</option>
+                  <option value="30">30 fps</option>
+                  <option value="48">48 fps (HFR)</option>
+                </select>
+              </div>
+              <button id="run-encode" class="btn-primary" disabled>Encode</button>
+              <div id="encode-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Transcode Video</h2>
+              <p class="field-hint">Convert video files to image sequences for DCP encoding.</p>
+              <div class="prop-field">
+                <label>Input Video</label>
+                <div class="input-with-btn">
+                  <input id="tc-input" type="text" placeholder="Select video…" readonly>
+                  <button id="tc-browse-input" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Output Directory</label>
+                <div class="input-with-btn">
+                  <input id="tc-output" type="text" placeholder="Select folder…" readonly>
+                  <button id="tc-browse-output" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="prop-field">
+                  <label>Format</label>
+                  <select id="tc-format">
+                    <option value="tiff">TIFF</option>
+                    <option value="dpx">DPX</option>
+                    <option value="exr">EXR</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+                <div class="prop-field">
+                  <label>Bit Depth</label>
+                  <select id="tc-bitdepth">
+                    <option value="16">16-bit</option>
+                    <option value="10">10-bit</option>
+                    <option value="8">8-bit</option>
+                  </select>
+                </div>
+              </div>
+              <button id="tc-start" class="btn-primary" disabled>Transcode</button>
+              <div id="tc-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Loudness Measurement</h2>
+              <p class="field-hint">Measure audio loudness per EBU R128 / SMPTE ST 2095.</p>
+              <div class="prop-field">
+                <label>Audio File</label>
+                <div class="input-with-btn">
+                  <input id="loud-input" type="text" placeholder="Select audio…" readonly>
+                  <button id="loud-browse" class="btn-sm">…</button>
+                </div>
+              </div>
+              <button id="loud-measure" class="btn-primary" disabled>Measure</button>
+              <div id="loud-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Copy DCP</h2>
+              <p class="field-hint">Copy a DCP to an external drive with verification.</p>
+              <div class="prop-field">
+                <label>Source DCP</label>
+                <div class="input-with-btn">
+                  <input id="copy-source" type="text" placeholder="Select DCP folder…" readonly>
+                  <button id="copy-browse-source" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Destination</label>
+                <div class="input-with-btn">
+                  <input id="copy-dest" type="text" placeholder="Select destination…" readonly>
+                  <button id="copy-browse-dest" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label><input type="checkbox" id="copy-verify" checked> Verify after copy</label>
+              </div>
+              <button id="copy-start" class="btn-primary" disabled>Copy DCP</button>
+              <div id="copy-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
+              <h2>QC Report</h2>
+              <p class="field-hint">Generate a quality-control report for an existing DCP.</p>
+              <div class="prop-field">
+                <label>DCP Directory</label>
+                <div class="input-with-btn">
+                  <input id="report-dcp" type="text" placeholder="Select DCP…" readonly>
+                  <button id="report-browse" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Output Format</label>
+                <select id="report-format">
+                  <option value="text">Plain Text</option>
+                  <option value="html">HTML</option>
+                  <option value="pdf">PDF</option>
+                </select>
+              </div>
+              <button id="report-start" class="btn-primary" disabled>Generate Report</button>
+              <div id="report-results" class="results-box"></div>
             </section>
           </div>
         </div>

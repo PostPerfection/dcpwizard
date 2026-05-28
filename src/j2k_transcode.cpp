@@ -32,7 +32,7 @@ int transcode_j2k(const J2KTranscodeConfig& config)
     fs::create_directories(tmp_decoded);
 
     // Decode: grk_decompress batch
-    std::string decode_cmd = "grk_decompress --batch-src " + config.input_dir.string() +
+    std::string decode_cmd = "grk_decompress -batch_src " + config.input_dir.string() +
                              " -a " + tmp_decoded.string() + " -O tif 2>/dev/null";
     int rc = system(decode_cmd.c_str());
     if (rc != 0)
