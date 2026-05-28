@@ -13,538 +13,431 @@
       <span>Drop files here to import</span>
     </div>
   </div>
+
   <div id="app">
-    <header>
-      <h1>DCP Wizard</h1>
-      <p class="subtitle">Digital Cinema Package Creator</p>
-    </header>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <button class="sidebar-btn active" data-view="project" title="Project">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        </button>
+        <button class="sidebar-btn" data-view="reels" title="Reels & Timeline">
+          <svg viewBox="0 0 24 24"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
+        </button>
+        <button class="sidebar-btn" data-view="verify" title="Verify">
+          <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+        </button>
+        <button class="sidebar-btn" data-view="security" title="Encryption & KDM">
+          <svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+        </button>
+        <button class="sidebar-btn" data-view="jobs" title="Jobs">
+          <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4v2zm0 5h18V9H4v2zm0 5h18v-2H4v2zm0 5h18v-2H4v2z"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-bottom">
+        <button class="sidebar-btn" data-view="settings" title="Settings">
+          <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        </button>
+      </div>
+    </aside>
 
-    <div id="recent-projects" class="recent-bar" style="display:none;">
-      <span class="recent-label">Recent:</span>
-      <div id="recent-list" class="recent-list"></div>
+    <!-- Main Content Area -->
+    <div class="main-area">
+      <!-- Toolbar -->
+      <header class="toolbar">
+        <div class="toolbar-left">
+          <h1>DCP Wizard</h1>
+          <span class="toolbar-separator"></span>
+          <span id="project-name" class="project-name">Untitled Project</span>
+        </div>
+        <div class="toolbar-right">
+          <button id="btn-new-project" class="toolbar-btn" title="New Project">New</button>
+          <button id="btn-open-project" class="toolbar-btn" title="Open DCP">Open</button>
+          <button id="btn-build" class="toolbar-btn primary" title="Build DCP">Build DCP</button>
+          <button id="btn-preview" class="toolbar-btn" title="Preview">▶ Preview</button>
+          <span class="toolbar-separator"></span>
+          <button id="theme-toggle" class="toolbar-btn icon" title="Toggle theme">🌙</button>
+        </div>
+      </header>
+
+      <!-- Content panels -->
+      <div class="content">
+        <!-- PROJECT VIEW (unified workspace) -->
+        <div class="view active" id="view-project">
+          <div class="workspace">
+            <!-- Left: Asset browser + reels -->
+            <div class="workspace-main">
+              <section class="panel assets-panel">
+                <div class="panel-header">
+                  <h2>Assets</h2>
+                  <div class="panel-actions">
+                    <button id="import-video" class="btn-sm">+ Video</button>
+                    <button id="import-audio" class="btn-sm">+ Audio</button>
+                    <button id="import-subtitle" class="btn-sm">+ Subtitle</button>
+                  </div>
+                </div>
+                <div id="asset-list" class="asset-list">
+                  <div class="asset-empty">
+                    <p>Drag & drop video/audio files here<br>or use the buttons above</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel reels-panel">
+                <div class="panel-header">
+                  <h2>Reels</h2>
+                  <button id="add-reel" class="btn-sm">+ Reel</button>
+                </div>
+                <div id="reel-list" class="reel-list">
+                  <div class="reel" data-reel="1">
+                    <div class="reel-header">
+                      <span class="reel-label">Reel 1</span>
+                      <span class="reel-duration" id="reel-1-duration">--:--:--</span>
+                    </div>
+                    <div class="reel-tracks">
+                      <div class="track track-picture" id="reel-1-picture">
+                        <span class="track-label">Picture</span>
+                        <span class="track-info">Drop video here</span>
+                      </div>
+                      <div class="track track-sound" id="reel-1-sound">
+                        <span class="track-label">Sound</span>
+                        <span class="track-info">Drop audio here</span>
+                      </div>
+                      <div class="track track-subtitle" id="reel-1-subtitle">
+                        <span class="track-label">Subtitle</span>
+                        <span class="track-info">Optional</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <!-- Right: Properties panel -->
+            <aside class="properties-panel" id="properties">
+              <div class="panel-header">
+                <h2>Properties</h2>
+              </div>
+              <div class="properties-content">
+                <fieldset>
+                  <legend>DCP</legend>
+                  <div class="prop-field">
+                    <label for="prop-title">Title</label>
+                    <input id="prop-title" type="text" placeholder="My Feature Film">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-content-kind">Content Kind</label>
+                    <select id="prop-content-kind">
+                      <option value="feature">Feature</option>
+                      <option value="trailer">Trailer</option>
+                      <option value="test">Test</option>
+                      <option value="short">Short</option>
+                      <option value="advertisement">Advertisement</option>
+                      <option value="episode">Episode</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-standard">Standard</label>
+                    <select id="prop-standard">
+                      <option value="smpte">SMPTE (Bv2.1)</option>
+                      <option value="interop">Interop</option>
+                    </select>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Picture</legend>
+                  <div class="prop-field">
+                    <label for="prop-resolution">Resolution</label>
+                    <select id="prop-resolution">
+                      <option value="2k-scope">2K Scope (2048×858)</option>
+                      <option value="2k-flat">2K Flat (1998×1080)</option>
+                      <option value="2k-full">2K Full (2048×1080)</option>
+                      <option value="4k-scope">4K Scope (4096×1716)</option>
+                      <option value="4k-flat">4K Flat (3996×2160)</option>
+                      <option value="4k-full">4K Full (4096×2160)</option>
+                      <option value="auto">Auto (from source)</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-framerate">Frame Rate</label>
+                    <select id="prop-framerate">
+                      <option value="24">24 fps</option>
+                      <option value="25">25 fps</option>
+                      <option value="30">30 fps</option>
+                      <option value="48">48 fps (HFR)</option>
+                      <option value="60">60 fps (HFR)</option>
+                      <option value="auto">Auto (from source)</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-bandwidth">Bandwidth (Mbps)</label>
+                    <input type="number" id="prop-bandwidth" value="250" min="50" max="500">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-colour">Colour Space</label>
+                    <select id="prop-colour">
+                      <option value="xyz">XYZ (DCI)</option>
+                      <option value="p3-d65">P3-D65</option>
+                      <option value="p3-dci">P3-DCI</option>
+                      <option value="rec709">Rec.709</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label><input type="checkbox" id="prop-stereo3d"> Stereoscopic 3D</label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Audio</legend>
+                  <div class="prop-field">
+                    <label for="prop-channels">Channels</label>
+                    <select id="prop-channels">
+                      <option value="5.1" selected>5.1</option>
+                      <option value="7.1">7.1</option>
+                      <option value="stereo">Stereo</option>
+                      <option value="mono">Mono</option>
+                      <option value="atmos">Atmos (IAB)</option>
+                    </select>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Options</legend>
+                  <div class="prop-field">
+                    <label><input type="checkbox" id="prop-encrypt"> Encrypt</label>
+                  </div>
+                  <div class="prop-field">
+                    <label><input type="checkbox" id="prop-validate" checked> Validate after build</label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Output</legend>
+                  <div class="prop-field">
+                    <label for="prop-output">Directory</label>
+                    <div class="input-with-btn">
+                      <input id="prop-output" type="text" placeholder="/path/to/output" readonly>
+                      <button id="browse-output" class="btn-sm">…</button>
+                    </div>
+                  </div>
+                </fieldset>
+              </div>
+            </aside>
+          </div>
+        </div>
+
+        <!-- REELS/TIMELINE VIEW -->
+        <div class="view" id="view-reels">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Timeline</h2>
+            </div>
+            <div id="timeline-view" class="timeline">
+              <div class="timeline-ruler" id="timeline-ruler"></div>
+              <div class="timeline-tracks" id="timeline-tracks">
+                <div class="timeline-track">
+                  <span class="timeline-track-label">Picture</span>
+                  <div class="timeline-track-content" id="timeline-picture"></div>
+                </div>
+                <div class="timeline-track">
+                  <span class="timeline-track-label">Sound</span>
+                  <div class="timeline-track-content" id="timeline-sound"></div>
+                </div>
+                <div class="timeline-track">
+                  <span class="timeline-track-label">Subtitle</span>
+                  <div class="timeline-track-content" id="timeline-subtitle"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- VERIFY VIEW -->
+        <div class="view" id="view-verify">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Validate DCP</h2>
+              <div class="panel-actions">
+                <button id="verify-browse" class="btn-sm">Select DCP…</button>
+                <button id="verify-run" class="btn-sm primary" disabled>Validate</button>
+              </div>
+            </div>
+            <div class="prop-field">
+              <span id="verify-path" class="path-display">No DCP selected</span>
+            </div>
+            <div class="prop-field">
+              <label><input type="checkbox" id="verify-strict" checked> Strict SMPTE compliance</label>
+              <label><input type="checkbox" id="verify-mxf"> Inspect MXF essence</label>
+              <label><input type="checkbox" id="verify-hashes" checked> Verify hashes</label>
+            </div>
+            <div id="verify-results" class="results-box"></div>
+          </section>
+        </div>
+
+        <!-- SECURITY VIEW -->
+        <div class="view" id="view-security">
+          <div class="split-panels">
+            <section class="panel">
+              <h2>Encrypt DCP</h2>
+              <div class="prop-field">
+                <label>DCP Directory</label>
+                <div class="input-with-btn">
+                  <input id="crypt-dcp" type="text" placeholder="Select DCP…" readonly>
+                  <button id="crypt-browse-dcp" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Recipient Certificate</label>
+                <div class="input-with-btn">
+                  <input id="crypt-cert" type="text" placeholder="Select cert…" readonly>
+                  <button id="crypt-browse-cert" class="btn-sm">…</button>
+                </div>
+              </div>
+              <button id="run-encrypt" class="btn-primary" disabled>Encrypt</button>
+              <div id="encrypt-results" class="results-box"></div>
+            </section>
+            <section class="panel">
+              <h2>Generate KDM</h2>
+              <div class="prop-field">
+                <label>Encrypted DCP</label>
+                <div class="input-with-btn">
+                  <input id="kdm-dcp" type="text" placeholder="Select DCP…" readonly>
+                  <button id="kdm-browse-dcp" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Recipient Certificate</label>
+                <div class="input-with-btn">
+                  <input id="kdm-cert" type="text" placeholder="Select cert…" readonly>
+                  <button id="kdm-browse-cert" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Valid From</label>
+                <input type="datetime-local" id="kdm-from">
+              </div>
+              <div class="prop-field">
+                <label>Valid To</label>
+                <input type="datetime-local" id="kdm-to">
+              </div>
+              <button id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
+              <div id="kdm-results" class="results-box"></div>
+            </section>
+          </div>
+        </div>
+
+        <!-- JOBS VIEW -->
+        <div class="view" id="view-jobs">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Jobs</h2>
+              <div class="panel-actions">
+                <button id="jobs-refresh" class="btn-sm">Refresh</button>
+                <span id="jobs-status" class="status-badge">Ready</span>
+              </div>
+            </div>
+            <table class="jobs-table">
+              <thead>
+                <tr><th>ID</th><th>Type</th><th>State</th><th>Progress</th><th></th></tr>
+              </thead>
+              <tbody id="jobs-tbody"></tbody>
+            </table>
+          </section>
+        </div>
+
+        <!-- SETTINGS VIEW -->
+        <div class="view" id="view-settings">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Settings</h2>
+            </div>
+            <form id="settings-form" class="settings-grid">
+              <fieldset>
+                <legend>Defaults</legend>
+                <div class="prop-field">
+                  <label for="set-standard">Standard</label>
+                  <select id="set-standard">
+                    <option value="SMPTE">SMPTE (Bv2.1)</option>
+                    <option value="Interop">Interop</option>
+                  </select>
+                </div>
+                <div class="prop-field">
+                  <label for="set-resolution">Resolution</label>
+                  <select id="set-resolution">
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                  </select>
+                </div>
+                <div class="prop-field">
+                  <label for="set-framerate">Frame Rate</label>
+                  <input type="number" id="set-framerate" value="24" min="24" max="120">
+                </div>
+                <div class="prop-field">
+                  <label for="set-creator">Creator Name</label>
+                  <input type="text" id="set-creator" placeholder="My Studio">
+                </div>
+                <div class="prop-field">
+                  <label for="set-facility">ISDCF Facility Code</label>
+                  <input type="text" id="set-facility" placeholder="MST" maxlength="3">
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>Encoding</legend>
+                <div class="prop-field">
+                  <label for="set-bandwidth">Bandwidth (Mbps)</label>
+                  <input type="number" id="set-bandwidth" value="250" min="50" max="500">
+                </div>
+                <div class="prop-field">
+                  <label for="set-gpu">GPU Device (-1 = auto)</label>
+                  <input type="number" id="set-gpu" value="-1" min="-1" max="7">
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>Certificates</legend>
+                <div class="prop-field">
+                  <label for="set-signing-cert">Signing Certificate</label>
+                  <input type="text" id="set-signing-cert" placeholder="/path/to/cert.pem">
+                </div>
+                <div class="prop-field">
+                  <label for="set-signing-key">Signing Key</label>
+                  <input type="text" id="set-signing-key" placeholder="/path/to/key.pem">
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>Output</legend>
+                <div class="prop-field">
+                  <label for="set-output-dir">Default Output Directory</label>
+                  <input type="text" id="set-output-dir" placeholder="/path/to/output">
+                </div>
+                <div class="prop-field">
+                  <label for="set-naming">Naming Template (ISDCF)</label>
+                  <input type="text" id="set-naming" placeholder="%title_%std_%res_%fps_%audio_%date">
+                </div>
+              </fieldset>
+              <div class="form-actions">
+                <button type="submit" class="btn-primary">Save</button>
+                <button type="button" id="set-reset" class="btn-secondary">Reset</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+
+      <!-- Bottom bar: Progress + Status -->
+      <footer class="bottom-bar">
+        <div class="progress-section" id="progress-section" style="display:none;">
+          <span id="progress-stage" class="progress-stage"></span>
+          <progress id="progress-bar" max="100" value="0"></progress>
+          <span id="progress-stats" class="progress-stats"></span>
+          <button id="progress-cancel" class="btn-sm" title="Cancel">✕</button>
+        </div>
+        <div class="status-section">
+          <span id="status-text" class="status-text">Ready</span>
+          <span id="status-validation" class="status-validation"></span>
+        </div>
+      </footer>
     </div>
-
-    <nav class="nav-tabs">
-      <button class="active" data-page="create-page">Create</button>
-      <button data-page="encode-page">Encode</button>
-      <button data-page="transcode-page">Transcode</button>
-      <button data-page="subtitle-page">Subtitles</button>
-      <button data-page="audio-page">Audio</button>
-      <button data-page="encrypt-page">Encrypt</button>
-      <button data-page="kdm-page">KDM</button>
-      <button data-page="verify-page">Verify</button>
-      <button data-page="copy-page">Copy</button>
-      <button data-page="loudness-page">Loudness</button>
-      <button data-page="report-page">Report</button>
-      <button data-page="jobs-page">Jobs</button>
-      <button data-page="preferences-page">Preferences</button>
-      <span class="nav-spacer"></span>
-      <button id="shortcuts-btn" title="Keyboard shortcuts">⌨️</button>
-      <button id="theme-toggle" title="Toggle dark/light theme">🌙</button>
-    </nav>
-
-    <main>
-      <section class="page active" id="create-page">
-        <section class="panel">
-          <h2>Create DCP</h2>
-          <form id="create-form">
-            <div class="field">
-              <label for="preset">Delivery Profile</label>
-              <select id="preset">
-                <option value="custom">Custom</option>
-                <option value="cinema2k">Cinema 2K (SMPTE)</option>
-                <option value="cinema4k">Cinema 4K (SMPTE)</option>
-                <option value="cinema2k_encrypted">Cinema 2K Encrypted</option>
-                <option value="interop">Interop 2K</option>
-                <option value="trailer">Trailer</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="title">Title</label>
-              <input id="title" type="text" placeholder="My Feature Film" />
-            </div>
-            <div class="field">
-              <label for="video-input">Video / Image Sequence</label>
-              <button type="button" id="browse-video">File…</button>
-              <button type="button" id="browse-video-folder">Folder…</button>
-              <button type="button" id="preview-source" class="btn-sm" title="Preview source video">▶</button>
-              <span id="video-path" class="path-display">No file/folder selected</span>
-            </div>
-            <div class="field">
-              <label for="audio-input">Audio (WAV)</label>
-              <button type="button" id="browse-audio">Browse…</button>
-              <span id="audio-path" class="path-display">No file selected</span>
-            </div>
-            <div class="field">
-              <label for="output-dir">Output Directory</label>
-              <button type="button" id="browse-output">Browse…</button>
-              <span id="output-path" class="path-display">No folder selected</span>
-            </div>
-            <div class="field">
-              <label for="standard">Standard</label>
-              <select id="standard">
-                <option value="smpte">SMPTE</option>
-                <option value="interop">Interop</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="resolution">Resolution</label>
-              <select id="resolution">
-                <option value="2k">2K (2048×1080)</option>
-                <option value="4k">4K (4096×2160)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="frame-rate">Frame Rate</label>
-              <select id="frame-rate">
-                <option value="24">24 fps</option>
-                <option value="25">25 fps</option>
-                <option value="30">30 fps</option>
-                <option value="48">48 fps (HFR)</option>
-              </select>
-            </div>
-            <div class="field">
-              <label><input type="checkbox" id="encrypt-check" /> Encrypt</label>
-            </div>
-            <div class="field">
-              <label><input type="checkbox" id="stereo3d-check" /> Stereoscopic 3D</label>
-            </div>
-            <div class="field">
-              <label><input type="checkbox" id="validate-check" /> Validate after creation</label>
-            </div>
-            <button type="submit" id="create-form-btn" class="btn-primary" disabled>Create DCP</button>
-          </form>
-          <div id="pipeline-progress" style="display:none; margin-top: 1rem;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
-              <span id="pipeline-stage"></span>
-              <span id="pipeline-stats"></span>
-              <span>
-                <button type="button" id="pipeline-pause" class="btn-sm" title="Pause">⏸</button>
-                <button type="button" id="pipeline-cancel" class="btn-sm" title="Cancel">✕</button>
-              </span>
-            </div>
-            <progress id="pipeline-bar" max="100" value="0" style="width:100%; height:1.5rem;"></progress>
-            <div id="pipeline-message" style="margin-top:0.25rem; font-size:0.85rem; opacity:0.8;"></div>
-            <div id="validation-results" style="display:none; margin-top:0.5rem; padding:0.5rem; border-radius:4px; font-size:0.85rem; max-height:10rem; overflow-y:auto;"></div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <h2>Preview DCP</h2>
-          <div class="field">
-            <button type="button" id="prev-replay-dcp">Open DCP folder...</button>
-            <span id="prev-dcp-path" class="path-display">No DCP selected</span>
-          </div>
-          <div id="preview-controls">
-            <span id="prev-time"></span>
-          </div>
-        </section>
-      </section>
-
-      <section class="page" id="verify-page">
-        <section class="panel">
-          <h2>Verify DCP</h2>
-          <p>Validate an existing DCP using dcpdoctor.</p>
-          <button type="button" id="browse-verify">Select DCP folder…</button>
-          <span id="verify-path" class="path-display">No folder selected</span>
-          <button type="button" id="run-verify" class="btn-primary" disabled>Verify</button>
-          <div id="verify-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="encode-page">
-        <section class="panel">
-          <h2>Encode to JPEG 2000</h2>
-          <div class="field">
-            <label>Input (image sequence folder)</label>
-            <button type="button" id="enc-browse-input">Browse…</button>
-            <span id="enc-input-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label>Output Directory</label>
-            <button type="button" id="enc-browse-output">Browse…</button>
-            <span id="enc-output-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label for="enc-resolution">Resolution</label>
-            <select id="enc-resolution">
-              <option value="2k">2K (2048×1080)</option>
-              <option value="4k">4K (4096×2160)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="enc-bandwidth">Bandwidth (Mbps)</label>
-            <input type="number" id="enc-bandwidth" value="250" min="50" max="500">
-          </div>
-          <div class="field">
-            <label for="enc-framerate">Frame Rate</label>
-            <select id="enc-framerate">
-              <option value="24">24 fps</option>
-              <option value="25">25 fps</option>
-              <option value="30">30 fps</option>
-              <option value="48">48 fps (HFR)</option>
-            </select>
-          </div>
-          <button type="button" id="run-encode" class="btn-primary" disabled>Encode</button>
-          <div id="encode-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="transcode-page">
-        <section class="panel">
-          <h2>Transcode Video</h2>
-          <p>Convert video files to image sequences for DCP encoding.</p>
-          <div class="field">
-            <label>Input Video File</label>
-            <button type="button" id="tc-browse-input">Browse…</button>
-            <span id="tc-input-path" class="path-display">No file selected</span>
-          </div>
-          <div class="field">
-            <label>Output Directory</label>
-            <button type="button" id="tc-browse-output">Browse…</button>
-            <span id="tc-output-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label for="tc-format">Format</label>
-            <select id="tc-format">
-              <option value="tiff">TIFF</option>
-              <option value="dpx">DPX</option>
-              <option value="exr">EXR</option>
-              <option value="png">PNG</option>
-            </select>
-          </div>
-          <button type="button" id="run-transcode" class="btn-primary" disabled>Transcode</button>
-          <div id="transcode-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="subtitle-page">
-        <section class="panel">
-          <h2>Subtitles</h2>
-          <p>Add subtitle tracks to your DCP.</p>
-          <div class="field">
-            <label>Subtitle File (TTML / XML)</label>
-            <button type="button" id="sub-browse-input">Browse…</button>
-            <span id="sub-input-path" class="path-display">No file selected</span>
-          </div>
-          <div class="field">
-            <label for="sub-language">Language</label>
-            <input type="text" id="sub-language" placeholder="en" maxlength="5">
-          </div>
-          <div class="field">
-            <label><input type="checkbox" id="sub-burn-in" /> Burn-in (hardcode)</label>
-          </div>
-        </section>
-      </section>
-
-      <section class="page" id="audio-page">
-        <section class="panel">
-          <h2>Audio</h2>
-          <p>Configure audio channels and mapping.</p>
-          <div class="field">
-            <label>Audio File (WAV)</label>
-            <button type="button" id="aud-browse-input">Browse…</button>
-            <span id="aud-input-path" class="path-display">No file selected</span>
-          </div>
-          <div class="field">
-            <label for="aud-channels">Channel Configuration</label>
-            <select id="aud-channels">
-              <option value="mono">Mono</option>
-              <option value="stereo">Stereo</option>
-              <option value="5.1" selected>5.1</option>
-              <option value="7.1">7.1</option>
-            </select>
-          </div>
-        </section>
-      </section>
-
-      <section class="page" id="encrypt-page">
-        <section class="panel">
-          <h2>Encrypt DCP</h2>
-          <p>Encrypt an existing DCP with SMPTE encryption.</p>
-          <div class="field">
-            <label>DCP Directory</label>
-            <button type="button" id="crypt-browse-dcp">Browse…</button>
-            <span id="crypt-dcp-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label for="crypt-cert">Recipient Certificate</label>
-            <button type="button" id="crypt-browse-cert">Browse…</button>
-            <span id="crypt-cert-path" class="path-display">No file selected</span>
-          </div>
-          <button type="button" id="run-encrypt" class="btn-primary" disabled>Encrypt</button>
-          <div id="encrypt-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="kdm-page">
-        <section class="panel">
-          <h2>Generate KDM</h2>
-          <p>Create Key Delivery Messages for encrypted DCPs.</p>
-          <div class="field">
-            <label>Encrypted DCP</label>
-            <button type="button" id="kdm-browse-dcp">Browse…</button>
-            <span id="kdm-dcp-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label>Recipient Certificate</label>
-            <button type="button" id="kdm-browse-cert">Browse…</button>
-            <span id="kdm-cert-path" class="path-display">No file selected</span>
-          </div>
-          <div class="field">
-            <label for="kdm-valid-from">Valid From</label>
-            <input type="datetime-local" id="kdm-valid-from">
-          </div>
-          <div class="field">
-            <label for="kdm-valid-to">Valid To</label>
-            <input type="datetime-local" id="kdm-valid-to">
-          </div>
-          <div class="field">
-            <label>Output Directory</label>
-            <button type="button" id="kdm-browse-output">Browse…</button>
-            <span id="kdm-output-path" class="path-display">No folder selected</span>
-          </div>
-          <button type="button" id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
-          <div id="kdm-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="copy-page">
-        <section class="panel">
-          <h2>Copy DCP</h2>
-          <p>Copy a DCP to an external drive with verification.</p>
-          <div class="field">
-            <label>Source DCP</label>
-            <button type="button" id="copy-browse-source">Browse…</button>
-            <span id="copy-source-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label>Destination</label>
-            <button type="button" id="copy-browse-dest">Browse…</button>
-            <span id="copy-dest-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label><input type="checkbox" id="copy-verify" checked /> Verify after copy</label>
-          </div>
-          <button type="button" id="run-copy" class="btn-primary" disabled>Copy DCP</button>
-          <div id="copy-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="loudness-page">
-        <section class="panel">
-          <h2>Loudness Measurement</h2>
-          <p>Measure audio loudness per EBU R128 / SMPTE ST 2095.</p>
-          <div class="field">
-            <label>Audio File (WAV)</label>
-            <button type="button" id="loud-browse-input">Browse…</button>
-            <span id="loud-input-path" class="path-display">No file selected</span>
-          </div>
-          <button type="button" id="run-loudness" class="btn-primary" disabled>Measure</button>
-          <div id="loudness-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="report-page">
-        <section class="panel">
-          <h2>QC Report</h2>
-          <p>Generate a quality-control report for an existing DCP.</p>
-          <div class="field">
-            <label>DCP Directory</label>
-            <button type="button" id="report-browse-dcp">Browse…</button>
-            <span id="report-dcp-path" class="path-display">No folder selected</span>
-          </div>
-          <div class="field">
-            <label for="report-format">Output Format</label>
-            <select id="report-format">
-              <option value="text">Plain Text</option>
-              <option value="html">HTML</option>
-              <option value="pdf">PDF</option>
-            </select>
-          </div>
-          <button type="button" id="run-report" class="btn-primary" disabled>Generate Report</button>
-          <div id="report-results" class="results-box"></div>
-        </section>
-      </section>
-
-      <section class="page" id="jobs-page">
-        <section class="panel">
-          <h2>Job Queue</h2>
-          <div class="jobs-toolbar">
-            <button id="jobs-refresh" class="btn-secondary">Refresh</button>
-            <button id="jobs-start-daemon" class="btn-primary">Start Daemon</button>
-            <span id="jobs-daemon-status" class="status-badge">Unknown</span>
-          </div>
-          <table class="jobs-table" id="jobs-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Description</th>
-                <th>State</th>
-                <th>Progress</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="jobs-tbody">
-            </tbody>
-          </table>
-          <div class="field" style="margin-top:1rem">
-            <h3>Submit New Job</h3>
-            <div class="field-row">
-              <div class="field">
-                <label for="job-type">Type</label>
-                <select id="job-type">
-                  <option value="create">Create</option>
-                  <option value="create-dcp">Create DCP</option>
-                  <option value="verify-dcp">Verify DCP</option>
-                  <option value="export-dcp">Export DCP</option>
-                  <option value="import-video">Import Video</option>
-                  <option value="encode-j2k">Encode J2K</option>
-                  <option value="wrap-mxf">Wrap MXF</option>
-                  <option value="copy-to-drive">Copy to Drive</option>
-                </select>
-              </div>
-            </div>
-            <div class="field">
-              <label for="job-args">Parameters (JSON)</label>
-              <input type="text" id="job-args" placeholder='e.g. {"title":"MyDCP","video":"/path","output":"/tmp/out"}' />
-            </div>
-            <button id="job-submit" class="btn-primary">Submit Job</button>
-          </div>
-        </section>
-      </section>
-
-      <section class="page" id="preferences-page">
-        <section class="panel">
-          <h2>Preferences</h2>
-          <form id="preferences-form">
-            <fieldset>
-              <legend>General</legend>
-              <div class="field">
-                <label for="pref-standard">Default Standard</label>
-                <select id="pref-standard">
-                  <option value="SMPTE">SMPTE (Bv2.1)</option>
-                  <option value="Interop">Interop</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="pref-resolution">Default Resolution</label>
-                <select id="pref-resolution">
-                  <option value="2K">2K (2048×1080)</option>
-                  <option value="4K">4K (4096×2160)</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="pref-framerate">Default Frame Rate</label>
-                <input type="number" id="pref-framerate" value="24" min="24" max="120">
-              </div>
-              <div class="field">
-                <label><input type="checkbox" id="pref-encrypt" /> Encrypt by default</label>
-              </div>
-              <div class="field">
-                <label><input type="checkbox" id="pref-stereo3d" /> Stereoscopic 3D by default</label>
-              </div>
-              <div class="field">
-                <label><input type="checkbox" id="pref-validate" checked /> Validate after creation</label>
-              </div>
-              <div class="field">
-                <label for="pref-creator">Creator Name</label>
-                <input type="text" id="pref-creator" placeholder="My Studio">
-              </div>
-              <div class="field">
-                <label for="pref-facility">ISDCF Facility Code</label>
-                <input type="text" id="pref-facility" placeholder="MST" maxlength="3">
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Encoding</legend>
-              <div class="field">
-                <label for="pref-encoder">Preferred Encoder</label>
-                <select id="pref-encoder">
-                  <option value="grok">grok (GPU + CPU)</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="pref-bandwidth">Default Bandwidth (Mbps)</label>
-                <input type="number" id="pref-bandwidth" value="250" min="50" max="500">
-              </div>
-              <div class="field">
-                <label for="pref-colourspace">Default Colour Space</label>
-                <select id="pref-colourspace">
-                  <option value="Rec.709">Rec.709</option>
-                  <option value="P3-D65">P3-D65</option>
-                  <option value="P3-DCI">P3-DCI</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="pref-gpu">GPU Device (-1 = auto)</label>
-                <input type="number" id="pref-gpu" value="-1" min="-1" max="7">
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Encryption &amp; KDM</legend>
-              <div class="field">
-                <label for="pref-signing-cert">Signing Certificate</label>
-                <input type="text" id="pref-signing-cert" placeholder="/path/to/cert.pem">
-              </div>
-              <div class="field">
-                <label for="pref-signing-key">Signing Key</label>
-                <input type="text" id="pref-signing-key" placeholder="/path/to/key.pem">
-              </div>
-              <div class="field">
-                <label for="pref-ca">Intermediate CA</label>
-                <input type="text" id="pref-ca" placeholder="/path/to/ca.pem">
-              </div>
-              <div class="field">
-                <label for="pref-kdm-pattern">KDM Annotation Pattern</label>
-                <input type="text" id="pref-kdm-pattern" value="%t_%d" placeholder="%t_%d">
-              </div>
-              <div class="field">
-                <label for="pref-kdm-validity">KDM Validity (hours)</label>
-                <input type="number" id="pref-kdm-validity" value="168" min="1" max="8760">
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Audio</legend>
-              <div class="field">
-                <label for="pref-channels">Default Channel Config</label>
-                <select id="pref-channels">
-                  <option value="mono">Mono</option>
-                  <option value="stereo">Stereo</option>
-                  <option value="5.1" selected>5.1</option>
-                  <option value="7.1">7.1</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="pref-loudness">Loudness Target (LUFS)</label>
-                <input type="number" id="pref-loudness" value="-24" min="-36" max="-14" step="0.1">
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Delivery</legend>
-              <div class="field">
-                <label for="pref-output-dir">Default Output Directory</label>
-                <input type="text" id="pref-output-dir" placeholder="/path/to/output">
-              </div>
-              <div class="field">
-                <label for="pref-naming">Naming Template (ISDCF)</label>
-                <input type="text" id="pref-naming" placeholder="%title_%std_%res_%fps_%audio_%date">
-              </div>
-            </fieldset>
-
-            <div class="form-actions">
-              <button type="submit" class="btn-primary">Save Preferences</button>
-              <button type="button" id="pref-reset" class="btn-secondary">Reset to Defaults</button>
-            </div>
-          </form>
-        </section>
-      </section>
-    </main>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>
