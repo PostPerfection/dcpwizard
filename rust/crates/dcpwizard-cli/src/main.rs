@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(
     name = "dcpwizard",
+    version,
     about = "DCP Wizard — Digital Cinema Package creator"
 )]
 struct Cli {
