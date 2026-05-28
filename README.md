@@ -113,7 +113,19 @@ docker run -v /path/to/media:/data dcpwizard create \
 
 ### Desktop GUI
 
-The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend).
+The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a single-window layout inspired by professional NLEs.
+
+**GUI features:**
+- Drag & drop file import (video, audio, subtitle)
+- Keyboard shortcuts (Ctrl+N/O/B/P/I, Ctrl+1–7 for views)
+- Recent projects quick-access list
+- Right-click context menus on assets (Preview, Remove, Show in Files)
+- Asset filter / search
+- Auto-detect framerate and resolution from imported video (via ffprobe)
+- Progress in title bar (visible in taskbar during builds)
+- Desktop notifications on build complete/fail
+- Conditional button enabling (Build disabled until ready)
+- Built-in mpv preview player (space = play/pause, arrows = seek)
 
 ```bash
 cd gui
