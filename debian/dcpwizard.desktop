@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=DCP Wizard
+Comment=Digital Cinema Package creator
+Exec=dcpwizard-gui
+Icon=dcpwizard
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;
+Keywords=DCP;Cinema;JPEG2000;MXF;

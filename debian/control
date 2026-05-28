@@ -1,0 +1,32 @@
+Source: dcpwizard
+Section: video
+Priority: optional
+Maintainer: Post Perfection <dev@postperfection.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc (>= 1.75),
+               cmake,
+               pkg-config,
+               libxml2-dev,
+               libssl-dev,
+               libxerces-c-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/PostPerfection/dcpwizard
+Vcs-Git: https://github.com/PostPerfection/dcpwizard.git
+Vcs-Browser: https://github.com/PostPerfection/dcpwizard
+Rules-Requires-Root: no
+
+Package: dcpwizard
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: ffmpeg, mpv
+Description: Digital Cinema Package (DCP) creator
+ DCP Wizard creates valid Digital Cinema Packages from video sources,
+ image sequences, and WAV audio, conforming to SMPTE ST 429 (Bv2.1)
+ and Interop standards.
+ .
+ Features include JPEG 2000 encoding (GPU and CPU), AES-128 encryption,
+ KDM generation, subtitle packaging, multi-channel audio, Dolby Atmos
+ support, and integrated quality control via dcpdoctor.
+ .
+ Free and open-source alternative to easyDCP Creator+.

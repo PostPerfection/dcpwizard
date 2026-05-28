@@ -1,0 +1,10 @@
+dcpwizard (1.0.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Full DCP creation from JPEG 2000 + audio MXF inputs
+  * JPEG 2000 encoding via OpenJPEG (CPU) and Grok (GPU)
+  * AES-128 content encryption with KDM generation
+  * DCP verification and quality control
+  * CLI and desktop GUI (Tauri 2)
+
+ -- Post Perfection <dev@postperfection.com>  Mon, 20 Jan 2025 00:00:00 +0000
