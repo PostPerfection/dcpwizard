@@ -41,7 +41,11 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         return -1;
     }
 
-    let fps = if config.frame_rate_num > 0 { config.frame_rate_num } else { 24 };
+    let fps = if config.frame_rate_num > 0 {
+        config.frame_rate_num
+    } else {
+        24
+    };
 
     // ── Wrap picture MXF ──────────────────────────────────────────────
     let picture_uuid = uuid::Uuid::new_v4().to_string();
@@ -55,7 +59,9 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             picture_duration = entries
                 .filter_map(|e| e.ok())
                 .filter(|e| {
-                    let ext = e.path().extension()
+                    let ext = e
+                        .path()
+                        .extension()
                         .and_then(|x| x.to_str())
                         .map(|x| x.to_lowercase())
                         .unwrap_or_default();
@@ -74,7 +80,10 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             tracing::error!("Failed to wrap picture MXF");
             return -1;
         }
-        tracing::info!("Picture MXF: {} ({picture_duration} frames)", picture_mxf_name);
+        tracing::info!(
+            "Picture MXF: {} ({picture_duration} frames)",
+            picture_mxf_name
+        );
     }
 
     // ── Wrap sound MXF ────────────────────────────────────────────────
@@ -84,21 +93,21 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let mut has_sound = false;
     let sound_duration = picture_duration; // match picture duration
 
-    if let Some(ref audio_path) = config.audio_path {
-        if audio_path.exists() {
-            let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-                input_path: audio_path.clone(),
-                output_mxf: sound_mxf_path.clone(),
-                mxf_type: crate::mxf_wrap::MxfType::PcmAudio,
-                frame_rate: fps,
-            };
-            if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
-                tracing::error!("Failed to wrap sound MXF");
-                return -1;
-            }
-            has_sound = true;
-            tracing::info!("Sound MXF: {sound_mxf_name}");
+    if let Some(ref audio_path) = config.audio_path
+        && audio_path.exists()
+    {
+        let wrap_config = crate::mxf_wrap::MxfWrapConfig {
+            input_path: audio_path.clone(),
+            output_mxf: sound_mxf_path.clone(),
+            mxf_type: crate::mxf_wrap::MxfType::PcmAudio,
+            frame_rate: fps,
+        };
+        if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
+            tracing::error!("Failed to wrap sound MXF");
+            return -1;
         }
+        has_sound = true;
+        tracing::info!("Sound MXF: {sound_mxf_name}");
     }
 
     // ── Generate CPL ──────────────────────────────────────────────────
@@ -112,7 +121,11 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         picture_edit_rate_den: 1,
         picture_duration,
         picture_entry_point: 0,
-        sound_id: if has_sound { Some(sound_uuid.clone()) } else { None },
+        sound_id: if has_sound {
+            Some(sound_uuid.clone())
+        } else {
+            None
+        },
         sound_edit_rate_num: fps,
         sound_edit_rate_den: 1,
         sound_duration,
@@ -145,7 +158,9 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
 
     if config.j2k_dir.is_some() {
         let pic_hash = crate::hash::hash_file(&picture_mxf_path).unwrap_or_default();
-        let pic_size = std::fs::metadata(&picture_mxf_path).map(|m| m.len()).unwrap_or(0);
+        let pic_size = std::fs::metadata(&picture_mxf_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         pkl_entries.push(crate::pkl::PklEntry {
             id: picture_uuid.clone(),
             asset_type: "application/mxf".into(),
@@ -156,7 +171,9 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     }
     if has_sound {
         let snd_hash = crate::hash::hash_file(&sound_mxf_path).unwrap_or_default();
-        let snd_size = std::fs::metadata(&sound_mxf_path).map(|m| m.len()).unwrap_or(0);
+        let snd_size = std::fs::metadata(&sound_mxf_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         pkl_entries.push(crate::pkl::PklEntry {
             id: sound_uuid.clone(),
             asset_type: "application/mxf".into(),
@@ -175,11 +192,19 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let mut am_entries = vec![
         crate::assetmap::AssetMapEntry {
             id: pkl_uuid,
-            path: pkl_path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            path: pkl_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
         },
         crate::assetmap::AssetMapEntry {
             id: cpl_uuid,
-            path: cpl_path.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            path: cpl_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
         },
     ];
     if config.j2k_dir.is_some() {

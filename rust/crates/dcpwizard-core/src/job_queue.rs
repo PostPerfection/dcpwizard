@@ -106,12 +106,13 @@ impl JobQueue {
     pub fn cancel(&self, id: &str) -> bool {
         if let Ok(mut jobs) = self.jobs.lock()
             && let Some(job) = jobs.get_mut(id)
-                && (job.state == JobState::Pending || job.state == JobState::Running) {
-                    job.state = JobState::Cancelled;
-                    job.updated_at = current_epoch_secs();
-                    tracing::info!("Cancelled job {id}");
-                    return true;
-                }
+            && (job.state == JobState::Pending || job.state == JobState::Running)
+        {
+            job.state = JobState::Cancelled;
+            job.updated_at = current_epoch_secs();
+            tracing::info!("Cancelled job {id}");
+            return true;
+        }
         false
     }
 
@@ -135,12 +136,13 @@ impl JobQueue {
     /// Update a job's state and progress.
     pub fn update_job(&self, id: &str, state: JobState, progress: u32, message: &str) {
         if let Ok(mut jobs) = self.jobs.lock()
-            && let Some(job) = jobs.get_mut(id) {
-                job.state = state;
-                job.progress_percent = progress;
-                job.message = message.to_string();
-                job.updated_at = current_epoch_secs();
-            }
+            && let Some(job) = jobs.get_mut(id)
+        {
+            job.state = state;
+            job.progress_percent = progress;
+            job.message = message.to_string();
+            job.updated_at = current_epoch_secs();
+        }
     }
 }
 
@@ -335,7 +337,11 @@ pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
                             Ok(r) => r,
                             Err(e) => {
                                 let resp = IpcResponse::Error(format!("invalid request: {e}"));
-                                let _ = writeln!(stream, "{}", serde_json::to_string(&resp).unwrap_or_default());
+                                let _ = writeln!(
+                                    stream,
+                                    "{}",
+                                    serde_json::to_string(&resp).unwrap_or_default()
+                                );
                                 continue;
                             }
                         };
@@ -346,12 +352,8 @@ pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
                                 let id = queue.submit(job_type, &params);
                                 IpcResponse::Submitted { id }
                             }
-                            IpcRequest::Cancel { id } => {
-                                IpcResponse::Cancelled(queue.cancel(&id))
-                            }
-                            IpcRequest::Status { id } => {
-                                IpcResponse::JobStatus(queue.get(&id))
-                            }
+                            IpcRequest::Cancel { id } => IpcResponse::Cancelled(queue.cancel(&id)),
+                            IpcRequest::Status { id } => IpcResponse::JobStatus(queue.get(&id)),
                         };
 
                         let json = serde_json::to_string(&response).unwrap_or_default();
@@ -383,7 +385,9 @@ pub fn send_ipc_request(request: &IpcRequest) -> Result<IpcResponse, String> {
     writeln!(stream, "{json}").map_err(|e| format!("write error: {e}"))?;
 
     let reader = BufReader::new(stream);
-    let line = reader.lines().next()
+    let line = reader
+        .lines()
+        .next()
         .ok_or_else(|| "no response from daemon".to_string())?
         .map_err(|e| format!("read error: {e}"))?;
 
@@ -395,7 +399,10 @@ pub fn is_daemon_running() -> bool {
     use std::net::TcpStream;
     let addr = daemon_addr();
     TcpStream::connect_timeout(
-        &addr.parse().unwrap_or_else(|_| "127.0.0.1:9457".parse().unwrap()),
+        &addr
+            .parse()
+            .unwrap_or_else(|_| "127.0.0.1:9457".parse().unwrap()),
         std::time::Duration::from_millis(500),
-    ).is_ok()
+    )
+    .is_ok()
 }

@@ -73,9 +73,10 @@ pub fn export_dcp(config: &ExportConfig) -> i32 {
     cmd.arg("-y").arg("-i").arg(&config.input_mxf);
 
     if let Some(audio) = &config.audio_mxf
-        && audio.exists() {
-            cmd.arg("-i").arg(audio);
-        }
+        && audio.exists()
+    {
+        cmd.arg("-i").arg(audio);
+    }
 
     cmd.arg("-c:v").arg(config.format.ffmpeg_codec());
 

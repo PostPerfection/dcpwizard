@@ -22,7 +22,7 @@ enum Commands {
         /// DCP title
         #[arg(short, long)]
         title: String,
-        /// Video/image sequence directory
+        /// Video file (mp4/mov/mkv) or J2K/image sequence directory
         #[arg(long)]
         video: String,
         /// Audio WAV file
@@ -193,22 +193,164 @@ fn main() {
             encrypt,
             ..
         } => {
-            let config = dcpwizard_core::dcp::DcpConfig {
-                title,
-                standard: if standard == "interop" {
-                    dcpwizard_core::Standard::Interop
-                } else {
-                    dcpwizard_core::Standard::Smpte
-                },
-                encrypt,
-                output_dir: PathBuf::from(&output),
-                frame_rate_num: 24,
-                frame_rate_den: 1,
-                j2k_dir: Some(PathBuf::from(video)),
-                audio_path: audio.map(PathBuf::from),
-                ..Default::default()
+            let video_path = PathBuf::from(&video);
+            let output_dir = PathBuf::from(&output);
+            let std_val = if standard == "interop" {
+                dcpwizard_core::Standard::Interop
+            } else {
+                dcpwizard_core::Standard::Smpte
             };
-            dcpwizard_core::dcp::create_dcp(&config)
+
+            // Detect if input is a video file (not a J2K directory)
+            let is_video_file = video_path.is_file()
+                && video_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| {
+                        matches!(
+                            e.to_lowercase().as_str(),
+                            "mp4"
+                                | "mov"
+                                | "mkv"
+                                | "avi"
+                                | "mxf"
+                                | "ts"
+                                | "m2ts"
+                                | "mpg"
+                                | "mpeg"
+                                | "webm"
+                        )
+                    })
+                    .unwrap_or(false);
+
+            if is_video_file {
+                // Full pipeline: video → J2K encode → MXF wrap → DCP
+                use postkit::encode::{StreamEncodeOptions, find_compressor, stream_encode};
+                use std::sync::Arc;
+                use std::sync::atomic::AtomicBool;
+
+                let (compressor_path, lib_dir) = match find_compressor() {
+                    Some(c) => c,
+                    None => {
+                        tracing::error!("grk_compress not found (required for video encoding)");
+                        std::process::exit(1);
+                    }
+                };
+
+                let _ = std::fs::create_dir_all(&output_dir);
+                let j2k_dir = output_dir.join("j2k");
+                let _ = std::fs::create_dir_all(&j2k_dir);
+
+                tracing::info!("Detected video file input — running full pipeline");
+                tracing::info!("Compressor: {}", compressor_path.display());
+
+                let fps = 24u32;
+                let opts = StreamEncodeOptions {
+                    input: video_path.clone(),
+                    output_dir: j2k_dir.clone(),
+                    compression_ratio: 10.0,
+                    num_resolutions: 6,
+                    codeblock_size: 32,
+                    progression: "CPRL".to_string(),
+                    fps,
+                    compressor_path,
+                    lib_dir,
+                };
+
+                let cancel = Arc::new(AtomicBool::new(false));
+                let pause = Arc::new(AtomicBool::new(false));
+                let cancel_clone = cancel.clone();
+                let _ = ctrlc::set_handler(move || {
+                    cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+
+                let result = stream_encode(&opts, &cancel, &pause, |p| {
+                    let percent = if p.total_frames > 0 {
+                        (p.frame as f64 / p.total_frames as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    eprint!(
+                        "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                        p.frame, p.total_frames, percent, p.fps
+                    );
+                });
+                eprintln!();
+
+                if !result.success {
+                    tracing::error!("Encode failed: {}", result.error);
+                    std::process::exit(1);
+                }
+                tracing::info!("Encoded {} frames", result.frames_encoded);
+
+                // Auto-demux audio from video if --audio not provided
+                let audio_path = if let Some(a) = audio {
+                    Some(PathBuf::from(a))
+                } else {
+                    let wav_out = output_dir.join("audio_demux.wav");
+                    let demux = std::process::Command::new("ffmpeg")
+                        .arg("-y")
+                        .arg("-i")
+                        .arg(&video_path)
+                        .arg("-vn")
+                        .arg("-acodec")
+                        .arg("pcm_s24le")
+                        .arg("-ar")
+                        .arg("48000")
+                        .arg(&wav_out)
+                        .output();
+                    match demux {
+                        Ok(o) if o.status.success() => {
+                            tracing::info!("Demuxed audio: {}", wav_out.display());
+                            Some(wav_out)
+                        }
+                        Ok(_) => {
+                            tracing::warn!("No audio stream found in input (or demux failed)");
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!("ffmpeg not available for audio demux: {e}");
+                            None
+                        }
+                    }
+                };
+
+                let config = dcpwizard_core::dcp::DcpConfig {
+                    title,
+                    standard: std_val,
+                    encrypt,
+                    output_dir: output_dir.clone(),
+                    frame_rate_num: fps,
+                    frame_rate_den: 1,
+                    j2k_dir: Some(j2k_dir.clone()),
+                    audio_path: audio_path.clone(),
+                    ..Default::default()
+                };
+                let code = dcpwizard_core::dcp::create_dcp(&config);
+
+                // Clean up intermediate files
+                let _ = std::fs::remove_dir_all(&j2k_dir);
+                if let Some(ref wav) = audio_path
+                    && wav.file_name().and_then(|f| f.to_str()) == Some("audio_demux.wav")
+                {
+                    let _ = std::fs::remove_file(wav);
+                }
+                code
+            } else {
+                // Input is a J2K directory or image sequence
+                let config = dcpwizard_core::dcp::DcpConfig {
+                    title,
+                    standard: std_val,
+                    encrypt,
+                    output_dir,
+                    frame_rate_num: 24,
+                    frame_rate_den: 1,
+                    j2k_dir: Some(video_path),
+                    audio_path: audio.map(PathBuf::from),
+                    ..Default::default()
+                };
+                dcpwizard_core::dcp::create_dcp(&config)
+            }
         }
 
         Commands::Encode {
@@ -234,8 +376,8 @@ fn main() {
             fps,
         } => {
             use postkit::encode::{StreamEncodeOptions, find_compressor, stream_encode};
-            use std::sync::atomic::AtomicBool;
             use std::sync::Arc;
+            use std::sync::atomic::AtomicBool;
 
             let input_path = PathBuf::from(&input);
             let output_dir = PathBuf::from(&output);
@@ -284,9 +426,13 @@ fn main() {
             let result = stream_encode(&opts, &cancel, &pause, |p| {
                 let percent = if p.total_frames > 0 {
                     (p.frame as f64 / p.total_frames as f64) * 100.0
-                } else { 0.0 };
-                eprint!("\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
-                    p.frame, p.total_frames, percent, p.fps);
+                } else {
+                    0.0
+                };
+                eprint!(
+                    "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                    p.frame, p.total_frames, percent, p.fps
+                );
             });
             eprintln!();
 
@@ -296,6 +442,38 @@ fn main() {
             } else {
                 tracing::info!("Encoded {} frames", result.frames_encoded);
 
+                // Auto-demux audio from video if --audio not provided
+                let audio_path = if let Some(a) = audio {
+                    Some(PathBuf::from(a))
+                } else {
+                    let wav_out = output_dir.join("audio_demux.wav");
+                    let demux = std::process::Command::new("ffmpeg")
+                        .arg("-y")
+                        .arg("-i")
+                        .arg(&input_path)
+                        .arg("-vn")
+                        .arg("-acodec")
+                        .arg("pcm_s24le")
+                        .arg("-ar")
+                        .arg("48000")
+                        .arg(&wav_out)
+                        .output();
+                    match demux {
+                        Ok(o) if o.status.success() => {
+                            tracing::info!("Demuxed audio: {}", wav_out.display());
+                            Some(wav_out)
+                        }
+                        Ok(_) => {
+                            tracing::warn!("No audio stream in input (or demux failed)");
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!("ffmpeg not available for audio demux: {e}");
+                            None
+                        }
+                    }
+                };
+
                 // Package
                 let config = dcpwizard_core::dcp::DcpConfig {
                     title,
@@ -303,11 +481,20 @@ fn main() {
                     output_dir: output_dir.clone(),
                     frame_rate_num: fps,
                     frame_rate_den: 1,
-                    j2k_dir: Some(j2k_dir),
-                    audio_path: audio.map(PathBuf::from),
+                    j2k_dir: Some(j2k_dir.clone()),
+                    audio_path: audio_path.clone(),
                     ..Default::default()
                 };
-                dcpwizard_core::dcp::create_dcp(&config)
+                let code = dcpwizard_core::dcp::create_dcp(&config);
+
+                // Clean up intermediate files
+                let _ = std::fs::remove_dir_all(&j2k_dir);
+                if let Some(ref wav) = audio_path
+                    && wav.file_name().and_then(|f| f.to_str()) == Some("audio_demux.wav")
+                {
+                    let _ = std::fs::remove_file(wav);
+                }
+                code
             }
         }
 
@@ -426,36 +613,34 @@ fn main() {
             use dcpwizard_core::job_queue::{IpcRequest, IpcResponse, send_ipc_request};
 
             match action {
-                BatchAction::List => {
-                    match send_ipc_request(&IpcRequest::List) {
-                        Ok(IpcResponse::Jobs(jobs)) => {
-                            if jobs.is_empty() {
-                                println!("No jobs in queue");
-                            } else {
+                BatchAction::List => match send_ipc_request(&IpcRequest::List) {
+                    Ok(IpcResponse::Jobs(jobs)) => {
+                        if jobs.is_empty() {
+                            println!("No jobs in queue");
+                        } else {
+                            println!(
+                                "{:<38} {:<12} {:<10} {:<14} Message",
+                                "ID", "State", "Progress", "Type"
+                            );
+                            for j in &jobs {
                                 println!(
-                                    "{:<38} {:<12} {:<10} {:<14} Message",
-                                    "ID", "State", "Progress", "Type"
+                                    "{:<38} {:?} {:<10}% {:?} {}",
+                                    j.id, j.state, j.progress_percent, j.job_type, j.message
                                 );
-                                for j in &jobs {
-                                    println!(
-                                        "{:<38} {:?} {:<10}% {:?} {}",
-                                        j.id, j.state, j.progress_percent, j.job_type, j.message
-                                    );
-                                }
                             }
-                            0
                         }
-                        Ok(IpcResponse::Error(e)) => {
-                            tracing::error!("{e}");
-                            1
-                        }
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            1
-                        }
-                        _ => 1,
+                        0
                     }
-                }
+                    Ok(IpcResponse::Error(e)) => {
+                        tracing::error!("{e}");
+                        1
+                    }
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        1
+                    }
+                    _ => 1,
+                },
                 BatchAction::Add { r#type, params } => {
                     if !dcpwizard_core::job_queue::is_daemon_running() {
                         tracing::error!("Daemon is not running. Start it with: dcpwizard daemon");

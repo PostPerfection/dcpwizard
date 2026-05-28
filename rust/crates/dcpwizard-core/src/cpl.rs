@@ -63,7 +63,10 @@ pub fn generate_cpl(config: &CplConfig, output_file: &Path) -> i32 {
         xml.push_str("      <AssetList>\n");
         // MainPicture
         xml.push_str("        <MainPicture>\n");
-        xml.push_str(&format!("          <Id>urn:uuid:{}</Id>\n", reel.picture_id));
+        xml.push_str(&format!(
+            "          <Id>urn:uuid:{}</Id>\n",
+            reel.picture_id
+        ));
         xml.push_str(&format!(
             "          <EditRate>{} {}</EditRate>\n",
             reel.picture_edit_rate_num, reel.picture_edit_rate_den

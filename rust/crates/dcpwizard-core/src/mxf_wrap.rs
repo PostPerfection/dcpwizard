@@ -66,18 +66,28 @@ pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
 fn wrap_j2k(config: &MxfWrapConfig) -> i32 {
     let files = match collect_inputs(&config.input_path) {
         Ok(f) => f,
-        Err(e) => { tracing::error!("{e}"); return -1; }
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
     };
 
     let mut frames: Vec<Vec<u8>> = Vec::new();
     for f in &files {
         match std::fs::read(f) {
             Ok(d) => frames.push(d),
-            Err(e) => { tracing::error!("read {}: {e}", f.display()); return -1; }
+            Err(e) => {
+                tracing::error!("read {}: {e}", f.display());
+                return -1;
+            }
         }
     }
 
-    let fps = if config.frame_rate == 0 { 24 } else { config.frame_rate };
+    let fps = if config.frame_rate == 0 {
+        24
+    } else {
+        config.frame_rate
+    };
     let info = make_writer_info();
     let desc = asdcplib::jp2k::PictureDescriptor {
         edit_rate: asdcplib::Rational::new(fps as i32, 1),
@@ -108,22 +118,36 @@ fn wrap_j2k(config: &MxfWrapConfig) -> i32 {
         return -1;
     }
 
-    tracing::info!("Wrapped {:?} to MXF: {}", config.mxf_type, config.output_mxf.display());
+    tracing::info!(
+        "Wrapped {:?} to MXF: {}",
+        config.mxf_type,
+        config.output_mxf.display()
+    );
     0
 }
 
 fn wrap_pcm(config: &MxfWrapConfig) -> i32 {
     let files = match collect_inputs(&config.input_path) {
         Ok(f) => f,
-        Err(e) => { tracing::error!("{e}"); return -1; }
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
     };
 
     let wav_data = match std::fs::read(&files[0]) {
         Ok(d) => d,
-        Err(e) => { tracing::error!("read WAV: {e}"); return -1; }
+        Err(e) => {
+            tracing::error!("read WAV: {e}");
+            return -1;
+        }
     };
 
-    let fps = if config.frame_rate == 0 { 24 } else { config.frame_rate };
+    let fps = if config.frame_rate == 0 {
+        24
+    } else {
+        config.frame_rate
+    };
     let info = make_writer_info();
     let channels = 6u32;
     let bits = 24u32;
@@ -134,7 +158,11 @@ fn wrap_pcm(config: &MxfWrapConfig) -> i32 {
 
     let pcm_start = if wav_data.len() > 44 { 44 } else { 0 };
     let pcm_data = &wav_data[pcm_start..];
-    let num_frames = if frame_size > 0 { pcm_data.len() as u32 / frame_size } else { 0 };
+    let num_frames = if frame_size > 0 {
+        pcm_data.len() as u32 / frame_size
+    } else {
+        0
+    };
 
     let desc = asdcplib::pcm::AudioDescriptor {
         edit_rate: asdcplib::Rational::new(fps as i32, 1),
@@ -159,7 +187,9 @@ fn wrap_pcm(config: &MxfWrapConfig) -> i32 {
     for i in 0..num_frames {
         let start = (i * frame_size) as usize;
         let end = start + frame_size as usize;
-        if end > pcm_data.len() { break; }
+        if end > pcm_data.len() {
+            break;
+        }
         if let Err(e) = writer.write_frame(&pcm_data[start..end], None, None) {
             tracing::error!("PCM write_frame: {e}");
             return -1;
@@ -171,22 +201,36 @@ fn wrap_pcm(config: &MxfWrapConfig) -> i32 {
         return -1;
     }
 
-    tracing::info!("Wrapped {:?} to MXF: {}", config.mxf_type, config.output_mxf.display());
+    tracing::info!(
+        "Wrapped {:?} to MXF: {}",
+        config.mxf_type,
+        config.output_mxf.display()
+    );
     0
 }
 
 fn wrap_timed_text(config: &MxfWrapConfig) -> i32 {
     let files = match collect_inputs(&config.input_path) {
         Ok(f) => f,
-        Err(e) => { tracing::error!("{e}"); return -1; }
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
     };
 
     let xml_data = match std::fs::read_to_string(&files[0]) {
         Ok(d) => d,
-        Err(e) => { tracing::error!("read XML: {e}"); return -1; }
+        Err(e) => {
+            tracing::error!("read XML: {e}");
+            return -1;
+        }
     };
 
-    let fps = if config.frame_rate == 0 { 24 } else { config.frame_rate };
+    let fps = if config.frame_rate == 0 {
+        24
+    } else {
+        config.frame_rate
+    };
     let info = make_writer_info();
     let desc = asdcplib::timed_text::TimedTextDescriptor {
         edit_rate: asdcplib::Rational::new(fps as i32, 1),
@@ -209,10 +253,17 @@ fn wrap_timed_text(config: &MxfWrapConfig) -> i32 {
     for f in files.iter().skip(1) {
         let data = match std::fs::read(f) {
             Ok(d) => d,
-            Err(e) => { tracing::error!("read {}: {e}", f.display()); return -1; }
+            Err(e) => {
+                tracing::error!("read {}: {e}", f.display());
+                return -1;
+            }
         };
         let resource_uuid = *uuid::Uuid::new_v4().as_bytes();
-        let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let ext = f
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         let mime = match ext.as_str() {
             "ttf" | "otf" => "application/x-font-opentype",
             "png" => "image/png",
@@ -229,25 +280,39 @@ fn wrap_timed_text(config: &MxfWrapConfig) -> i32 {
         return -1;
     }
 
-    tracing::info!("Wrapped {:?} to MXF: {}", config.mxf_type, config.output_mxf.display());
+    tracing::info!(
+        "Wrapped {:?} to MXF: {}",
+        config.mxf_type,
+        config.output_mxf.display()
+    );
     0
 }
 
 fn wrap_atmos(config: &MxfWrapConfig) -> i32 {
     let files = match collect_inputs(&config.input_path) {
         Ok(f) => f,
-        Err(e) => { tracing::error!("{e}"); return -1; }
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
     };
 
     let mut frames: Vec<Vec<u8>> = Vec::new();
     for f in &files {
         match std::fs::read(f) {
             Ok(d) => frames.push(d),
-            Err(e) => { tracing::error!("read {}: {e}", f.display()); return -1; }
+            Err(e) => {
+                tracing::error!("read {}: {e}", f.display());
+                return -1;
+            }
         }
     }
 
-    let fps = if config.frame_rate == 0 { 24 } else { config.frame_rate };
+    let fps = if config.frame_rate == 0 {
+        24
+    } else {
+        config.frame_rate
+    };
     let info = make_writer_info();
     let desc = asdcplib::atmos::AtmosDescriptor {
         edit_rate: asdcplib::Rational::new(fps as i32, 1),
@@ -280,6 +345,10 @@ fn wrap_atmos(config: &MxfWrapConfig) -> i32 {
         return -1;
     }
 
-    tracing::info!("Wrapped {:?} to MXF: {}", config.mxf_type, config.output_mxf.display());
+    tracing::info!(
+        "Wrapped {:?} to MXF: {}",
+        config.mxf_type,
+        config.output_mxf.display()
+    );
     0
 }

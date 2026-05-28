@@ -32,10 +32,11 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
         let dst_path = dest.join(rel);
 
         if let Some(parent) = dst_path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent) {
-                tracing::error!("Failed to create directory {}: {e}", parent.display());
-                return -1;
-            }
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::error!("Failed to create directory {}: {e}", parent.display());
+            return -1;
+        }
 
         // Read source and compute hash
         let src_data = match std::fs::read(src_path) {

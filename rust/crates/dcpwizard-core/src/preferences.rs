@@ -90,13 +90,14 @@ pub fn save_preferences(prefs: &Preferences) -> i32 {
     let path = preferences_path();
 
     if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::error!(
-                "Failed to create preferences directory {}: {e}",
-                parent.display()
-            );
-            return -1;
-        }
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::error!(
+            "Failed to create preferences directory {}: {e}",
+            parent.display()
+        );
+        return -1;
+    }
 
     match serde_json::to_string_pretty(prefs) {
         Ok(json) => match std::fs::write(&path, json) {

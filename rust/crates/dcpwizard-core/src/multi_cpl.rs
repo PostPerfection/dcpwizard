@@ -68,20 +68,20 @@ pub fn list_cpls(dcp_dir: &Path) -> Vec<CplEntry> {
                 let full_path = dcp_dir.join(&current_path);
                 if full_path.exists()
                     && let Ok(file_content) = std::fs::read_to_string(&full_path)
-                        && file_content.contains("CompositionPlaylist") {
-                            let title = extract_xml_value(&file_content, "ContentTitleText")
-                                .or_else(|| extract_xml_value(&file_content, "ContentTitle"))
-                                .unwrap_or_default();
-                            let kind =
-                                extract_xml_value(&file_content, "ContentKind").unwrap_or_default();
+                    && file_content.contains("CompositionPlaylist")
+                {
+                    let title = extract_xml_value(&file_content, "ContentTitleText")
+                        .or_else(|| extract_xml_value(&file_content, "ContentTitle"))
+                        .unwrap_or_default();
+                    let kind = extract_xml_value(&file_content, "ContentKind").unwrap_or_default();
 
-                            cpls.push(CplEntry {
-                                id: current_id.clone(),
-                                file_path: current_path.clone(),
-                                content_title: title,
-                                content_kind: kind,
-                            });
-                        }
+                    cpls.push(CplEntry {
+                        id: current_id.clone(),
+                        file_path: current_path.clone(),
+                        content_title: title,
+                        content_kind: kind,
+                    });
+                }
             }
             in_asset = false;
         } else if in_asset {
@@ -172,13 +172,15 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
                 }
             }
             if let Some(d) = extract_xml_value(trimmed, "Duration")
-                && let Ok(v) = d.parse::<u64>() {
-                    duration = v;
-                }
+                && let Ok(v) = d.parse::<u64>()
+            {
+                duration = v;
+            }
             if let Some(er) = extract_xml_value(trimmed, "EditRate")
-                && edit_rate.is_empty() {
-                    edit_rate = er;
-                }
+                && edit_rate.is_empty()
+            {
+                edit_rate = er;
+            }
         }
     }
 
@@ -264,10 +266,11 @@ pub fn create_multi_cpl(config: &MultiCplConfig) -> i32 {
         if let Some(name) = mxf.file_name() {
             let dst = config.output_dir.join(name);
             if !dst.exists()
-                && let Err(e) = std::fs::copy(mxf, &dst) {
-                    tracing::error!("Failed to copy MXF {}: {e}", mxf.display());
-                    return -1;
-                }
+                && let Err(e) = std::fs::copy(mxf, &dst)
+            {
+                tracing::error!("Failed to copy MXF {}: {e}", mxf.display());
+                return -1;
+            }
         }
     }
 
