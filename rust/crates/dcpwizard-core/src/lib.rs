@@ -92,3 +92,119 @@ impl Resolution {
         }
     }
 }
+
+/// DCP content type (SMPTE 429-7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ContentType {
+    /// Feature
+    #[default]
+    Feature,
+    /// Short
+    Short,
+    /// Trailer
+    Trailer,
+    /// Test
+    Test,
+    /// Transitional (pre-show)
+    Transitional,
+    /// Rating
+    Rating,
+    /// Teaser
+    Teaser,
+    /// Policy
+    Policy,
+    /// Public service announcement
+    PublicServiceAnnouncement,
+    /// Advertisement
+    Advertisement,
+}
+
+impl ContentType {
+    /// Parse from common abbreviation string.
+    pub fn from_abbrev(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "FTR" => Some(Self::Feature),
+            "SHR" => Some(Self::Short),
+            "TLR" => Some(Self::Trailer),
+            "TST" => Some(Self::Test),
+            "XSN" => Some(Self::Transitional),
+            "RTG" => Some(Self::Rating),
+            "TSR" => Some(Self::Teaser),
+            "POL" => Some(Self::Policy),
+            "PSA" => Some(Self::PublicServiceAnnouncement),
+            "ADV" => Some(Self::Advertisement),
+            _ => None,
+        }
+    }
+
+    /// SMPTE content kind string for CPL.
+    pub fn as_cpl_kind(&self) -> &'static str {
+        match self {
+            Self::Feature => "feature",
+            Self::Short => "short",
+            Self::Trailer => "trailer",
+            Self::Test => "test",
+            Self::Transitional => "transitional",
+            Self::Rating => "rating",
+            Self::Teaser => "teaser",
+            Self::Policy => "policy",
+            Self::PublicServiceAnnouncement => "psa",
+            Self::Advertisement => "advertisement",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_content_type_from_abbrev() {
+        assert_eq!(ContentType::from_abbrev("FTR"), Some(ContentType::Feature));
+        assert_eq!(ContentType::from_abbrev("SHR"), Some(ContentType::Short));
+        assert_eq!(ContentType::from_abbrev("TLR"), Some(ContentType::Trailer));
+        assert_eq!(ContentType::from_abbrev("TST"), Some(ContentType::Test));
+        assert_eq!(
+            ContentType::from_abbrev("XSN"),
+            Some(ContentType::Transitional)
+        );
+        assert_eq!(ContentType::from_abbrev("RTG"), Some(ContentType::Rating));
+        assert_eq!(ContentType::from_abbrev("TSR"), Some(ContentType::Teaser));
+        assert_eq!(ContentType::from_abbrev("POL"), Some(ContentType::Policy));
+        assert_eq!(
+            ContentType::from_abbrev("PSA"),
+            Some(ContentType::PublicServiceAnnouncement)
+        );
+        assert_eq!(
+            ContentType::from_abbrev("ADV"),
+            Some(ContentType::Advertisement)
+        );
+    }
+
+    #[test]
+    fn test_content_type_case_insensitive() {
+        assert_eq!(ContentType::from_abbrev("ftr"), Some(ContentType::Feature));
+        assert_eq!(ContentType::from_abbrev("Tlr"), Some(ContentType::Trailer));
+    }
+
+    #[test]
+    fn test_content_type_invalid() {
+        assert_eq!(ContentType::from_abbrev("XYZ"), None);
+        assert_eq!(ContentType::from_abbrev(""), None);
+    }
+
+    #[test]
+    fn test_content_type_cpl_kind() {
+        assert_eq!(ContentType::Feature.as_cpl_kind(), "feature");
+        assert_eq!(ContentType::Trailer.as_cpl_kind(), "trailer");
+        assert_eq!(ContentType::PublicServiceAnnouncement.as_cpl_kind(), "psa");
+    }
+
+    #[test]
+    fn test_resolution_dimensions() {
+        assert_eq!(Resolution::TwoK.width(), 2048);
+        assert_eq!(Resolution::TwoK.height(), 1080);
+        assert_eq!(Resolution::FourK.width(), 4096);
+        assert_eq!(Resolution::FourK.height(), 2160);
+    }
+}

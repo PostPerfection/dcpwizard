@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -43,6 +43,30 @@ enum Commands {
         /// J2K encoder: "grok" (default) or "openjpeg"
         #[arg(long, default_value = "grok")]
         encoder: String,
+        /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV
+        #[arg(long)]
+        content_type: Option<String>,
+        /// Container ratio: flat (185), scope (239), full (133)
+        #[arg(long)]
+        container_ratio: Option<String>,
+        /// DCP frame rate (auto-detected from source if not specified)
+        #[arg(long)]
+        frame_rate: Option<u32>,
+        /// Force 2K resolution
+        #[arg(long)]
+        twok: bool,
+        /// Force 4K resolution
+        #[arg(long)]
+        fourk: bool,
+        /// Number of encoding threads (default: auto-detect CPU count)
+        #[arg(short = 'j', long)]
+        threads: Option<u32>,
+        /// J2K bandwidth in Mbit/s (default: 250 for 2K, 500 for 4K)
+        #[arg(long)]
+        video_bit_rate: Option<u32>,
+        /// Number of audio channels
+        #[arg(long)]
+        audio_channels: Option<u32>,
     },
     /// Encode images to JPEG 2000
     Encode {
@@ -90,6 +114,21 @@ enum Commands {
     Verify {
         /// DCP directory
         dcp_dir: String,
+        /// Skip asset hash verification
+        #[arg(long)]
+        no_hash_check: bool,
+        /// Skip picture bitstream checks (faster)
+        #[arg(long)]
+        no_picture_check: bool,
+        /// Require strict SMPTE Bv2.1 compliance
+        #[arg(long)]
+        strict: bool,
+        /// Write report to file (.txt, .html, or .pdf)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Quiet mode (exit code only, no output)
+        #[arg(short, long)]
+        quiet: bool,
     },
     /// Show DCP metadata
     Info {
@@ -104,12 +143,30 @@ enum Commands {
         /// Content title
         #[arg(long)]
         content_title: String,
-        /// Recipient certificate
+        /// Recipient certificate file
         #[arg(long)]
         cert: String,
         /// Output KDM file
         #[arg(short, long)]
         output: String,
+        /// Valid from (ISO 8601, e.g. "2024-06-01T00:00:00+00:00") or "now"
+        #[arg(short = 'f', long)]
+        valid_from: Option<String>,
+        /// Valid to (ISO 8601, e.g. "2024-12-31T23:59:59+00:00")
+        #[arg(short = 't', long)]
+        valid_to: Option<String>,
+        /// Valid duration (e.g. "2 weeks", "30 days", "4 hours")
+        #[arg(short = 'd', long)]
+        valid_duration: Option<String>,
+        /// KDM formulation: modified-transitional-1 (default), dci-any, dci-specific
+        #[arg(long, default_value = "modified-transitional-1")]
+        formulation: String,
+        /// Disable forensic marking of picture
+        #[arg(long)]
+        disable_forensic_marking_picture: bool,
+        /// Disable forensic marking of audio
+        #[arg(long)]
+        disable_forensic_marking_audio: bool,
     },
     /// Copy DCP to drive
     Copy {
@@ -197,7 +254,15 @@ fn main() {
             standard,
             encrypt,
             encoder,
-            ..
+            content_type,
+            container_ratio: _container_ratio,
+            frame_rate,
+            twok,
+            fourk,
+            threads,
+            video_bit_rate,
+            audio_channels: _,
+            profile: _,
         } => {
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
@@ -243,14 +308,26 @@ fn main() {
 
                 // Probe video for frame rate and resolution
                 let video_info = dcpwizard_core::probe::probe_video(&video_path);
-                let fps = video_info
-                    .as_ref()
-                    .map(|v| v.fps_num / v.fps_den.max(1))
-                    .unwrap_or(24);
-                let (width, height, total_frames) = video_info
+                let fps = frame_rate.unwrap_or_else(|| {
+                    video_info
+                        .as_ref()
+                        .map(|v| v.fps_num / v.fps_den.max(1))
+                        .unwrap_or(24)
+                });
+                let (mut width, mut height, total_frames) = video_info
                     .as_ref()
                     .map(|v| (v.width, v.height, v.total_frames))
                     .unwrap_or((2048, 1080, 0));
+
+                // Apply resolution override
+                if fourk {
+                    width = 4096;
+                    height = 2160;
+                } else if twok {
+                    width = 2048;
+                    height = 1080;
+                }
+
                 if let Some(ref info) = video_info {
                     tracing::info!(
                         "Input: {}x{} @ {}/{} fps, ~{} frames",
@@ -262,8 +339,21 @@ fn main() {
                     );
                 }
 
+                // Compute compression ratio from bitrate if specified
+                let compression_ratio = if let Some(mbps) = video_bit_rate {
+                    // DCI J2K: raw = width*height*36 bits/frame
+                    // ratio = raw_bits_per_frame / target_bits_per_frame
+                    let raw_bits = width as f64 * height as f64 * 36.0;
+                    let target_bits = (mbps as f64 * 1_000_000.0) / fps as f64;
+                    (raw_bits / target_bits).max(1.0)
+                } else {
+                    10.0
+                };
+
+                let _num_threads = threads.unwrap_or(0); // reserved for future use
+
                 let params = CompressParams {
-                    compression_ratio: 10.0,
+                    compression_ratio,
                     frame_rate: fps as u16,
                     ..CompressParams::default()
                 };
@@ -357,6 +447,16 @@ fn main() {
                     }
                 };
 
+                let resolution = if fourk {
+                    dcpwizard_core::Resolution::FourK
+                } else {
+                    dcpwizard_core::Resolution::TwoK
+                };
+                let ct = content_type
+                    .as_deref()
+                    .and_then(dcpwizard_core::ContentType::from_abbrev)
+                    .unwrap_or_default();
+
                 let config = dcpwizard_core::dcp::DcpConfig {
                     title,
                     standard: std_val,
@@ -364,6 +464,9 @@ fn main() {
                     output_dir: output_dir.clone(),
                     frame_rate_num: fps,
                     frame_rate_den: 1,
+                    resolution,
+                    content_type: ct,
+                    max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(j2k_dir.clone()),
                     audio_path: audio_path.clone(),
                     ..Default::default()
@@ -380,13 +483,26 @@ fn main() {
                 code
             } else {
                 // Input is a J2K directory or image sequence
+                let resolution = if fourk {
+                    dcpwizard_core::Resolution::FourK
+                } else {
+                    dcpwizard_core::Resolution::TwoK
+                };
+                let ct = content_type
+                    .as_deref()
+                    .and_then(dcpwizard_core::ContentType::from_abbrev)
+                    .unwrap_or_default();
+
                 let config = dcpwizard_core::dcp::DcpConfig {
                     title,
                     standard: std_val,
                     encrypt,
                     output_dir,
-                    frame_rate_num: 24,
+                    frame_rate_num: frame_rate.unwrap_or(24),
                     frame_rate_den: 1,
+                    resolution,
+                    content_type: ct,
+                    max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(video_path),
                     audio_path: audio.map(PathBuf::from),
                     ..Default::default()
@@ -546,20 +662,48 @@ fn main() {
             dcpwizard_core::transcode::transcode_to_sequence(&config)
         }
 
-        Commands::Verify { dcp_dir } => {
-            let result = dcpwizard_core::verify::verify_dcp(&PathBuf::from(dcp_dir));
-            if result.valid {
-                tracing::info!("DCP verification PASSED");
-                0
-            } else {
-                for e in &result.errors {
-                    tracing::error!("{e}");
+        Commands::Verify {
+            dcp_dir,
+            no_hash_check,
+            no_picture_check,
+            strict,
+            output,
+            quiet,
+        } => {
+            let result = dcpwizard_core::verify::verify_dcp_with_options(
+                &PathBuf::from(&dcp_dir),
+                &dcpwizard_core::verify::VerifyCliOptions {
+                    skip_hash_check: no_hash_check,
+                    skip_picture_check: no_picture_check,
+                    strict,
+                },
+            );
+
+            if let Some(ref out_path) = output
+                && let Err(e) =
+                    dcpwizard_core::verify::write_verify_report(&result, Path::new(out_path))
+            {
+                tracing::error!("Failed to write report: {e}");
+                std::process::exit(1);
+            }
+
+            if !quiet {
+                if result.valid {
+                    tracing::info!("DCP verification PASSED");
+                } else {
+                    for e in &result.errors {
+                        tracing::error!("{e}");
+                    }
                 }
                 for w in &result.warnings {
                     tracing::warn!("{w}");
                 }
-                1
+                for i in &result.info {
+                    tracing::info!("{i}");
+                }
             }
+
+            if result.valid { 0 } else { 1 }
         }
 
         Commands::Info { dcp_dir } => {
@@ -585,12 +729,29 @@ fn main() {
             content_title,
             cert,
             output,
+            valid_from,
+            valid_to,
+            valid_duration,
+            formulation,
+            disable_forensic_marking_picture,
+            disable_forensic_marking_audio,
         } => {
+            let (not_valid_before, not_valid_after) = dcpwizard_core::kdm::resolve_validity_period(
+                valid_from.as_deref(),
+                valid_to.as_deref(),
+                valid_duration.as_deref(),
+            );
+
             let config = dcpwizard_core::kdm::KdmConfig {
                 cpl_id,
                 content_title,
                 recipient_cert_file: PathBuf::from(cert),
                 output_file: PathBuf::from(output),
+                not_valid_before,
+                not_valid_after,
+                formulation: dcpwizard_core::kdm::KdmFormulation::parse(&formulation),
+                disable_forensic_marking_picture,
+                disable_forensic_marking_audio,
                 ..Default::default()
             };
             dcpwizard_core::kdm::generate_kdm(&config)

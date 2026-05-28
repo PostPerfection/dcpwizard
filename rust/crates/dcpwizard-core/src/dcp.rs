@@ -7,6 +7,7 @@ pub struct DcpConfig {
     pub title: String,
     pub standard: crate::Standard,
     pub resolution: crate::Resolution,
+    pub content_type: crate::ContentType,
     pub frame_rate_num: u32,
     pub frame_rate_den: u32,
     pub max_bitrate_mbps: u32,
