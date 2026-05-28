@@ -313,7 +313,7 @@ version = "0.1.0"
 source = "git+https://github.com/PostPerfection/dcpdoctor.git?branch=master#77f87401cdef077fc777d7b21b886a20102dcacb"
 dependencies = [
  "base64",
- "postkit 0.1.0 (git+https://github.com/PostPerfection/postkit.git?branch=master)",
+ "postkit 0.1.0",
  "quick-xml",
  "serde",
  "serde_json",
@@ -331,7 +331,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "dcpwizard-core",
- "postkit 0.1.0",
+ "postkit 0.5.0",
  "serde_json",
  "tracing",
  "tracing-subscriber",
@@ -343,12 +343,13 @@ version = "0.1.0"
 dependencies = [
  "asdcplib",
  "dcpdoctor-core",
- "postkit 0.1.0",
+ "postkit 0.5.0",
  "serde",
  "serde_json",
  "sha1",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tracing",
  "uuid",
 ]
@@ -938,6 +939,31 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "postkit"
 version = "0.1.0"
+source = "git+https://github.com/PostPerfection/postkit.git?branch=master#7e85e3f3cccecd80d8fe1d93d14dc87fbb24ef52"
+dependencies = [
+ "base64",
+ "dirs",
+ "hex",
+ "notify",
+ "quick-xml",
+ "rcgen",
+ "regex",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
+ "tracing",
+ "uuid",
+ "x509-parser",
+]
+
+[[package]]
+name = "postkit"
+version = "0.5.0"
 dependencies = [
  "asdcplib",
  "base64",
@@ -955,31 +981,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tiff",
- "time",
- "tracing",
- "uuid",
- "x509-parser",
-]
-
-[[package]]
-name = "postkit"
-version = "0.1.0"
-source = "git+https://github.com/PostPerfection/postkit.git?branch=master#7e85e3f3cccecd80d8fe1d93d14dc87fbb24ef52"
-dependencies = [
- "base64",
- "dirs",
- "hex",
- "notify",
- "quick-xml",
- "rcgen",
- "regex",
- "ring",
- "rusqlite",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "thiserror 2.0.18",
  "time",
  "tracing",
  "uuid",
