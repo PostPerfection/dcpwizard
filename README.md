@@ -104,20 +104,63 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ## Installation
 
+### Pre-built binaries (recommended)
+
+Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/releases/latest) page:
+
+| Platform | CLI | Desktop GUI |
+|----------|-----|-------------|
+| **Linux** (x86_64) | `dcpwizard-linux-x86_64.tar.gz` | `.deb`, `.AppImage` |
+| **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
+| **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
+
+The CLI binary is fully self-contained (OpenSSL and OpenJPEG are statically linked). Extract and run — no dependencies required.
+
+### Install from source
+
+#### Linux (Ubuntu/Debian)
+
 ```bash
+sudo apt-get install -y cmake pkg-config libxml2-dev libssl-dev libxerces-c-dev
+# For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
 cd rust
 cargo build --release
-cargo test
+# Binary at rust/target/release/dcpwizard
 ```
 
-The Rust workspace uses [postkit](https://github.com/PostPerfection/postkit), [dcpdoctor-core](https://github.com/PostPerfection/dcpdoctor), and [asdcplib-rs](https://github.com/PostPerfection/asdcplib-rs) as dependencies.
+#### macOS
+
+```bash
+brew install cmake pkg-config libxml2 openssl@3 xerces-c
+
+export OPENSSL_DIR=$(brew --prefix openssl@3)
+export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix xerces-c)/lib/pkgconfig"
+export CMAKE_PREFIX_PATH="$(brew --prefix libxml2);$(brew --prefix xerces-c)"
+
+cd rust
+cargo build --release
+```
+
+#### Windows
+
+```powershell
+# Using vcpkg (recommended)
+vcpkg install libxml2 openssl xerces-c --triplet x64-windows
+
+$env:VCPKG_ROOT = "$env:VCPKG_INSTALLATION_ROOT"
+$env:CMAKE_TOOLCHAIN_FILE = "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+cd rust
+cargo build --release
+```
 
 ### Optional runtime dependencies
 
-| Dependency | Notes |
-|-----------|-------|
-| ffmpeg | Video transcoding and import |
-| grok | JPEG 2000 encoding (GPU and CPU) |
+| Dependency | Purpose | Install |
+|-----------|---------|---------|
+| `ffmpeg` | Video transcoding and import | `apt install ffmpeg` / `brew install ffmpeg` / [ffmpeg.org](https://ffmpeg.org/download.html) |
+| `mpv` | GUI preview player | `apt install mpv` / `brew install mpv` / [mpv.io](https://mpv.io/installation/) |
 
 ### Docker
 
