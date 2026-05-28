@@ -156,11 +156,21 @@ npm run tauri build    # production build
 # Create a DCP
 dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --output ./dcp
 
+# Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp --encoder openjpeg
+
 # Create with encryption
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp --encrypt
 
 # Create Interop DCP
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --standard interop
+
+# Create with content type and resolution
+dcpwizard create --title "My Trailer" --video trailer.mov --output ./dcp \
+    --content-type TLR --fourk --video-bit-rate 500
+
+# Create with frame rate override
+dcpwizard create --title "My Film" --video ./j2k --output ./dcp --frame-rate 25
 
 # Encode images to JPEG 2000
 dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250 --encoder grok
@@ -171,11 +181,30 @@ dcpwizard transcode --input movie.mov --output ./sequence
 # Verify an existing DCP
 dcpwizard verify ./my_dcp
 
+# Verify with options (skip slow hash check, output report)
+dcpwizard verify ./my_dcp --no-hash-check --output report.html
+
+# Strict SMPTE Bv2.1 verification
+dcpwizard verify ./my_dcp --strict --quiet
+
 # Inspect DCP metadata
 dcpwizard info ./my_dcp
 
 # Generate KDM
-dcpwizard kdm --dcp ./my_dcp --cert recipient.pem --output kdm.xml
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem --output kdm.xml
+
+# KDM with validity period
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --output kdm.xml --valid-from now --valid-duration "2 weeks"
+
+# KDM with specific dates and formulation
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --output kdm.xml --valid-from 2024-06-01T00:00:00+00:00 \
+    --valid-to 2024-06-30T23:59:59+00:00 --formulation dci-any
+
+# KDM with forensic marking disabled
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --output kdm.xml --disable-forensic-marking-picture
 
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
@@ -187,7 +216,7 @@ dcpwizard loudness audio.wav
 dcpwizard report --dcp ./my_dcp --output report.html
 
 # Start REST API server
-dcpwizard serve --port 8080
+dcpwizard serve --bind 127.0.0.1:8080
 
 # Watch folder for auto-DCP creation
 dcpwizard watch ./incoming

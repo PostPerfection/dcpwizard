@@ -367,7 +367,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
             <h3>Encryption &amp; KDM</h3>
-            <p>AES-128 encryption. KDM generation (Interop, SMPTE, Atmos). Batch KDM, DKDM, time zones, trusted device lists, annotation schemes.</p>
+            <p>AES-128 encryption. KDM generation (Interop, SMPTE, Atmos). Batch KDM, DKDM, time zones, trusted device lists, forensic marking control, configurable validity periods and formulations (modified-transitional-1, DCI-any, DCI-specific).</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
@@ -483,23 +483,34 @@
     <div class="code-block"><code><span class="comment"># Create a DCP from J2K image sequence + WAV audio</span>
 <span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"My Feature Film"</span> <span class="flag">--video</span> <span class="val">./j2k</span> <span class="flag">--audio</span> <span class="val">./audio.wav</span> <span class="flag">--output</span> <span class="val">./dcp</span>
 
+<span class="comment"># Create from video file (full pipeline: decode → J2K → MXF → DCP)</span>
+<span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"My Film"</span> <span class="flag">--video</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">./dcp</span> <span class="flag">--encoder</span> <span class="val">openjpeg</span>
+
+<span class="comment"># Create 4K trailer with custom bitrate</span>
+<span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"Trailer"</span> <span class="flag">--video</span> <span class="val">trailer.mov</span> <span class="flag">--output</span> <span class="val">./dcp</span> <span class="flag">--content-type</span> <span class="val">TLR</span> <span class="flag">--fourk</span> <span class="flag">--video-bit-rate</span> <span class="val">500</span>
+
 <span class="comment"># Encode image sequence to JPEG 2000</span>
 <span class="cmd">dcpwizard</span> encode <span class="flag">--input</span> <span class="val">./dpx</span> <span class="flag">--output</span> <span class="val">./j2k</span> <span class="flag">--bandwidth</span> <span class="val">250</span> <span class="flag">--encoder</span> <span class="val">grok</span>
 
-<span class="comment"># Transcode video to image sequence</span>
-<span class="cmd">dcpwizard</span> transcode <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">./sequence</span>
+<span class="comment"># Verify an existing DCP (strict mode, HTML report)</span>
+<span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span> <span class="flag">--strict</span> <span class="flag">--output</span> <span class="val">report.html</span>
 
-<span class="comment"># Verify an existing DCP</span>
-<span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span>
+<span class="comment"># Quick verification (skip hash checks)</span>
+<span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span> <span class="flag">--no-hash-check</span> <span class="flag">--quiet</span>
 
-<span class="comment"># Generate KDM for encrypted DCP</span>
-<span class="cmd">dcpwizard</span> kdm <span class="flag">--dcp</span> <span class="val">./my_dcp</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> <span class="flag">--output</span> <span class="val">kdm.xml</span>
+<span class="comment"># Generate KDM with validity period</span>
+<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> <span class="flag">--output</span> <span class="val">kdm.xml</span> \
+    <span class="flag">--valid-from</span> <span class="val">now</span> <span class="flag">--valid-duration</span> <span class="val">"2 weeks"</span>
+
+<span class="comment"># KDM with formulation and forensic marking control</span>
+<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> <span class="flag">--output</span> <span class="val">kdm.xml</span> \
+    <span class="flag">--formulation</span> <span class="val">dci-any</span> <span class="flag">--disable-forensic-marking-picture</span>
 
 <span class="comment"># Copy DCP to cinema drive with hash verification</span>
 <span class="cmd">dcpwizard</span> copy <span class="flag">--src</span> <span class="val">./my_dcp</span> <span class="flag">--dst</span> <span class="val">/mnt/cru</span>
 
 <span class="comment"># Start REST API for headless operation</span>
-<span class="cmd">dcpwizard</span> serve <span class="flag">--port</span> <span class="val">8080</span></code></div>
+<span class="cmd">dcpwizard</span> serve <span class="flag">--bind</span> <span class="val">127.0.0.1:8080</span></code></div>
 </section>
 
 <section class="section" id="comparison">
