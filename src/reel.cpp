@@ -1,3 +1,7 @@
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
 #include "dcpwizard/reel.h"
 
 #include <KM_util.h>

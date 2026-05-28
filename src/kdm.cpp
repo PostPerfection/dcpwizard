@@ -27,7 +27,11 @@ static std::string time_to_iso(std::chrono::system_clock::time_point tp)
 {
   auto t = std::chrono::system_clock::to_time_t(tp);
   struct tm tm_buf;
+#ifdef _WIN32
+  gmtime_s(&tm_buf, &t);
+#else
   gmtime_r(&t, &tm_buf);
+#endif
   std::ostringstream ss;
   ss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S+00:00");
   return ss.str();
