@@ -264,3 +264,26 @@ fn generate_interop_xml(
     xml.push_str("</DCSubtitle>\n");
     xml
 }
+
+/// High-level convenience: convert an SRT file to DCP SMPTE XML.
+pub fn convert_srt_to_dcp_xml(
+    input: &Path,
+    output: &Path,
+    language: &str,
+    _fps: u32,
+) -> Result<(), String> {
+    let config = SubtitleConfig {
+        input_file: input.to_path_buf(),
+        output_file: output.to_path_buf(),
+        format: SubtitleFormat::SmpteXml,
+        language: language.to_string(),
+        font_size: 42,
+        font_color: "FFFFFFFF".to_string(),
+    };
+    let code = import_subtitles(&config);
+    if code == 0 {
+        Ok(())
+    } else {
+        Err("Subtitle conversion failed".to_string())
+    }
+}

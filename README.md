@@ -184,7 +184,12 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Progress in title bar (visible in taskbar during builds)
 - Desktop notifications on build complete/fail
 - Conditional button enabling (Build disabled until ready)
-- Built-in mpv preview player (space = play/pause, arrows = seek)
+- Built-in mpv preview player with timeline scrubber (click-to-seek, drag-to-scrub, timecode display)
+- Multi-CPL composition tabs — switch, add, remove compositions
+- SRT → SMPTE subtitle conversion panel
+- Subtitle burn-in panel
+- Target resolution conversion panel (2K/4K scope/flat/full)
+- GPU encoding toggle (grok acceleration)
 
 ```bash
 cd gui
@@ -268,6 +273,17 @@ dcpwizard watch ./incoming
 dcpwizard completion bash >> ~/.bashrc
 dcpwizard completion zsh >> ~/.zshrc
 dcpwizard completion fish > ~/.config/fish/completions/dcpwizard.fish
+
+# Convert SRT subtitles to SMPTE DCP XML
+dcpwizard subtitle-convert --input subs.srt --output subs.xml --language en
+
+# Burn subtitles into video
+dcpwizard burn-in --input movie.mov --subtitles subs.srt --output movie_burned.mov
+
+# Scale/crop video to DCI target resolution
+dcpwizard convert --input movie.mov --output movie_2k_scope.mov --target 2k-scope
+# Targets: 2k-scope (2048×858), 2k-flat (1998×1080), 2k-full (2048×1080),
+#          4k-scope (4096×1716), 4k-flat (3996×2160), 4k-full (4096×2160)
 ```
 
 ## REST API

@@ -216,6 +216,51 @@ enum Commands {
         #[command(subcommand)]
         action: BatchAction,
     },
+    /// Convert SRT subtitles to DCP XML (SMPTE Timed Text)
+    SubtitleConvert {
+        /// Input SRT file
+        #[arg(short, long)]
+        input: String,
+        /// Output XML file
+        #[arg(short, long)]
+        output: String,
+        /// Language code (e.g. "en", "fr", "de")
+        #[arg(short, long, default_value = "en")]
+        language: String,
+        /// Frame rate for timecode conversion (24, 25, 30, 48)
+        #[arg(long, default_value = "24")]
+        fps: u32,
+    },
+    /// Burn subtitles into video
+    Burnin {
+        /// Input video file
+        #[arg(short, long)]
+        input: String,
+        /// Subtitle file (SRT, ASS, or SMPTE XML)
+        #[arg(short, long)]
+        subtitles: String,
+        /// Output video file
+        #[arg(short, long)]
+        output: String,
+        /// Font size for burn-in (default: 24)
+        #[arg(long, default_value = "24")]
+        font_size: u32,
+    },
+    /// Convert video to a target DCI container (scale/crop/letterbox)
+    Convert {
+        /// Input video file
+        #[arg(short, long)]
+        input: String,
+        /// Output video file
+        #[arg(short, long)]
+        output: String,
+        /// Target container: 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, 4k-full
+        #[arg(short, long)]
+        target: String,
+        /// Method: letterbox, crop, or scale
+        #[arg(short, long, default_value = "letterbox")]
+        method: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -836,6 +881,138 @@ fn main() {
             println!("Starting dcpwizard daemon on {addr}...");
             let queue = dcpwizard_core::job_queue::JobQueue::new();
             dcpwizard_core::job_queue::start_daemon_ipc(&queue)
+        }
+
+        Commands::SubtitleConvert {
+            input,
+            output,
+            language,
+            fps,
+        } => {
+            let input_path = PathBuf::from(&input);
+            let output_path = PathBuf::from(&output);
+            if !input_path.exists() {
+                tracing::error!("Input file not found: {input}");
+                std::process::exit(1);
+            }
+            match dcpwizard_core::subtitle::convert_srt_to_dcp_xml(
+                &input_path,
+                &output_path,
+                &language,
+                fps,
+            ) {
+                Ok(()) => {
+                    tracing::info!(
+                        "Converted {} -> {} (lang={}, fps={})",
+                        input,
+                        output,
+                        language,
+                        fps
+                    );
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("Subtitle conversion failed: {e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Burnin {
+            input,
+            subtitles,
+            output,
+            font_size,
+        } => {
+            let status = std::process::Command::new("ffmpeg")
+                .arg("-y")
+                .arg("-i")
+                .arg(&input)
+                .arg("-vf")
+                .arg(format!(
+                    "subtitles={}:force_style='FontSize={}'",
+                    subtitles, font_size
+                ))
+                .arg("-c:a")
+                .arg("copy")
+                .arg(&output)
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!("Burned subtitles into: {output}");
+                    0
+                }
+                Ok(s) => {
+                    tracing::error!("ffmpeg exited with code {}", s.code().unwrap_or(-1));
+                    1
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run ffmpeg: {e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Convert {
+            input,
+            output,
+            target,
+            method,
+        } => {
+            // Parse target resolution
+            let (tw, th) = match target.to_lowercase().as_str() {
+                "2k-scope" => (2048, 858),
+                "2k-flat" => (1998, 1080),
+                "2k-full" => (2048, 1080),
+                "4k-scope" => (4096, 1716),
+                "4k-flat" => (3996, 2160),
+                "4k-full" => (4096, 2160),
+                _ => {
+                    tracing::error!(
+                        "Unknown target: {target}. Use: 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, 4k-full"
+                    );
+                    std::process::exit(1);
+                }
+            };
+
+            let vf = match method.to_lowercase().as_str() {
+                "letterbox" => format!(
+                    "scale={tw}:{th}:force_original_aspect_ratio=decrease,pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2"
+                ),
+                "crop" => {
+                    format!("scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th}")
+                }
+                "scale" => format!("scale={tw}:{th}"),
+                _ => {
+                    tracing::error!("Unknown method: {method}. Use: letterbox, crop, or scale");
+                    std::process::exit(1);
+                }
+            };
+
+            let status = std::process::Command::new("ffmpeg")
+                .arg("-y")
+                .arg("-i")
+                .arg(&input)
+                .arg("-vf")
+                .arg(&vf)
+                .arg("-c:a")
+                .arg("copy")
+                .arg(&output)
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!("Converted to {target} ({method}): {output} ({}x{})", tw, th);
+                    0
+                }
+                Ok(s) => {
+                    tracing::error!("ffmpeg exited with code {}", s.code().unwrap_or(-1));
+                    1
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run ffmpeg: {e}");
+                    1
+                }
+            }
         }
 
         Commands::Batch { action } => {

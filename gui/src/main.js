@@ -156,8 +156,28 @@ loadSettings();
 const project = {
   title: "",
   assets: [],  // {id, type: 'video'|'audio'|'subtitle', path, name, meta}
-  reels: [{ id: 1, picture: null, sound: null, subtitle: null }],
+  compositions: [
+    { id: 1, name: "Main", contentKind: "feature", reels: [{ id: 1, picture: null, sound: null, subtitle: null }] }
+  ],
+  activeComposition: 0,  // index into compositions[]
 };
+
+// Convenience accessor for active composition reels
+function getActiveReels() {
+  return project.compositions[project.activeComposition]?.reels || [];
+}
+function setActiveReels(reels) {
+  if (project.compositions[project.activeComposition]) {
+    project.compositions[project.activeComposition].reels = reels;
+  }
+}
+
+// Legacy alias for backward compat in this file
+Object.defineProperty(project, 'reels', {
+  get() { return getActiveReels(); },
+  set(v) { setActiveReels(v); },
+  configurable: true,
+});
 
 let nextAssetId = 1;
 
@@ -369,6 +389,75 @@ document.getElementById("add-reel")?.addEventListener("click", () => {
   project.reels.push({ id: maxId + 1, picture: null, sound: null, subtitle: null });
   renderReels();
 });
+
+// === Multi-CPL Management ===
+let nextCplId = 2;
+
+function renderCplTabs() {
+  const container = document.getElementById("cpl-tabs");
+  if (!container) return;
+  container.innerHTML = "";
+  project.compositions.forEach((cpl, idx) => {
+    const tab = document.createElement("button");
+    tab.className = "cpl-tab" + (idx === project.activeComposition ? " active" : "");
+    tab.dataset.cpl = idx;
+    tab.textContent = cpl.name;
+    if (project.compositions.length > 1) {
+      const rm = document.createElement("span");
+      rm.className = "cpl-tab-remove";
+      rm.textContent = "\u00d7";
+      rm.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeCpl(idx);
+      });
+      tab.appendChild(rm);
+    }
+    tab.addEventListener("click", () => switchCpl(idx));
+    container.appendChild(tab);
+  });
+}
+
+function switchCpl(idx) {
+  if (idx < 0 || idx >= project.compositions.length) return;
+  project.activeComposition = idx;
+  renderCplTabs();
+  renderReels();
+  // Update properties panel content kind
+  const cpl = project.compositions[idx];
+  const kindEl = document.getElementById("prop-content-kind");
+  if (kindEl && cpl.contentKind) kindEl.value = cpl.contentKind;
+}
+
+function removeCpl(idx) {
+  if (project.compositions.length <= 1) return;
+  project.compositions.splice(idx, 1);
+  if (project.activeComposition >= project.compositions.length) {
+    project.activeComposition = project.compositions.length - 1;
+  }
+  renderCplTabs();
+  renderReels();
+}
+
+document.getElementById("add-cpl")?.addEventListener("click", () => {
+  const name = prompt("Composition name:", `CPL ${nextCplId}`);
+  if (!name) return;
+  project.compositions.push({
+    id: nextCplId++,
+    name: name,
+    contentKind: "feature",
+    reels: [{ id: 1, picture: null, sound: null, subtitle: null }],
+  });
+  switchCpl(project.compositions.length - 1);
+});
+
+// Sync content kind changes to active composition
+document.getElementById("prop-content-kind")?.addEventListener("change", (e) => {
+  const cpl = project.compositions[project.activeComposition];
+  if (cpl) cpl.contentKind = e.target.value;
+});
+
+// Initial render
+renderCplTabs();
 
 // === Output directory ===
 document.getElementById("browse-output")?.addEventListener("click", async () => {
@@ -1004,3 +1093,125 @@ renderRecentProjects();
 updateStatusStats();
 initPreview();
 setStatus("Ready");
+
+// === SRT → SMPTE Subtitle Conversion ===
+document.getElementById("srt-browse-input")?.addEventListener("click", async () => {
+  const path = await open({ filters: [{ name: "SRT", extensions: ["srt"] }] });
+  if (path) {
+    document.getElementById("srt-input").value = path;
+    document.getElementById("srt-convert").disabled = false;
+  }
+});
+document.getElementById("srt-browse-output")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) document.getElementById("srt-output").value = path;
+});
+document.getElementById("srt-convert")?.addEventListener("click", async () => {
+  const input = document.getElementById("srt-input").value;
+  const output = document.getElementById("srt-output").value;
+  const lang = document.getElementById("srt-language").value || "en";
+  const fps = document.getElementById("srt-framerate").value || "24";
+  if (!input) return;
+
+  const resultsEl = document.getElementById("srt-results");
+  resultsEl.textContent = "Converting…";
+  resultsEl.classList.add("visible");
+
+  try {
+    const args = ["subtitle-convert", input, "--language", lang, "--framerate", fps];
+    if (output) args.push("-o", output);
+    const cmd = Command.create("dcpwizard", args);
+    const result = await cmd.execute();
+    resultsEl.textContent = result.code === 0
+      ? `✓ Conversion complete\n${result.stdout}`
+      : `✗ Error:\n${result.stderr || result.stdout}`;
+  } catch (e) {
+    resultsEl.textContent = `✗ Failed: ${e}`;
+  }
+});
+
+// === Subtitle Burn-in ===
+document.getElementById("burnin-browse-video")?.addEventListener("click", async () => {
+  const path = await open({ filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "mxf"] }] });
+  if (path) {
+    document.getElementById("burnin-video").value = path;
+    updateBurninBtn();
+  }
+});
+document.getElementById("burnin-browse-sub")?.addEventListener("click", async () => {
+  const path = await open({ filters: [{ name: "Subtitle", extensions: ["srt", "xml", "ttml"] }] });
+  if (path) {
+    document.getElementById("burnin-sub").value = path;
+    updateBurninBtn();
+  }
+});
+document.getElementById("burnin-browse-output")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) document.getElementById("burnin-output").value = path;
+});
+function updateBurninBtn() {
+  const v = document.getElementById("burnin-video").value;
+  const s = document.getElementById("burnin-sub").value;
+  document.getElementById("burnin-start").disabled = !(v && s);
+}
+document.getElementById("burnin-start")?.addEventListener("click", async () => {
+  const video = document.getElementById("burnin-video").value;
+  const sub = document.getElementById("burnin-sub").value;
+  const output = document.getElementById("burnin-output").value;
+  if (!video || !sub) return;
+
+  const resultsEl = document.getElementById("burnin-results");
+  resultsEl.textContent = "Burning in subtitles…";
+  resultsEl.classList.add("visible");
+
+  try {
+    const args = ["burnin", video, "--subtitle", sub];
+    if (output) args.push("-o", output);
+    const cmd = Command.create("dcpwizard", args);
+    const result = await cmd.execute();
+    resultsEl.textContent = result.code === 0
+      ? `✓ Burn-in complete\n${result.stdout}`
+      : `✗ Error:\n${result.stderr || result.stdout}`;
+  } catch (e) {
+    resultsEl.textContent = `✗ Failed: ${e}`;
+  }
+});
+
+// === Target Conversion (Scale/Crop/Letterbox) ===
+document.getElementById("convert-browse-input")?.addEventListener("click", async () => {
+  const path = await open({ filters: [
+    { name: "Video", extensions: ["mp4", "mkv", "mov", "mxf"] },
+    { name: "All", extensions: ["*"] }
+  ]});
+  if (path) {
+    document.getElementById("convert-input").value = path;
+    document.getElementById("convert-start").disabled = false;
+  }
+});
+document.getElementById("convert-browse-output")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) document.getElementById("convert-output").value = path;
+});
+document.getElementById("convert-start")?.addEventListener("click", async () => {
+  const input = document.getElementById("convert-input").value;
+  const container = document.getElementById("convert-container").value;
+  const method = document.getElementById("convert-method").value;
+  const output = document.getElementById("convert-output").value;
+  if (!input) return;
+
+  const resultsEl = document.getElementById("convert-results");
+  resultsEl.textContent = "Converting…";
+  resultsEl.classList.add("visible");
+
+  try {
+    const args = ["convert", input, "--target", container, "--method", method];
+    if (output) args.push("-o", output);
+    const cmd = Command.create("dcpwizard", args);
+    const result = await cmd.execute();
+    resultsEl.textContent = result.code === 0
+      ? `✓ Conversion complete\n${result.stdout}`
+      : `✗ Error:\n${result.stderr || result.stdout}`;
+  } catch (e) {
+    resultsEl.textContent = `✗ Failed: ${e}`;
+  }
+});

@@ -407,7 +407,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🖥️</div>
             <h3>Desktop GUI</h3>
-            <p>Tauri 2 desktop app with dark theme. Drag-and-drop import, keyboard shortcuts, recent projects, context menus, asset filtering, auto-detect video properties, progress in title bar, and desktop notifications.</p>
+            <p>Tauri 2 desktop app with dark theme. Drag-and-drop import, timeline scrubber with timecode, multi-CPL composition tabs, target resolution conversion, SRT→SMPTE subtitle panel, burn-in, GPU toggle, keyboard shortcuts, and desktop notifications.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
@@ -510,7 +510,16 @@
 <span class="cmd">dcpwizard</span> copy <span class="flag">--src</span> <span class="val">./my_dcp</span> <span class="flag">--dst</span> <span class="val">/mnt/cru</span>
 
 <span class="comment"># Start REST API for headless operation</span>
-<span class="cmd">dcpwizard</span> serve <span class="flag">--bind</span> <span class="val">127.0.0.1:8080</span></code></div>
+<span class="cmd">dcpwizard</span> serve <span class="flag">--bind</span> <span class="val">127.0.0.1:8080</span>
+
+<span class="comment"># Convert SRT subtitles to SMPTE DCP XML</span>
+<span class="cmd">dcpwizard</span> subtitle-convert <span class="flag">--input</span> <span class="val">subs.srt</span> <span class="flag">--output</span> <span class="val">subs.xml</span> <span class="flag">--language</span> <span class="val">en</span>
+
+<span class="comment"># Burn subtitles into video</span>
+<span class="cmd">dcpwizard</span> burn-in <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--subtitles</span> <span class="val">subs.srt</span> <span class="flag">--output</span> <span class="val">burned.mov</span>
+
+<span class="comment"># Scale/crop to target DCI resolution</span>
+<span class="cmd">dcpwizard</span> convert <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">movie_2k.mov</span> <span class="flag">--target</span> <span class="val">2k-scope</span></code></div>
 </section>
 
 <section class="section" id="comparison">
