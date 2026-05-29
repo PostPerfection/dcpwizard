@@ -26,3 +26,20 @@ tracing-subscriber.workspace = true
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[package.metadata.deb]
+name = "dcpwizard"
+maintainer = "Post Perfection <dev@postperfection.com>"
+section = "video"
+priority = "optional"
+depends = "$auto"
+recommends = "ffmpeg, mpv"
+assets = [
+    ["target/release/dcpwizard", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/dcpwizard/README.md", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/dcpwizard/CHANGELOG.md", "644"],
+]
+extended-description = """\
+DCP Wizard creates valid Digital Cinema Packages from video sources, \
+image sequences, and WAV audio, conforming to SMPTE ST 429 (Bv2.1) \
+and Interop standards. Free alternative to easyDCP Creator+."""
