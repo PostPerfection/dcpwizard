@@ -1,15 +1,14 @@
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
-use serde::Serialize;
 
 use postkit::encode::{
-    StreamEncodeOptions, StreamProgress, ParallelProgress,
-    find_compressor, stream_encode, encode_parallel,
-    detect_input_type, InputType,
+    detect_input_type, encode_parallel, find_compressor, stream_encode, InputType,
+    ParallelProgress, StreamEncodeOptions, StreamProgress,
 };
 
 // ─── Progress / Events ─────────────────────────────────────────────────────
@@ -145,12 +144,22 @@ pub async fn list_jobs(app: AppHandle) -> Vec<JobInfo> {
     if current_id > 0 {
         let title = queue.current_title.lock().unwrap().clone();
         let status = queue.current_status.lock().unwrap().clone();
-        jobs.push(JobInfo { id: current_id, title, status, percent: 0.0 });
+        jobs.push(JobInfo {
+            id: current_id,
+            title,
+            status,
+            percent: 0.0,
+        });
     }
 
     let q = queue.queue.lock().unwrap();
     for job in q.iter() {
-        jobs.push(JobInfo { id: job.id, title: job.title.clone(), status: "queued".to_string(), percent: 0.0 });
+        jobs.push(JobInfo {
+            id: job.id,
+            title: job.title.clone(),
+            status: "queued".to_string(),
+            percent: 0.0,
+        });
     }
     jobs
 }
@@ -184,7 +193,8 @@ async fn run_queue_worker(app: AppHandle) {
             let app = app.clone();
             let job = job.clone();
             move || run_job(&app, &job)
-        }).await;
+        })
+        .await;
 
         let queue = app.state::<JobQueue>();
         match result {
@@ -245,7 +255,11 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     log!(log_file, "Title: {}", job.title);
     log!(log_file, "Input: {}", video.display());
     log!(log_file, "Output: {}", output.display());
-    log!(log_file, "Started: {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    log!(
+        log_file,
+        "Started: {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
 
     let start_time = std::time::Instant::now();
     let input_type = postkit::encode::detect_input_type(video);
@@ -256,8 +270,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     match input_type {
         InputType::Video => {
             // Streaming: ffmpeg raw pipe -> grk_compress -> J2K (no intermediate files)
-            let (compressor_path, lib_dir) = find_compressor()
-                .ok_or("grk_compress not found")?;
+            let (compressor_path, lib_dir) = find_compressor().ok_or("grk_compress not found")?;
 
             let opts = StreamEncodeOptions {
                 input: video.clone(),
@@ -278,14 +291,27 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             let result = stream_encode(&opts, &cancel, &pause, |p: StreamProgress| {
                 let percent = if p.total_frames > 0 {
                     (p.frame as f64 / p.total_frames as f64) * 100.0
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 emit_progress(
-                    &app_ref, job_id, "encode",
+                    &app_ref,
+                    job_id,
+                    "encode",
                     &format!("Frame {}/{}", p.frame, p.total_frames),
-                    p.frame, p.total_frames, p.fps, p.elapsed_secs,
+                    p.frame,
+                    p.total_frames,
+                    p.fps,
+                    p.elapsed_secs,
                     percent.min(99.0),
                 );
-                log!(log_file, "[ENCODE] frame={}/{} fps={:.1}", p.frame, p.total_frames, p.fps);
+                log!(
+                    log_file,
+                    "[ENCODE] frame={}/{} fps={:.1}",
+                    p.frame,
+                    p.total_frames,
+                    p.fps
+                );
             });
 
             if !result.success {
@@ -294,25 +320,50 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             log!(log_file, "[ENCODE] Done: {} frames", result.frames_encoded);
         }
         InputType::ImageSequence => {
-            let input_dir = if video.is_dir() { video.clone() } else {
+            let input_dir = if video.is_dir() {
+                video.clone()
+            } else {
                 video.parent().unwrap_or(video).to_path_buf()
             };
 
-            emit_progress(app, job.id, "encode", "Encoding images...", 0, 0, 0.0, 0.0, 0.0);
+            emit_progress(
+                app,
+                job.id,
+                "encode",
+                "Encoding images...",
+                0,
+                0,
+                0.0,
+                0.0,
+                0.0,
+            );
 
             let app_ref = app.clone();
             let job_id = job.id;
-            let result = encode_parallel(&input_dir, &j2k_dir, &cancel, &pause, |p: ParallelProgress| {
-                let percent = if p.total > 0 {
-                    (p.done as f64 / p.total as f64) * 100.0
-                } else { 0.0 };
-                emit_progress(
-                    &app_ref, job_id, "encode",
-                    &format!("Frame {}/{}", p.done, p.total),
-                    p.done, p.total, p.fps, p.elapsed_secs,
-                    percent.min(99.0),
-                );
-            });
+            let result = encode_parallel(
+                &input_dir,
+                &j2k_dir,
+                &cancel,
+                &pause,
+                |p: ParallelProgress| {
+                    let percent = if p.total > 0 {
+                        (p.done as f64 / p.total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    emit_progress(
+                        &app_ref,
+                        job_id,
+                        "encode",
+                        &format!("Frame {}/{}", p.done, p.total),
+                        p.done,
+                        p.total,
+                        p.fps,
+                        p.elapsed_secs,
+                        percent.min(99.0),
+                    );
+                },
+            );
 
             if !result.success {
                 return Err(result.error);
@@ -341,7 +392,17 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
 
     // Optional validation
     if job.validate {
-        emit_progress(app, job.id, "validate", "Validating DCP...", 0, 0, 0.0, 0.0, 99.5);
+        emit_progress(
+            app,
+            job.id,
+            "validate",
+            "Validating DCP...",
+            0,
+            0,
+            0.0,
+            0.0,
+            99.5,
+        );
         log!(log_file, "[VALIDATE] Running validation...");
 
         let result = dcpwizard_core::verify::verify_dcp(&job.output_dir);
@@ -353,19 +414,25 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             log!(log_file, "[VALIDATE] WARNING: {warn}");
         }
 
-        let _ = app.emit("validation-result", serde_json::json!({
-            "job_id": job.id,
-            "valid": result.valid,
-            "errors": result.errors,
-            "warnings": result.warnings,
-            "info": result.info,
-        }));
+        let _ = app.emit(
+            "validation-result",
+            serde_json::json!({
+                "job_id": job.id,
+                "valid": result.valid,
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "info": result.info,
+            }),
+        );
 
         let summary = if result.valid {
             "DCP is valid ✓".to_string()
         } else {
-            format!("Validation: {} error(s), {} warning(s)",
-                result.errors.len(), result.warnings.len())
+            format!(
+                "Validation: {} error(s), {} warning(s)",
+                result.errors.len(),
+                result.warnings.len()
+            )
         };
         log!(log_file, "[VALIDATE] {summary}");
         emit_progress(app, job.id, "validate", &summary, 0, 0, 0.0, 0.0, 100.0);
@@ -384,7 +451,17 @@ fn package_dcp(
     j2k_dir: &Path,
     log_file: &mut Option<std::fs::File>,
 ) -> Result<(), String> {
-    emit_progress(app, job.id, "package", "Creating DCP...", 0, 0, 0.0, 0.0, 99.0);
+    emit_progress(
+        app,
+        job.id,
+        "package",
+        "Creating DCP...",
+        0,
+        0,
+        0.0,
+        0.0,
+        99.0,
+    );
     log!(log_file, "[PACKAGE] Creating DCP...");
 
     let config = dcpwizard_core::dcp::DcpConfig {
@@ -394,7 +471,9 @@ fn package_dcp(
         frame_rate_num: 24,
         frame_rate_den: 1,
         j2k_dir: Some(j2k_dir.to_path_buf()),
-        audio_path: job.audio_path.as_ref()
+        audio_path: job
+            .audio_path
+            .as_ref()
             .filter(|a| !a.is_empty())
             .map(|a| std::path::PathBuf::from(a)),
         ..Default::default()
@@ -422,14 +501,17 @@ fn emit_progress(
     elapsed_secs: f64,
     percent: f64,
 ) {
-    let _ = app.emit("pipeline-progress", PipelineProgress {
-        job_id,
-        stage: stage.to_string(),
-        message: message.to_string(),
-        frame,
-        total_frames,
-        fps,
-        elapsed_secs,
-        percent,
-    });
+    let _ = app.emit(
+        "pipeline-progress",
+        PipelineProgress {
+            job_id,
+            stage: stage.to_string(),
+            message: message.to_string(),
+            frame,
+            total_frames,
+            fps,
+            elapsed_secs,
+            percent,
+        },
+    );
 }

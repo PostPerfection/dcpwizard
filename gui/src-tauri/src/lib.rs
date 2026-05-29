@@ -72,15 +72,14 @@ pub fn run() {
             preview_server::preview_get_position,
             preview_server::preview_get_duration,
             preview_server::preview_get_metadata,
+            preview_server::preview_set_parent_wid,
             pipeline::submit_job,
             pipeline::cancel_job,
             pipeline::pause_job,
             pipeline::resume_job,
             pipeline::list_jobs,
         ])
-        .setup(|_app| {
-            Ok(())
-        })
+        .setup(|_app| Ok(()))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(mpv) = window.try_state::<preview_server::MpvPlayer>() {
