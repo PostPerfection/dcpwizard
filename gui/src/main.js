@@ -4,6 +4,7 @@ import { Command } from "@tauri-apps/plugin-shell";
 import { open as _open } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile } from "./preview.js";
+import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 
 // === Browse wrapper (remembers last directory) ===
 let lastBrowseDir = null;
@@ -479,6 +480,17 @@ document.getElementById("btn-open-project")?.addEventListener("click", async () 
     addRecentProject(dir, name);
     setStatus(`Opened: ${dir}`);
     previewDcp(dir);
+
+    // Load timeline from the first CPL found
+    try {
+      const cpls = await invoke('list_cpls', { dcpDir: dir });
+      if (cpls && cpls.length > 0) {
+        const cplPath = dir + '/' + cpls[0].file_path;
+        loadTimelineFromCpl(cplPath);
+      }
+    } catch (e) {
+      console.warn('[main] Could not load timeline:', e);
+    }
   }
 });
 
@@ -1092,6 +1104,7 @@ renderReels();
 renderRecentProjects();
 updateStatusStats();
 initPreview();
+initTimeline();
 setStatus("Ready");
 
 // === SRT → SMPTE Subtitle Conversion ===

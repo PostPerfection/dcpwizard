@@ -24,9 +24,12 @@ pub struct TimelineEntry {
     pub reel_id: String,
     pub reel_number: u32,
     pub duration_frames: u64,
+    pub entry_point: u64,
     pub edit_rate: String,
     pub picture_asset_id: String,
     pub sound_asset_id: String,
+    pub picture_file: String,
+    pub sound_file: String,
 }
 
 /// List all CPLs in a DCP by parsing the ASSETMAP.
@@ -97,8 +100,9 @@ pub fn list_cpls(dcp_dir: &Path) -> Vec<CplEntry> {
     cpls
 }
 
-/// Get the timeline (reel structure) for a specific CPL.
+/// Get the timeline (reel structure) for a specific CPL, resolving asset file paths from the DCP directory.
 pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
+    let dcp_dir = cpl_path.parent().unwrap_or(Path::new("."));
     let content = match std::fs::read_to_string(cpl_path) {
         Ok(c) => c,
         Err(e) => {
@@ -107,6 +111,9 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
         }
     };
 
+    // Build asset UUID → file path map from ASSETMAP
+    let asset_map = parse_assetmap(dcp_dir);
+
     let mut entries = Vec::new();
     let mut reel_number = 0u32;
 
@@ -114,6 +121,7 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
     let mut in_reel = false;
     let mut reel_id = String::new();
     let mut duration = 0u64;
+    let mut entry_point = 0u64;
     let mut edit_rate = String::new();
     let mut picture_id = String::new();
     let mut sound_id = String::new();
@@ -128,6 +136,7 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             reel_number += 1;
             reel_id.clear();
             duration = 0;
+            entry_point = 0;
             edit_rate.clear();
             picture_id.clear();
             sound_id.clear();
@@ -135,13 +144,24 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             in_sound = false;
         } else if trimmed.contains("</Reel>") {
             if in_reel {
+                let picture_file = asset_map
+                    .get(&picture_id)
+                    .map(|p| dcp_dir.join(p).to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let sound_file = asset_map
+                    .get(&sound_id)
+                    .map(|p| dcp_dir.join(p).to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 entries.push(TimelineEntry {
                     reel_id: reel_id.clone(),
                     reel_number,
                     duration_frames: duration,
+                    entry_point,
                     edit_rate: edit_rate.clone(),
                     picture_asset_id: picture_id.clone(),
                     sound_asset_id: sound_id.clone(),
+                    picture_file,
+                    sound_file,
                 });
             }
             in_reel = false;
@@ -176,6 +196,12 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             {
                 duration = v;
             }
+            if let Some(ep) = extract_xml_value(trimmed, "EntryPoint")
+                && let Ok(v) = ep.parse::<u64>()
+                && in_picture
+            {
+                entry_point = v;
+            }
             if let Some(er) = extract_xml_value(trimmed, "EditRate")
                 && edit_rate.is_empty()
             {
@@ -185,6 +211,46 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
     }
 
     entries
+}
+
+/// Parse the ASSETMAP to build a UUID → relative file path map.
+fn parse_assetmap(dcp_dir: &Path) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let assetmap_path = match find_assetmap(dcp_dir) {
+        Some(p) => p,
+        None => return map,
+    };
+    let content = match std::fs::read_to_string(&assetmap_path) {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+
+    let mut in_asset = false;
+    let mut current_id = String::new();
+    let mut current_path = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("<Asset>") || trimmed.starts_with("<Asset ") {
+            in_asset = true;
+            current_id.clear();
+            current_path.clear();
+        } else if trimmed == "</Asset>" {
+            if in_asset && !current_id.is_empty() && !current_path.is_empty() {
+                map.insert(current_id.clone(), current_path.clone());
+            }
+            in_asset = false;
+        } else if in_asset {
+            if let Some(id) = extract_xml_value(trimmed, "Id") {
+                current_id = id.replace("urn:uuid:", "");
+            }
+            if let Some(path) = extract_xml_value(trimmed, "Path") {
+                current_path = path;
+            }
+        }
+    }
+
+    map
 }
 
 /// Create a multi-CPL DCP by copying selected CPLs and their referenced assets.
