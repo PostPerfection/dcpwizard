@@ -333,6 +333,14 @@
                 </div>
               </div>
               <div class="prop-field">
+                <label>CPL ID</label>
+                <input id="kdm-cpl-id" type="text" placeholder="UUID of CPL to issue KDM for">
+              </div>
+              <div class="prop-field">
+                <label>Content Title</label>
+                <input id="kdm-content-title" type="text" placeholder="Content title for KDM">
+              </div>
+              <div class="prop-field">
                 <label>Recipient Certificate</label>
                 <div class="input-with-btn">
                   <input id="kdm-cert" type="text" placeholder="Select cert…" readonly>
@@ -346,6 +354,13 @@
               <div class="prop-field">
                 <label>Valid To</label>
                 <input type="datetime-local" id="kdm-to">
+              </div>
+              <div class="prop-field">
+                <label>Output</label>
+                <div class="input-with-btn">
+                  <input id="kdm-output" type="text" placeholder="Select output…" readonly>
+                  <button id="kdm-browse-output" class="btn-sm">…</button>
+                </div>
               </div>
               <button id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
               <div id="kdm-results" class="results-box"></div>

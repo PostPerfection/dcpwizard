@@ -31,6 +31,7 @@ pub struct JobInfo {
 // ─── Job types ─────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct JobConfig {
     id: u64,
     video_path: PathBuf,
@@ -38,6 +39,15 @@ struct JobConfig {
     output_dir: PathBuf,
     audio_path: Option<String>,
     validate: bool,
+    standard: String,
+    resolution: String,
+    framerate: String,
+    bandwidth: u32,
+    colour: String,
+    content_kind: String,
+    encrypt: bool,
+    stereo_3d: bool,
+    channels: String,
 }
 
 // ─── Queue state (managed by Tauri) ────────────────────────────────────────
@@ -69,6 +79,7 @@ impl JobQueue {
 // ─── Tauri commands ────────────────────────────────────────────────────────
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_job(
     app: AppHandle,
     video_path: String,
@@ -76,6 +87,15 @@ pub async fn submit_job(
     output_dir: String,
     audio_path: Option<String>,
     validate: Option<bool>,
+    standard: Option<String>,
+    resolution: Option<String>,
+    framerate: Option<String>,
+    bandwidth: Option<u32>,
+    colour: Option<String>,
+    content_kind: Option<String>,
+    encrypt: Option<bool>,
+    stereo_3d: Option<bool>,
+    channels: Option<String>,
 ) -> Result<u64, String> {
     let queue = app.state::<JobQueue>();
     let id = queue.next_id.fetch_add(1, Ordering::Relaxed);
@@ -87,6 +107,15 @@ pub async fn submit_job(
         output_dir: PathBuf::from(&output_dir),
         audio_path,
         validate: validate.unwrap_or(false),
+        standard: standard.unwrap_or_else(|| "smpte".into()),
+        resolution: resolution.unwrap_or_else(|| "2k-full".into()),
+        framerate: framerate.unwrap_or_else(|| "24".into()),
+        bandwidth: bandwidth.unwrap_or(250),
+        colour: colour.unwrap_or_else(|| "xyz".into()),
+        content_kind: content_kind.unwrap_or_else(|| "feature".into()),
+        encrypt: encrypt.unwrap_or(false),
+        stereo_3d: stereo_3d.unwrap_or(false),
+        channels: channels.unwrap_or_else(|| "5.1".into()),
     };
 
     {
@@ -286,19 +315,50 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     );
     log_to(&log_file, "[PACKAGE] Creating DCP...");
 
+    let standard = match job.standard.as_str() {
+        "interop" => dcpwizard_core::Standard::Interop,
+        _ => dcpwizard_core::Standard::Smpte,
+    };
+
+    let resolution = if job.resolution.contains("4k") {
+        dcpwizard_core::Resolution::FourK
+    } else {
+        dcpwizard_core::Resolution::TwoK
+    };
+
+    let (fps_num, fps_den) = match job.framerate.as_str() {
+        "25" => (25, 1),
+        "30" => (30, 1),
+        "48" => (48, 1),
+        "60" => (60, 1),
+        _ => (24, 1),
+    };
+
+    let content_type = match job.content_kind.as_str() {
+        "trailer" => dcpwizard_core::ContentType::Trailer,
+        "test" => dcpwizard_core::ContentType::Test,
+        "short" => dcpwizard_core::ContentType::Short,
+        "advertisement" => dcpwizard_core::ContentType::Advertisement,
+        _ => dcpwizard_core::ContentType::Feature,
+    };
+
     let config = dcpwizard_core::dcp::DcpConfig {
         title: job.title.clone(),
-        standard: dcpwizard_core::Standard::Smpte,
+        standard,
+        resolution,
+        content_type,
         output_dir: job.output_dir.clone(),
-        frame_rate_num: 24,
-        frame_rate_den: 1,
+        frame_rate_num: fps_num,
+        frame_rate_den: fps_den,
+        max_bitrate_mbps: job.bandwidth,
+        encrypt: job.encrypt,
+        stereo_3d: job.stereo_3d,
         j2k_dir: Some(encode_result.j2k_dir.clone()),
         audio_path: job
             .audio_path
             .as_ref()
             .filter(|a| !a.is_empty())
             .map(std::path::PathBuf::from),
-        ..Default::default()
     };
 
     let rc = dcpwizard_core::dcp::create_dcp(&config);

@@ -578,6 +578,15 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       outputDir: output,
       audioPath: audio,
       validate: document.getElementById("prop-validate")?.checked || false,
+      standard: document.getElementById("prop-standard")?.value || "smpte",
+      resolution: document.getElementById("prop-resolution")?.value || "2k-full",
+      framerate: document.getElementById("prop-framerate")?.value || "24",
+      bandwidth: parseInt(document.getElementById("prop-bandwidth")?.value) || 250,
+      colour: document.getElementById("prop-colour")?.value || "xyz",
+      contentKind: document.getElementById("prop-content-kind")?.value || "feature",
+      encrypt: document.getElementById("prop-encrypt")?.checked || false,
+      stereo_3d: document.getElementById("prop-stereo3d")?.checked || false,
+      channels: document.getElementById("prop-channels")?.value || "5.1",
     });
     setStatus("Building DCP...");
   } catch (e) {
@@ -628,8 +637,8 @@ document.getElementById("verify-run")?.addEventListener("click", async () => {
 
   const args = ["verify", dir];
   if (document.getElementById("verify-strict")?.checked) args.push("--strict");
-  if (document.getElementById("verify-mxf")?.checked) args.push("--check-mxf");
-  if (!document.getElementById("verify-hashes")?.checked) args.push("--skip-hashes");
+  if (!document.getElementById("verify-mxf")?.checked) args.push("--no-picture-check");
+  if (!document.getElementById("verify-hashes")?.checked) args.push("--no-hash-check");
 
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
@@ -664,16 +673,9 @@ function checkEncryptReady() {
 }
 
 document.getElementById("run-encrypt")?.addEventListener("click", async () => {
-  const dcp = document.getElementById("crypt-dcp").value;
-  const cert = document.getElementById("crypt-cert").value;
   const resultsBox = document.getElementById("encrypt-results");
   resultsBox.classList.add("visible");
-  resultsBox.textContent = "Encrypting...";
-  const cmd = Command.sidecar("dcpwizard", ["encrypt", dcp, "--cert", cert]);
-  const result = await cmd.execute();
-  resultsBox.textContent = result.code === 0
-    ? "✓ Encryption complete\n\n" + result.stdout
-    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+  resultsBox.textContent = "To create an encrypted DCP, enable the Encrypt checkbox in the Properties panel before building.\nStandalone encryption of an existing DCP is not currently supported.";
 });
 
 // === Security: KDM ===
@@ -685,23 +687,31 @@ document.getElementById("kdm-browse-cert")?.addEventListener("click", async () =
   const file = await open({ directory: false });
   if (file) { document.getElementById("kdm-cert").value = file; checkKdmReady(); }
 });
+document.getElementById("kdm-browse-output")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("kdm-output").value = dir + "/kdm.xml"; checkKdmReady(); }
+});
+document.getElementById("kdm-cpl-id")?.addEventListener("input", () => checkKdmReady());
+document.getElementById("kdm-content-title")?.addEventListener("input", () => checkKdmReady());
 
 function checkKdmReady() {
   const btn = document.getElementById("run-kdm");
-  if (btn) btn.disabled = !(document.getElementById("kdm-dcp")?.value && document.getElementById("kdm-cert")?.value);
+  if (btn) btn.disabled = !(document.getElementById("kdm-cpl-id")?.value && document.getElementById("kdm-cert")?.value && document.getElementById("kdm-content-title")?.value && document.getElementById("kdm-output")?.value);
 }
 
 document.getElementById("run-kdm")?.addEventListener("click", async () => {
-  const dcp = document.getElementById("kdm-dcp").value;
+  const cplId = document.getElementById("kdm-cpl-id").value;
+  const contentTitle = document.getElementById("kdm-content-title").value;
   const cert = document.getElementById("kdm-cert").value;
+  const output = document.getElementById("kdm-output").value;
   const from = document.getElementById("kdm-from").value;
   const to = document.getElementById("kdm-to").value;
   const resultsBox = document.getElementById("kdm-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating KDM...";
-  const args = ["kdm", dcp, "--cert", cert];
-  if (from) args.push("--from", from);
-  if (to) args.push("--to", to);
+  const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert, "-o", output];
+  if (from) args.push("-f", from);
+  if (to) args.push("-t", to);
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -799,7 +809,7 @@ document.getElementById("run-encode")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("encode-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Encoding...";
-  const args = ["encode", input, "-o", output, "--resolution", resolution, "--bandwidth", bandwidth, "--framerate", framerate];
+  const args = ["encode", "-i", input, "-o", output, "--bandwidth", bandwidth];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -830,7 +840,7 @@ document.getElementById("tc-start")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("tc-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Transcoding...";
-  const args = ["transcode", input, "-o", output, "--format", format, "--bit-depth", bitdepth];
+  const args = ["transcode", "-i", input, "-o", output];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -878,8 +888,7 @@ document.getElementById("copy-start")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("copy-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Copying...";
-  const args = ["copy", source, dest];
-  if (verify) args.push("--verify");
+  const args = ["copy", "--src", source, "--dst", dest];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -899,7 +908,7 @@ document.getElementById("report-start")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("report-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating report...";
-  const args = ["report", dcp, "--format", format];
+  const args = ["report", "--dcp", dcp, "-o", dcp + "/report." + format];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -1131,9 +1140,9 @@ document.getElementById("srt-convert")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["subtitle-convert", input, "--language", lang, "--framerate", fps];
+    const args = ["subtitle-convert", "-i", input, "-l", lang, "--fps", fps];
     if (output) args.push("-o", output);
-    const cmd = Command.create("dcpwizard", args);
+    const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
       ? `✓ Conversion complete\n${result.stdout}`
@@ -1178,9 +1187,9 @@ document.getElementById("burnin-start")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["burnin", video, "--subtitle", sub];
+    const args = ["burnin", "-i", video, "-s", sub];
     if (output) args.push("-o", output);
-    const cmd = Command.create("dcpwizard", args);
+    const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
       ? `✓ Burn-in complete\n${result.stdout}`
@@ -1217,9 +1226,9 @@ document.getElementById("convert-start")?.addEventListener("click", async () => 
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["convert", input, "--target", container, "--method", method];
+    const args = ["convert", "-i", input, "-t", container, "-m", method];
     if (output) args.push("-o", output);
-    const cmd = Command.create("dcpwizard", args);
+    const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
       ? `✓ Conversion complete\n${result.stdout}`
