@@ -261,6 +261,145 @@ enum Commands {
         #[arg(short, long, default_value = "letterbox")]
         method: String,
     },
+
+    /// Create DCDM (Digital Cinema Distribution Master) X'Y'Z' sequence
+    Dcdm {
+        /// Input image sequence directory
+        #[arg(short, long)]
+        input: String,
+
+        /// Output DCDM TIFF directory
+        #[arg(short, long)]
+        output: String,
+
+        /// Source colour space (rec709, p3, aces, logc)
+        #[arg(short, long, default_value = "rec709")]
+        colour_space: String,
+
+        /// Optional 3D LUT for colour transform
+        #[arg(long)]
+        lut: Option<String>,
+    },
+
+    /// Convert colour space of images/video
+    Colour {
+        /// Input file or directory
+        #[arg(short, long)]
+        input: String,
+
+        /// Output file or directory
+        #[arg(short, long)]
+        output: String,
+
+        /// Source colour space (rec709, p3, xyz, rec2020, aces, acescg, logc)
+        #[arg(short, long)]
+        source: String,
+
+        /// Target colour space
+        #[arg(short, long)]
+        target: String,
+
+        /// Optional 3D LUT file for custom transform
+        #[arg(long)]
+        lut: Option<String>,
+    },
+
+    /// Import EDL/AAF/XML timeline for conforming
+    Conform {
+        /// Input timeline file (EDL, AAF, FCP XML, OTIO)
+        #[arg(short, long)]
+        input: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ingest camera raw media
+    Ingest {
+        /// Camera card/media directory
+        #[arg(short, long)]
+        source: String,
+
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+
+        /// Output format (dpx, tiff, exr, prores)
+        #[arg(short, long, default_value = "dpx")]
+        format: String,
+
+        /// Colour space (ACES, Rec.709, P3, LogC)
+        #[arg(short, long, default_value = "ACES")]
+        colour_space: String,
+    },
+
+    /// Extract a frame from video/MXF as image
+    #[command(name = "frame-extract")]
+    FrameExtract {
+        /// Input video/MXF file
+        #[arg(short, long)]
+        input: String,
+
+        /// Frame number to extract
+        #[arg(short, long, default_value = "0")]
+        frame: u32,
+
+        /// Output image file (png, jpg, tiff)
+        #[arg(short, long)]
+        output: String,
+    },
+
+    /// Inject Dolby Vision RPU into HEVC stream
+    #[command(name = "dv-inject")]
+    DvInject {
+        /// Input HEVC file
+        #[arg(short, long)]
+        input: String,
+
+        /// RPU file (.bin)
+        #[arg(short, long)]
+        rpu: String,
+
+        /// Output file
+        #[arg(short, long)]
+        output: String,
+    },
+
+    /// Inject HDR10 static metadata
+    #[command(name = "hdr10-inject")]
+    Hdr10Inject {
+        /// Input video file
+        #[arg(short, long)]
+        input: String,
+
+        /// Output video file
+        #[arg(short, long)]
+        output: String,
+
+        /// Max content light level (MaxCLL)
+        #[arg(long, default_value = "1000")]
+        max_cll: u16,
+
+        /// Max frame average light level (MaxFALL)
+        #[arg(long, default_value = "400")]
+        max_fall: u16,
+    },
+
+    /// Apply forensic watermark to video frames
+    Watermark {
+        /// Input video/image sequence
+        #[arg(short, long)]
+        input: String,
+
+        /// Output video/image sequence
+        #[arg(short, long)]
+        output: String,
+
+        /// Watermark payload (distributor ID, serial, etc.)
+        #[arg(short, long)]
+        payload: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -281,6 +420,22 @@ enum BatchAction {
         /// Job ID to cancel
         id: String,
     },
+}
+
+fn parse_colour_space(s: &str) -> postkit::colour::ColourSpace {
+    match s.to_lowercase().as_str() {
+        "rec709" | "bt709" => postkit::colour::ColourSpace::Rec709,
+        "p3" | "dcip3" | "dci-p3" => postkit::colour::ColourSpace::P3,
+        "xyz" | "ciexyz" => postkit::colour::ColourSpace::Xyz,
+        "rec2020" | "bt2020" => postkit::colour::ColourSpace::Rec2020,
+        "aces" => postkit::colour::ColourSpace::Aces,
+        "acescg" => postkit::colour::ColourSpace::AcesCg,
+        "logc" | "arrilogc" => postkit::colour::ColourSpace::LogC,
+        _ => {
+            tracing::warn!("Unknown colour space '{s}', defaulting to Rec709");
+            postkit::colour::ColourSpace::Rec709
+        }
+    }
 }
 
 fn main() {
@@ -1002,6 +1157,179 @@ fn main() {
             match status {
                 Ok(s) if s.success() => {
                     tracing::info!("Converted to {target} ({method}): {output} ({}x{})", tw, th);
+                    0
+                }
+                Ok(s) => {
+                    tracing::error!("ffmpeg exited with code {}", s.code().unwrap_or(-1));
+                    1
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run ffmpeg: {e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Dcdm {
+            input,
+            output,
+            colour_space,
+            lut,
+        } => {
+            let cs = parse_colour_space(&colour_space);
+            let opts = postkit::dcdm::DcdmOptions {
+                input_dir: std::path::PathBuf::from(&input),
+                output_dir: std::path::PathBuf::from(&output),
+                encoding: postkit::dcdm::DcdmColourEncoding::Xyz12Bit,
+                width: 0,
+                height: 0,
+                fps_num: 24,
+                fps_den: 1,
+                colour_space: format!("{cs:?}"),
+                lut_path: lut.map(std::path::PathBuf::from).unwrap_or_default(),
+            };
+            let result = postkit::dcdm::create_dcdm(&opts);
+            if result.success {
+                tracing::info!("DCDM created: {} frames written", result.frames_written);
+                0
+            } else {
+                tracing::error!("DCDM creation failed: {}", result.error);
+                1
+            }
+        }
+
+        Commands::Colour {
+            input,
+            output,
+            source,
+            target,
+            lut,
+        } => {
+            let opts = postkit::colour::ColourConvertOptions {
+                input: std::path::PathBuf::from(&input),
+                output: std::path::PathBuf::from(&output),
+                source_space: parse_colour_space(&source),
+                target_space: parse_colour_space(&target),
+                lut_path: lut.map(std::path::PathBuf::from),
+            };
+            match postkit::colour::convert_colour(&opts) {
+                Ok(()) => {
+                    tracing::info!("Colour converted {source} -> {target}: {output}");
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("Colour conversion failed: {e}");
+                    1
+                }
+            }
+        }
+
+        Commands::Conform { input, json } => {
+            let timeline = postkit::conform::parse_timeline(std::path::Path::new(&input));
+            if json {
+                println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
+            } else {
+                println!("Timeline: {}", timeline.title);
+                println!("Format: {:?}", timeline.format);
+                println!("Frame rate: {}", timeline.frame_rate);
+                println!("Events: {}", timeline.events.len());
+                for (i, evt) in timeline.events.iter().enumerate() {
+                    println!("  [{i}] {} -> {}", evt.source_in, evt.source_out);
+                }
+            }
+            0
+        }
+
+        Commands::Ingest {
+            source,
+            output,
+            format,
+            colour_space,
+        } => {
+            let opts = postkit::ingest::IngestOptions {
+                source: std::path::PathBuf::from(&source),
+                output_dir: std::path::PathBuf::from(&output),
+                output_format: format,
+                colour_space,
+                debayer_quality: 3,
+                apply_lut: false,
+                lut_path: std::path::PathBuf::new(),
+                gpu_device: -1,
+            };
+            postkit::ingest::ingest(&opts)
+        }
+
+        Commands::FrameExtract {
+            input,
+            frame,
+            output,
+        } => postkit::preview::extract_frame(
+            std::path::Path::new(&input),
+            frame,
+            std::path::Path::new(&output),
+        ),
+
+        Commands::DvInject { input, rpu, output } => {
+            let opts = postkit::dolby_vision::DolbyVisionOptions {
+                input: std::path::PathBuf::from(&input),
+                rpu_file: std::path::PathBuf::from(&rpu),
+                profile: postkit::dolby_vision::DolbyVisionProfile::Profile8,
+                output: std::path::PathBuf::from(&output),
+                embed_rpu: true,
+            };
+            postkit::dolby_vision::inject_dolby_vision(&opts)
+        }
+
+        Commands::Hdr10Inject {
+            input,
+            output,
+            max_cll,
+            max_fall,
+        } => {
+            let opts = postkit::dolby_vision::HdrMetadataOptions {
+                input: std::path::PathBuf::from(&input),
+                hdr_type: postkit::dolby_vision::HdrType::Hdr10,
+                hdr10: postkit::dolby_vision::Hdr10Metadata {
+                    display_primaries_rx: 13250,
+                    display_primaries_ry: 34500,
+                    display_primaries_gx: 7500,
+                    display_primaries_gy: 3000,
+                    display_primaries_bx: 34000,
+                    display_primaries_by: 16000,
+                    white_point_x: 15635,
+                    white_point_y: 16450,
+                    max_luminance: 10000000,
+                    min_luminance: 1,
+                    max_cll,
+                    max_fall,
+                },
+                dolby_vision_xml: std::path::PathBuf::new(),
+                output: std::path::PathBuf::from(&output),
+            };
+            postkit::dolby_vision::inject_hdr10_metadata(&opts)
+        }
+
+        Commands::Watermark {
+            input,
+            output,
+            payload,
+        } => {
+            // Forensic watermarking using invisible embedding
+            let status = std::process::Command::new("ffmpeg")
+                .arg("-y")
+                .arg("-i")
+                .arg(&input)
+                .arg("-vf")
+                .arg(format!(
+                    "drawtext=text='{payload}':fontsize=1:fontcolor=white@0.01:x=10:y=10"
+                ))
+                .arg("-c:a")
+                .arg("copy")
+                .arg(&output)
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    tracing::info!("Watermark applied: {output}");
                     0
                 }
                 Ok(s) => {
