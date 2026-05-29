@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.0] — 2026-05-28
+
+### Added
+- **Timeline view** — Visual DCP timeline with multi-reel navigation, duration bars, and asset type indicators
+- **CLI flag consistency test** — `tests/cli_flags_test.sh` verifies GUI invocations match actual CLI flags
+- **CI: CLI flag check** — Automated verification in GitHub Actions pipeline
+
+### Fixed
+- **Properties panel → build pipeline** — All properties (standard, resolution, framerate, bandwidth, colour, content_kind, encrypt, stereo_3d, channels) now correctly passed to the DCP creation pipeline
+- **Verify flags** — `--check-mxf` → `--no-picture-check`, `--skip-hashes` → `--no-hash-check` (correct inverted logic)
+- **Encode flags** — Removed non-existent `--resolution`/`--framerate`, added `-i` input flag
+- **Transcode flags** — Removed non-existent `--format`/`--bit-depth`, uses `-i` flag
+- **Copy flags** — Positional args replaced with `--src`/`--dst` named args
+- **Report flags** — Uses `--dcp` and `-o` instead of non-existent `--format`
+- **Subtitle conversion** — `Command.create` → `Command.sidecar`, `--framerate` → `--fps`, added `-i`/`-l` flags
+- **Burn-in** — `Command.create` → `Command.sidecar`, correct `-i`/`-s`/`-o` flags
+- **Target conversion** — `Command.create` → `Command.sidecar`, correct `-i`/`-t`/`-m` flags
+- **KDM** — Added CPL ID, content title, and output path fields; uses correct `--cpl-id`/`--content-title`/`--cert`/`-o` flags
+- **Encrypt standalone** — Shows informational message (standalone re-encryption not supported by CLI)
+
 ## [1.0.0] — 2025-01-20
 
 ### Added
