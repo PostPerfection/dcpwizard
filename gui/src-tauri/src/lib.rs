@@ -5,7 +5,12 @@
 use tauri::Manager;
 
 mod pipeline;
+#[cfg(unix)]
 mod preview_server;
+#[cfg(not(unix))]
+mod preview_server_stub;
+#[cfg(not(unix))]
+use preview_server_stub as preview_server;
 
 #[cfg(unix)]
 fn fork_terminal_guard() {
