@@ -81,3 +81,7 @@ jobs:
       - name: Format check
         working-directory: rust
         run: cargo fmt -- --check
+
+      - name: CLI flag consistency
+        if: runner.os == 'Linux'
+        run: bash tests/cli_flags_test.sh ./rust/target/release/dcpwizard
