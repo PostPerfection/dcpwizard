@@ -31,7 +31,7 @@ fn fork_terminal_guard() {
             libc::waitpid(pid, &mut status, 0);
             libc::usleep(100_000);
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &saved);
-            libc::system(b"stty sane 2>/dev/null\0".as_ptr() as *const _);
+            libc::system(c"stty sane 2>/dev/null".as_ptr());
             let exit_code = if libc::WIFEXITED(status) {
                 libc::WEXITSTATUS(status)
             } else {
@@ -39,7 +39,7 @@ fn fork_terminal_guard() {
             };
             std::process::exit(exit_code);
         }
-        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDONLY);
+        let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
         if devnull >= 0 {
             libc::dup2(devnull, libc::STDIN_FILENO);
             libc::close(devnull);
@@ -52,7 +52,7 @@ pub fn run() {
     #[cfg(unix)]
     fork_terminal_guard();
 
-    let mpv = preview_server::MpvPlayer::new();
+    let mpv = preview_server::new_player();
     let job_queue = pipeline::JobQueue::new();
 
     tauri::Builder::default()

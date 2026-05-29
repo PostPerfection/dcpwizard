@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 use postkit::encode::{
-    detect_input_type, encode_parallel, find_compressor, stream_encode, InputType,
-    ParallelProgress, StreamEncodeOptions, StreamProgress,
+    encode_parallel, find_compressor, stream_encode, InputType, ParallelProgress,
+    StreamEncodeOptions, StreamProgress,
 };
 
 // ─── Progress / Events ─────────────────────────────────────────────────────
@@ -475,7 +475,7 @@ fn package_dcp(
             .audio_path
             .as_ref()
             .filter(|a| !a.is_empty())
-            .map(|a| std::path::PathBuf::from(a)),
+            .map(std::path::PathBuf::from),
         ..Default::default()
     };
 
@@ -490,6 +490,7 @@ fn package_dcp(
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn emit_progress(
     app: &AppHandle,
     job_id: u64,
