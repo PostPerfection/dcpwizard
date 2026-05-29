@@ -1,15 +1,10 @@
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
-
-use postkit::encode::{
-    encode_parallel, find_compressor, stream_encode, InputType, ParallelProgress,
-    StreamEncodeOptions, StreamProgress,
-};
 
 // ─── Progress / Events ─────────────────────────────────────────────────────
 
@@ -222,14 +217,11 @@ async fn run_queue_worker(app: AppHandle) {
 
 // ─── Job execution ─────────────────────────────────────────────────────────
 
-macro_rules! log {
-    ($file:expr, $($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        eprintln!("[pipeline] {}", msg);
-        if let Some(f) = $file.as_mut() {
-            let _ = writeln!(f, "{}", msg);
-        }
-    }};
+fn log_to(log_file: &Arc<Mutex<Option<std::fs::File>>>, msg: &str) {
+    eprintln!("[pipeline] {msg}");
+    if let Some(f) = log_file.lock().unwrap().as_mut() {
+        let _ = writeln!(f, "{msg}");
+    }
 }
 
 fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
@@ -237,158 +229,84 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     let cancel = queue.cancel.clone();
     let pause = queue.pause.clone();
 
-    let video = &job.video_path;
     let output = &job.output_dir;
-
-    if !video.exists() {
-        return Err(format!("Input not found: {}", video.display()));
-    }
-
-    std::fs::create_dir_all(output)
-        .map_err(|e| format!("Failed to create output directory: {e}"))?;
-
     let log_path = output.join("dcpwizard.log");
-    let mut log_file: Option<std::fs::File> = std::fs::File::create(&log_path).ok();
+    let log_file: Arc<Mutex<Option<std::fs::File>>> =
+        Arc::new(Mutex::new(std::fs::File::create(&log_path).ok()));
 
-    log!(log_file, "=== DCP Wizard Pipeline (streaming) ===");
-    log!(log_file, "Job ID: {}", job.id);
-    log!(log_file, "Title: {}", job.title);
-    log!(log_file, "Input: {}", video.display());
-    log!(log_file, "Output: {}", output.display());
-    log!(
-        log_file,
-        "Started: {}",
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    log_to(&log_file, "=== DCP Wizard Pipeline ===");
+    log_to(&log_file, &format!("Job ID: {}", job.id));
+    log_to(&log_file, &format!("Title: {}", job.title));
+    log_to(&log_file, &format!("Input: {}", job.video_path.display()));
+    log_to(&log_file, &format!("Output: {}", output.display()));
+    log_to(
+        &log_file,
+        &format!(
+            "Started: {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        ),
     );
 
-    let start_time = std::time::Instant::now();
-    let input_type = postkit::encode::detect_input_type(video);
-    log!(log_file, "Input type: {:?}", input_type);
-
-    let j2k_dir = output.join("j2k");
-
-    match input_type {
-        InputType::Video => {
-            // Streaming: ffmpeg raw pipe -> grk_compress -> J2K (no intermediate files)
-            let (compressor_path, lib_dir) = find_compressor().ok_or("grk_compress not found")?;
-
-            let opts = StreamEncodeOptions {
-                input: video.clone(),
-                output_dir: j2k_dir.clone(),
-                compression_ratio: 10.0,
-                num_resolutions: 6,
-                codeblock_size: 32,
-                progression: "CPRL".to_string(),
-                fps: 24,
-                compressor_path,
-                lib_dir,
-            };
-
-            emit_progress(app, job.id, "encode", "Starting...", 0, 0, 0.0, 0.0, 0.0);
-
-            let app_ref = app.clone();
-            let job_id = job.id;
-            let result = stream_encode(&opts, &cancel, &pause, |p: StreamProgress| {
-                let percent = if p.total_frames > 0 {
-                    (p.frame as f64 / p.total_frames as f64) * 100.0
-                } else {
-                    0.0
-                };
-                emit_progress(
-                    &app_ref,
-                    job_id,
-                    "encode",
-                    &format!("Frame {}/{}", p.frame, p.total_frames),
-                    p.frame,
-                    p.total_frames,
-                    p.fps,
-                    p.elapsed_secs,
-                    percent.min(99.0),
-                );
-                log!(
-                    log_file,
-                    "[ENCODE] frame={}/{} fps={:.1}",
-                    p.frame,
-                    p.total_frames,
-                    p.fps
-                );
-            });
-
-            if !result.success {
-                return Err(result.error);
-            }
-            log!(log_file, "[ENCODE] Done: {} frames", result.frames_encoded);
-        }
-        InputType::ImageSequence => {
-            let input_dir = if video.is_dir() {
-                video.clone()
-            } else {
-                video.parent().unwrap_or(video).to_path_buf()
-            };
-
+    // Encode using shared pipeline
+    let job_id = job.id;
+    let app_ref = app.clone();
+    let log_ref = log_file.clone();
+    let encode_result = postkit::pipeline::run_encode(
+        &job.video_path,
+        output,
+        &cancel,
+        &pause,
+        |p| {
             emit_progress(
-                app,
-                job.id,
-                "encode",
-                "Encoding images...",
-                0,
-                0,
-                0.0,
-                0.0,
-                0.0,
+                &app_ref,
+                job_id,
+                &p.stage,
+                &p.message,
+                p.frame,
+                p.total_frames,
+                p.fps,
+                p.elapsed_secs,
+                p.percent,
             );
+        },
+        |msg| log_to(&log_ref, msg),
+    )?;
 
-            let app_ref = app.clone();
-            let job_id = job.id;
-            let result = encode_parallel(
-                &input_dir,
-                &j2k_dir,
-                &cancel,
-                &pause,
-                |p: ParallelProgress| {
-                    let percent = if p.total > 0 {
-                        (p.done as f64 / p.total as f64) * 100.0
-                    } else {
-                        0.0
-                    };
-                    emit_progress(
-                        &app_ref,
-                        job_id,
-                        "encode",
-                        &format!("Frame {}/{}", p.done, p.total),
-                        p.done,
-                        p.total,
-                        p.fps,
-                        p.elapsed_secs,
-                        percent.min(99.0),
-                    );
-                },
-            );
+    // Package DCP
+    emit_progress(
+        app,
+        job.id,
+        "package",
+        "Creating DCP...",
+        0,
+        0,
+        0.0,
+        0.0,
+        99.0,
+    );
+    log_to(&log_file, "[PACKAGE] Creating DCP...");
 
-            if !result.success {
-                return Err(result.error);
-            }
-            log!(log_file, "[ENCODE] Done: {} frames", result.frames_encoded);
-        }
-        InputType::J2kSequence => {
-            log!(log_file, "Input is already J2K, skipping encode");
-        }
-        InputType::Unknown => {
-            return Err(format!("Cannot determine input type: {}", video.display()));
-        }
-    }
-
-    if cancel.load(Ordering::Relaxed) {
-        log!(log_file, "=== CANCELLED ===");
-        return Err("Cancelled".to_string());
-    }
-
-    // Package
-    let package_j2k = match input_type {
-        InputType::J2kSequence => video.to_path_buf(),
-        _ => j2k_dir,
+    let config = dcpwizard_core::dcp::DcpConfig {
+        title: job.title.clone(),
+        standard: dcpwizard_core::Standard::Smpte,
+        output_dir: job.output_dir.clone(),
+        frame_rate_num: 24,
+        frame_rate_den: 1,
+        j2k_dir: Some(encode_result.j2k_dir.clone()),
+        audio_path: job
+            .audio_path
+            .as_ref()
+            .filter(|a| !a.is_empty())
+            .map(std::path::PathBuf::from),
+        ..Default::default()
     };
-    package_dcp(app, job, &package_j2k, &mut log_file)?;
+
+    let rc = dcpwizard_core::dcp::create_dcp(&config);
+    if rc != 0 {
+        log_to(&log_file, &format!("[PACKAGE] FAILED (rc={rc})"));
+        return Err(format!("DCP packaging failed (rc={rc})"));
+    }
+    log_to(&log_file, "[PACKAGE] Done");
 
     // Optional validation
     if job.validate {
@@ -403,15 +321,15 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             0.0,
             99.5,
         );
-        log!(log_file, "[VALIDATE] Running validation...");
+        log_to(&log_file, "[VALIDATE] Running validation...");
 
         let result = dcpwizard_core::verify::verify_dcp(&job.output_dir);
 
         for err in &result.errors {
-            log!(log_file, "[VALIDATE] ERROR: {err}");
+            log_to(&log_file, &format!("[VALIDATE] ERROR: {err}"));
         }
         for warn in &result.warnings {
-            log!(log_file, "[VALIDATE] WARNING: {warn}");
+            log_to(&log_file, &format!("[VALIDATE] WARNING: {warn}"));
         }
 
         let _ = app.emit(
@@ -434,58 +352,18 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
                 result.warnings.len()
             )
         };
-        log!(log_file, "[VALIDATE] {summary}");
+        log_to(&log_file, &format!("[VALIDATE] {summary}"));
         emit_progress(app, job.id, "validate", &summary, 0, 0, 0.0, 0.0, 100.0);
     }
 
-    let total_elapsed = start_time.elapsed().as_secs_f64();
-    log!(log_file, "=== Pipeline finished in {total_elapsed:.1}s ===");
-    Ok(format!("DCP created in {total_elapsed:.1}s"))
-}
-
-// ─── DCP packaging ─────────────────────────────────────────────────────────
-
-fn package_dcp(
-    app: &AppHandle,
-    job: &JobConfig,
-    j2k_dir: &Path,
-    log_file: &mut Option<std::fs::File>,
-) -> Result<(), String> {
-    emit_progress(
-        app,
-        job.id,
-        "package",
-        "Creating DCP...",
-        0,
-        0,
-        0.0,
-        0.0,
-        99.0,
+    log_to(
+        &log_file,
+        &format!(
+            "=== Pipeline finished in {:.1}s ===",
+            encode_result.elapsed_secs
+        ),
     );
-    log!(log_file, "[PACKAGE] Creating DCP...");
-
-    let config = dcpwizard_core::dcp::DcpConfig {
-        title: job.title.clone(),
-        standard: dcpwizard_core::Standard::Smpte,
-        output_dir: job.output_dir.clone(),
-        frame_rate_num: 24,
-        frame_rate_den: 1,
-        j2k_dir: Some(j2k_dir.to_path_buf()),
-        audio_path: job
-            .audio_path
-            .as_ref()
-            .filter(|a| !a.is_empty())
-            .map(std::path::PathBuf::from),
-        ..Default::default()
-    };
-
-    let rc = dcpwizard_core::dcp::create_dcp(&config);
-    if rc != 0 {
-        log!(log_file, "[PACKAGE] FAILED (rc={rc})");
-        return Err(format!("DCP packaging failed (rc={rc})"));
-    }
-    log!(log_file, "[PACKAGE] Done");
-    Ok(())
+    Ok(format!("DCP created in {:.1}s", encode_result.elapsed_secs))
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
