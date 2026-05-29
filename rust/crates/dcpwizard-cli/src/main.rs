@@ -232,6 +232,7 @@ enum Commands {
         fps: u32,
     },
     /// Burn subtitles into video
+    #[command(alias = "burn-in")]
     Burnin {
         /// Input video file
         #[arg(short, long)]
