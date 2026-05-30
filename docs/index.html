@@ -436,8 +436,8 @@
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">📊</div>
-            <h3>Analytics Dashboard</h3>
-            <p>Real-time job monitoring, bitrate analytics, throughput charts, and system health metrics via Prometheus endpoint.</p>
+            <h3>Analytics &amp; Monitoring</h3>
+            <p>Real-time job monitoring via REST API. Prometheus-compatible /metrics endpoint for Grafana integration. Job queue statistics and system health.</p>
         </div>
     </div>
 </section>
@@ -519,7 +519,30 @@
 <span class="cmd">dcpwizard</span> burn-in <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--subtitles</span> <span class="val">subs.srt</span> <span class="flag">--output</span> <span class="val">burned.mov</span>
 
 <span class="comment"># Scale/crop to target DCI resolution</span>
-<span class="cmd">dcpwizard</span> convert <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">movie_2k.mov</span> <span class="flag">--target</span> <span class="val">2k-scope</span></code></div>
+<span class="cmd">dcpwizard</span> convert <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">movie_2k.mov</span> <span class="flag">--target</span> <span class="val">2k-scope</span>
+
+<span class="comment"># Create DCDM intermediate (Digital Cinema Distribution Master)</span>
+<span class="cmd">dcpwizard</span> dcdm <span class="flag">-i</span> <span class="val">./frames</span> <span class="flag">-o</span> <span class="val">./dcdm</span> <span class="flag">--colour-space</span> <span class="val">rec709</span>
+
+<span class="comment"># Colour space conversion</span>
+<span class="cmd">dcpwizard</span> colour <span class="flag">-i</span> <span class="val">./rec709_frames</span> <span class="flag">-o</span> <span class="val">./p3_frames</span> <span class="flag">--source</span> <span class="val">rec709</span> <span class="flag">--target</span> <span class="val">p3</span>
+
+<span class="comment"># Import EDL/AAF/XML timeline for conforming</span>
+<span class="cmd">dcpwizard</span> conform <span class="flag">-i</span> <span class="val">timeline.edl</span> <span class="flag">--json</span>
+
+<span class="comment"># Camera raw ingest</span>
+<span class="cmd">dcpwizard</span> ingest <span class="flag">-s</span> <span class="val">/mnt/camera_card</span> <span class="flag">-o</span> <span class="val">./dpx_frames</span> <span class="flag">-f</span> <span class="val">dpx</span>
+
+<span class="comment"># Extract a frame from MXF/video</span>
+<span class="cmd">dcpwizard</span> frame-extract <span class="flag">-i</span> <span class="val">video.mxf</span> <span class="flag">-f</span> <span class="val">100</span> <span class="flag">-o</span> <span class="val">frame.png</span>
+
+<span class="comment"># Inject Dolby Vision RPU</span>
+<span class="cmd">dcpwizard</span> dv-inject <span class="flag">-i</span> <span class="val">input.hevc</span> <span class="flag">-r</span> <span class="val">rpu.bin</span> <span class="flag">-o</span> <span class="val">output.hevc</span>
+
+<span class="comment"># Job queue management</span>
+<span class="cmd">dcpwizard</span> daemon
+<span class="cmd">dcpwizard</span> batch list
+<span class="cmd">dcpwizard</span> batch add <span class="flag">-T</span> <span class="val">create-dcp</span> <span class="flag">-p</span> <span class="val">'{"title":"Film","video":"j2k","output":"dcp"}'</span></code></div>
 </section>
 
 <section class="section" id="comparison">

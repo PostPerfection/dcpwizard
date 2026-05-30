@@ -100,6 +100,10 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
                         let _ = send_json(&mut stream, 202, &response);
                     }
                 }
+                ("GET", "/metrics") => {
+                    let metrics = build_prometheus_metrics(&queue);
+                    let _ = send_plain(&mut stream, 200, &metrics);
+                }
                 _ => {
                     let _ = send_response(&mut stream, 404, "Not Found");
                 }
@@ -146,4 +150,75 @@ fn send_json(stream: &mut std::net::TcpStream, status: u16, json: &str) -> std::
     );
     stream.write_all(response.as_bytes())?;
     stream.flush()
+}
+
+fn send_plain(stream: &mut std::net::TcpStream, status: u16, body: &str) -> std::io::Result<()> {
+    let status_text = match status {
+        200 => "OK",
+        _ => "Error",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {status_text}\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(response.as_bytes())?;
+    stream.flush()
+}
+
+/// Build Prometheus-compatible metrics text from the job queue state.
+fn build_prometheus_metrics(queue: &crate::job_queue::JobQueue) -> String {
+    use crate::job_queue::JobState;
+    use std::fmt::Write;
+
+    let jobs = queue.list();
+    let total = jobs.len();
+    let pending = jobs.iter().filter(|j| j.state == JobState::Pending).count();
+    let running = jobs.iter().filter(|j| j.state == JobState::Running).count();
+    let completed = jobs
+        .iter()
+        .filter(|j| j.state == JobState::Completed)
+        .count();
+    let failed = jobs.iter().filter(|j| j.state == JobState::Failed).count();
+
+    let mut out = String::new();
+
+    let _ = writeln!(
+        out,
+        "# HELP dcpwizard_jobs_total Total number of jobs submitted."
+    );
+    let _ = writeln!(out, "# TYPE dcpwizard_jobs_total gauge");
+    let _ = writeln!(out, "dcpwizard_jobs_total {total}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "# HELP dcpwizard_jobs_pending Number of pending jobs.");
+    let _ = writeln!(out, "# TYPE dcpwizard_jobs_pending gauge");
+    let _ = writeln!(out, "dcpwizard_jobs_pending {pending}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "# HELP dcpwizard_jobs_running Number of running jobs.");
+    let _ = writeln!(out, "# TYPE dcpwizard_jobs_running gauge");
+    let _ = writeln!(out, "dcpwizard_jobs_running {running}");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "# HELP dcpwizard_jobs_completed Number of completed jobs."
+    );
+    let _ = writeln!(out, "# TYPE dcpwizard_jobs_completed gauge");
+    let _ = writeln!(out, "dcpwizard_jobs_completed {completed}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "# HELP dcpwizard_jobs_failed Number of failed jobs.");
+    let _ = writeln!(out, "# TYPE dcpwizard_jobs_failed gauge");
+    let _ = writeln!(out, "dcpwizard_jobs_failed {failed}");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "# HELP dcpwizard_daemon_running Whether the job daemon is running."
+    );
+    let _ = writeln!(out, "# TYPE dcpwizard_daemon_running gauge");
+    let daemon_up = if crate::job_queue::is_daemon_running() {
+        1
+    } else {
+        0
+    };
+    let _ = writeln!(out, "dcpwizard_daemon_running {daemon_up}");
+
+    out
 }

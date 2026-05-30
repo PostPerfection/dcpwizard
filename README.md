@@ -29,6 +29,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ### Encoding & Transcoding
 - **JPEG 2000 encoding** via grok (GPU and CPU)
+- **Streaming pipeline** — video → J2K → MXF → DCP in one pass (no intermediate files)
 - **Video file import** — QuickTime (.mov), MP4, MXF, AVI, MKV, MJ2
 - **Video transcoding** — ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
 - **Image sequence input** — DPX, TIFF, EXR, PNG, BMP, JPEG
@@ -45,6 +46,8 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Time zone support** in KDM validity periods
 - **Annotation scheme** — customizable KDM annotation patterns
 - **Trusted Device List** support
+- **Certificate generation** — X.509 cert chain (root → intermediate → signer) for content encryption
+- **Certificate inspection** — display subject, issuer, validity, thumbprint, CA status
 
 ### Subtitles & Captions
 - **SMPTE 428-7 XML subtitles** (CineCanvas) packaging
@@ -90,6 +93,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Watch folder** mode — automated DCP creation on file arrival
 - **Job queue** with progress tracking and cancellation
 - **REST API** for headless/batch operation
+- **Prometheus metrics endpoint** (`GET /metrics`) — job counts, daemon status for monitoring
 - **Docker container** for CI/CD pipelines
 - **CLI scriptable** — all features accessible from command line
 - **Version dashboard** — OV/VF management, territory tracking, distribution matrix export
@@ -220,11 +224,20 @@ dcpwizard create --title "My Trailer" --video trailer.mov --output ./dcp \
 # Create with frame rate override
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --frame-rate 25
 
+# Full pipeline: video → J2K → DCP in one pass (no intermediate files)
+dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
+
 # Encode images to JPEG 2000
-dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250 --encoder grok
+dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250
 
 # Transcode video to image sequence
 dcpwizard transcode --input movie.mov --output ./sequence
+
+# Create DCDM (Digital Cinema Distribution Master)
+dcpwizard dcdm -i ./frames -o ./dcdm --colour-space rec709
+
+# Colour space conversion
+dcpwizard colour -i ./rec709_frames -o ./p3_frames --source rec709 --target p3
 
 # Verify an existing DCP
 dcpwizard verify ./my_dcp
@@ -269,6 +282,14 @@ dcpwizard serve --bind 127.0.0.1:8080
 # Watch folder for auto-DCP creation
 dcpwizard watch ./incoming
 
+# Job queue daemon
+dcpwizard daemon
+
+# Manage job queue
+dcpwizard batch list
+dcpwizard batch add -T create-dcp -p '{"title":"My Film","video":"./j2k","output":"./dcp"}'
+dcpwizard batch cancel <job-id>
+
 # Shell completion
 dcpwizard completion bash >> ~/.bashrc
 dcpwizard completion zsh >> ~/.zshrc
@@ -284,6 +305,24 @@ dcpwizard burn-in --input movie.mov --subtitles subs.srt --output movie_burned.m
 dcpwizard convert --input movie.mov --output movie_2k_scope.mov --target 2k-scope
 # Targets: 2k-scope (2048×858), 2k-flat (1998×1080), 2k-full (2048×1080),
 #          4k-scope (4096×1716), 4k-flat (3996×2160), 4k-full (4096×2160)
+
+# Import EDL/AAF/XML timeline for conforming
+dcpwizard conform -i timeline.edl --json
+
+# Camera raw ingest
+dcpwizard ingest -s /mnt/camera_card -o ./dpx_frames -f dpx --colour-space ACES
+
+# Extract a single frame from MXF/video
+dcpwizard frame-extract -i video.mxf -f 100 -o frame100.png
+
+# Inject Dolby Vision RPU into HEVC
+dcpwizard dv-inject -i input.hevc -r metadata.bin -o output.hevc
+
+# Inject HDR10 static metadata
+dcpwizard hdr10-inject -i input.mov -o output.mov --max-cll 1000 --max-fall 400
+
+# Apply forensic watermark
+dcpwizard watermark -i ./frames -o ./watermarked -p "DIST-001-SERIAL"
 ```
 
 ## REST API

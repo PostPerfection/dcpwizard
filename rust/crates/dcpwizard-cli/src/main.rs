@@ -401,6 +401,61 @@ enum Commands {
         #[arg(short, long)]
         payload: String,
     },
+
+    /// Generate or inspect X.509 certificates for DCP encryption
+    #[command(alias = "cert")]
+    Certificate {
+        #[command(subcommand)]
+        action: CertAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CertAction {
+    /// Generate a full certificate chain (root → intermediate → signer)
+    Chain {
+        /// Organization name for the certificates
+        #[arg(short, long)]
+        organization: String,
+        /// Output directory for generated certificates
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Generate a single certificate
+    Generate {
+        /// Certificate type: root, intermediate, leaf, signer
+        #[arg(short = 't', long, default_value = "signer")]
+        cert_type: String,
+        /// Common Name (CN)
+        #[arg(long)]
+        cn: String,
+        /// Organization
+        #[arg(long, default_value = "")]
+        organization: String,
+        /// Output certificate file
+        #[arg(long)]
+        output_cert: String,
+        /// Output private key file
+        #[arg(long)]
+        output_key: String,
+        /// Issuer certificate (required for non-root)
+        #[arg(long)]
+        issuer_cert: Option<String>,
+        /// Issuer private key (required for non-root)
+        #[arg(long)]
+        issuer_key: Option<String>,
+        /// Key size in bits
+        #[arg(long, default_value = "2048")]
+        key_bits: u32,
+        /// Validity in days
+        #[arg(long, default_value = "3650")]
+        validity_days: u32,
+    },
+    /// Inspect a certificate file and show its details
+    Inspect {
+        /// Path to PEM certificate file
+        cert_file: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1343,6 +1398,60 @@ fn main() {
                 }
             }
         }
+
+        Commands::Certificate { action } => match action {
+            CertAction::Chain {
+                organization,
+                output,
+            } => {
+                let output_dir = PathBuf::from(&output);
+                dcpwizard_core::certificate::generate_chain(&organization, &output_dir)
+            }
+            CertAction::Generate {
+                cert_type,
+                cn,
+                organization,
+                output_cert,
+                output_key,
+                issuer_cert,
+                issuer_key,
+                key_bits,
+                validity_days,
+            } => {
+                let ct = match cert_type.to_lowercase().as_str() {
+                    "root" => dcpwizard_core::certificate::CertType::Root,
+                    "intermediate" => dcpwizard_core::certificate::CertType::Intermediate,
+                    "leaf" => dcpwizard_core::certificate::CertType::Leaf,
+                    _ => dcpwizard_core::certificate::CertType::Signer,
+                };
+                let opts = dcpwizard_core::certificate::CertOptions {
+                    cert_type: ct,
+                    common_name: cn,
+                    organization,
+                    output_cert: PathBuf::from(&output_cert),
+                    output_key: PathBuf::from(&output_key),
+                    issuer_cert: issuer_cert.map(PathBuf::from).unwrap_or_default(),
+                    issuer_key: issuer_key.map(PathBuf::from).unwrap_or_default(),
+                    key_bits,
+                    validity_days,
+                    ..Default::default()
+                };
+                dcpwizard_core::certificate::generate_certificate(&opts)
+            }
+            CertAction::Inspect { cert_file } => {
+                let info = dcpwizard_core::certificate::read_certificate(Path::new(&cert_file));
+                println!("Subject CN:  {}", info.subject_cn);
+                println!("Issuer CN:   {}", info.issuer_cn);
+                println!("Serial:      {}", info.serial);
+                println!("Not Before:  {}", info.not_before);
+                println!("Not After:   {}", info.not_after);
+                println!("Key Size:    {} bits", info.key_bits);
+                println!("Is CA:       {}", info.is_ca);
+                println!("Expired:     {}", info.is_expired);
+                println!("Thumbprint:  {}", info.thumbprint_sha1);
+                0
+            }
+        },
 
         Commands::Batch { action } => {
             use dcpwizard_core::job_queue::{IpcRequest, IpcResponse, send_ipc_request};
