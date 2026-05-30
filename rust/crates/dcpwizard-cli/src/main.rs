@@ -495,6 +495,16 @@ fn parse_colour_space(s: &str) -> postkit::colour::ColourSpace {
 }
 
 fn main() {
+    // Windows debug builds overflow the default 1MB stack due to large clap
+    // derive enum (102 args across 34 subcommands). Spawn with 8MB stack.
+    let thread = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run)
+        .expect("failed to spawn main thread");
+    thread.join().unwrap();
+}
+
+fn run() {
     // User-friendly panic handler
     std::panic::set_hook(Box::new(|info| {
         let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
