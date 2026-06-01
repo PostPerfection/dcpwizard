@@ -12,8 +12,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    cmake \
-    ninja-build \
+    cargo \
+    rustc \
     pkg-config \
     libopenjp2-7-dev \
     libssl-dev \
@@ -25,11 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
-RUN cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=OFF \
-    -DBUILD_PYTHON_BINDINGS=OFF \
-    && cmake --build build --parallel
+RUN cargo build --release -p dcpwizard-cli --manifest-path rust/Cargo.toml
 
 # --- Runtime image ---
 FROM ubuntu:24.04
@@ -46,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /src/build/dcpwizard /usr/local/bin/dcpwizard
+COPY --from=builder /src/rust/target/release/dcpwizard /usr/local/bin/dcpwizard
 
 # Create non-root user for security
 RUN useradd -m -s /bin/bash dcpwizard

@@ -449,7 +449,6 @@
     <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">Prerequisites</h3>
     <div class="prereqs-list">
         <div class="prereq"><span class="tag required">Required</span><span>Rust toolchain (1.85+)</span></div>
-        <div class="prereq"><span class="tag required">Required</span><span>CMake (for asdcplib FFI build)</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
         <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
@@ -465,13 +464,13 @@
         </div>
         <div class="install-step">
             <div class="step-num">2</div>
-            <h4>Configure &amp; Build</h4>
-            <p><code>cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel</code></p>
+            <h4>Build</h4>
+            <p><code>cd rust &amp;&amp; cargo build --release</code></p>
         </div>
         <div class="install-step">
             <div class="step-num">3</div>
             <h4>Test</h4>
-            <p><code>cd build && ctest --output-on-failure</code></p>
+            <p><code>cd rust &amp;&amp; cargo test --workspace</code></p>
         </div>
     </div>
 </section>
@@ -613,7 +612,6 @@
             <tr><td>Dolby Vision / HDR metadata</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Frame-accurate preview</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Analytics dashboard / Prometheus</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Python bindings (SWIG)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Shell completion (bash/zsh/fish)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Portable / USB deployment</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>X.509 certificate management</td><td class="yes">✓</td><td class="no">✗</td></tr>
