@@ -113,5 +113,12 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: Build CLI sidecar
+        working-directory: rust
+        run: |
+          cargo build --release -p dcpwizard-cli
+          TRIPLE=$(rustc -vV | grep host | awk '{print $2}')
+          cp target/release/dcpwizard ../gui/src-tauri/dcpwizard-${TRIPLE}
+
       - name: Check Tauri backend
         run: cargo check --manifest-path gui/src-tauri/Cargo.toml
