@@ -104,9 +104,10 @@ fn kdm_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--cert"))
+        .stdout(predicate::str::contains("--signer-cert"))
+        .stdout(predicate::str::contains("--signer-key"))
         .stdout(predicate::str::contains("--valid-from"))
         .stdout(predicate::str::contains("--valid-to"))
-        .stdout(predicate::str::contains("--valid-duration"))
         .stdout(predicate::str::contains("--formulation"));
 }
 
@@ -130,6 +131,10 @@ fn kdm_missing_inputs() {
             "kdm",
             "--cert",
             "/nonexistent/cert.pem",
+            "--signer-cert",
+            "/nonexistent/signer.pem",
+            "--signer-key",
+            "/nonexistent/signer.key",
             "--cpl-id",
             "urn:uuid:00000000-0000-0000-0000-000000000000",
             "--content-title",

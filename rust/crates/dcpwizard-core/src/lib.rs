@@ -29,7 +29,6 @@ pub mod ingest;
 pub mod j2k_transcode;
 pub mod job_queue;
 pub mod kdm;
-pub mod kdm_advanced;
 pub mod loudness;
 pub mod markers;
 pub mod mca;

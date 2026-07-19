@@ -147,27 +147,57 @@ enum Commands {
         /// Recipient certificate file
         #[arg(long)]
         cert: String,
+        /// Signer leaf certificate file
+        #[arg(long)]
+        signer_cert: String,
+        /// Signer private key file
+        #[arg(long)]
+        signer_key: String,
+        /// Signer CA certificate above the leaf (repeatable: intermediate(s) then root)
+        #[arg(long)]
+        signer_chain: Vec<String>,
         /// Output KDM file
         #[arg(short, long)]
         output: String,
         /// Valid from (ISO 8601, e.g. "2024-06-01T00:00:00+00:00") or "now"
-        #[arg(short = 'f', long)]
-        valid_from: Option<String>,
-        /// Valid to (ISO 8601, e.g. "2024-12-31T23:59:59+00:00")
-        #[arg(short = 't', long)]
-        valid_to: Option<String>,
-        /// Valid duration (e.g. "2 weeks", "30 days", "4 hours")
-        #[arg(short = 'd', long)]
-        valid_duration: Option<String>,
+        #[arg(short = 'f', long, default_value = "now")]
+        valid_from: String,
+        /// Valid to: ISO 8601 or a relative duration (e.g. "2 weeks", "30 days")
+        #[arg(short = 't', long, default_value = "2 weeks")]
+        valid_to: String,
         /// KDM formulation: modified-transitional-1 (default), dci-any, dci-specific
         #[arg(long, default_value = "modified-transitional-1")]
         formulation: String,
-        /// Disable forensic marking of picture
+    },
+    /// Re-wrap a DKDM to a new recipient
+    KdmRewrap {
+        /// Source DKDM file
         #[arg(long)]
-        disable_forensic_marking_picture: bool,
-        /// Disable forensic marking of audio
+        dkdm: String,
+        /// DKDM recipient's private key (decrypts the source key blocks)
         #[arg(long)]
-        disable_forensic_marking_audio: bool,
+        dkdm_key: String,
+        /// New recipient certificate file
+        #[arg(long)]
+        cert: String,
+        /// Signer leaf certificate file
+        #[arg(long)]
+        signer_cert: String,
+        /// Signer private key file
+        #[arg(long)]
+        signer_key: String,
+        /// Signer CA certificate above the leaf (repeatable: intermediate(s) then root)
+        #[arg(long)]
+        signer_chain: Vec<String>,
+        /// Valid from: ISO 8601 or "now"; empty preserves the DKDM window
+        #[arg(short = 'f', long, default_value = "")]
+        valid_from: String,
+        /// Valid to: ISO 8601 or relative duration; empty preserves the DKDM window
+        #[arg(short = 't', long, default_value = "")]
+        valid_to: String,
+        /// Output KDM file
+        #[arg(short, long)]
+        output: String,
     },
     /// Copy DCP to drive
     Copy {
@@ -1023,34 +1053,47 @@ fn run() {
             cpl_id,
             content_title,
             cert,
+            signer_cert,
+            signer_key,
+            signer_chain,
             output,
             valid_from,
             valid_to,
-            valid_duration,
             formulation,
-            disable_forensic_marking_picture,
-            disable_forensic_marking_audio,
-        } => {
-            let (not_valid_before, not_valid_after) = dcpwizard_core::kdm::resolve_validity_period(
-                valid_from.as_deref(),
-                valid_to.as_deref(),
-                valid_duration.as_deref(),
-            );
+        } => dcpwizard_core::kdm::generate_kdm(
+            cpl_id,
+            content_title,
+            PathBuf::from(cert),
+            PathBuf::from(signer_cert),
+            PathBuf::from(signer_key),
+            signer_chain.into_iter().map(PathBuf::from).collect(),
+            valid_from,
+            valid_to,
+            formulation,
+            PathBuf::from(output),
+        ),
 
-            let config = dcpwizard_core::kdm::KdmConfig {
-                cpl_id,
-                content_title,
-                recipient_cert_file: PathBuf::from(cert),
-                output_file: PathBuf::from(output),
-                not_valid_before,
-                not_valid_after,
-                formulation: dcpwizard_core::kdm::KdmFormulation::parse(&formulation),
-                disable_forensic_marking_picture,
-                disable_forensic_marking_audio,
-                ..Default::default()
-            };
-            dcpwizard_core::kdm::generate_kdm(&config)
-        }
+        Commands::KdmRewrap {
+            dkdm,
+            dkdm_key,
+            cert,
+            signer_cert,
+            signer_key,
+            signer_chain,
+            valid_from,
+            valid_to,
+            output,
+        } => dcpwizard_core::kdm::rewrap_dkdm(
+            PathBuf::from(dkdm),
+            PathBuf::from(dkdm_key),
+            PathBuf::from(cert),
+            PathBuf::from(signer_cert),
+            PathBuf::from(signer_key),
+            signer_chain.into_iter().map(PathBuf::from).collect(),
+            valid_from,
+            valid_to,
+            PathBuf::from(output),
+        ),
 
         Commands::Copy { src, dst } => {
             dcpwizard_core::copy_drive::copy_to_drive(&PathBuf::from(src), &PathBuf::from(dst))
