@@ -214,21 +214,40 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     }];
 
     let pkl_path = config.vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(
+        &pkl_entries,
+        &pkl_uuid.to_string(),
+        crate::Standard::Smpte,
+        &pkl_path,
+    ) != 0
+    {
         tracing::error!("Failed to generate VF PKL");
         return -1;
     }
 
     // Generate ASSETMAP
-    let am_entries = vec![crate::assetmap::AssetMapEntry {
-        id: vf_cpl_uuid.to_string(),
-        path: cpl_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string(),
-    }];
-    if crate::assetmap::generate_assetmap(&am_entries, &config.vf_dir) != 0 {
+    let am_entries = vec![
+        crate::assetmap::AssetMapEntry {
+            id: pkl_uuid.to_string(),
+            path: pkl_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            packing_list: true,
+        },
+        crate::assetmap::AssetMapEntry {
+            id: vf_cpl_uuid.to_string(),
+            path: cpl_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string(),
+            packing_list: false,
+        },
+    ];
+    if crate::assetmap::generate_assetmap(&am_entries, &config.vf_dir, crate::Standard::Smpte) != 0
+    {
         tracing::error!("Failed to generate VF ASSETMAP");
         return -1;
     }

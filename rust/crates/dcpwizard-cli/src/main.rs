@@ -41,8 +41,8 @@ enum Commands {
         /// Encrypt the DCP
         #[arg(long)]
         encrypt: bool,
-        /// J2K encoder: "grok" (default) or "openjpeg"
-        #[arg(long, default_value = "grok")]
+        /// J2K encoder: "openjpeg" (default) or "grok"
+        #[arg(long, default_value = "openjpeg")]
         encoder: String,
         /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV
         #[arg(long)]

@@ -8,6 +8,7 @@ pub struct CplConfig {
     pub content_kind: String,
     pub rating: String,
     pub reels: Vec<CplReel>,
+    pub standard: crate::Standard,
 }
 
 /// A single reel in the CPL.
@@ -27,18 +28,19 @@ pub struct CplReel {
 }
 
 /// Generate a Composition Playlist XML.
-pub fn generate_cpl(config: &CplConfig, output_file: &Path) -> i32 {
-    let cpl_uuid = uuid::Uuid::new_v4();
+pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i32 {
     let issue_date = time_now_iso();
+    let namespace = match config.standard {
+        crate::Standard::Smpte => "http://www.smpte-ra.org/schemas/429-7/2006/CPL",
+        crate::Standard::Interop => "http://www.digicine.com/PROTO-ASDCP-CPL-20040511#",
+    };
 
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str(
-        "<CompositionPlaylist xmlns=\"http://www.smpte-ra.org/schemas/429-7/2006/CPL\">\n",
-    );
+    xml.push_str(&format!("<CompositionPlaylist xmlns=\"{namespace}\">\n"));
     xml.push_str(&format!("  <Id>urn:uuid:{cpl_uuid}</Id>\n"));
     xml.push_str(&format!(
-        "  <ContentTitle>{}</ContentTitle>\n",
+        "  <ContentTitleText>{}</ContentTitleText>\n",
         escape_xml(&config.title)
     ));
     xml.push_str(&format!("  <IssueDate>{issue_date}</IssueDate>\n"));
@@ -133,14 +135,28 @@ fn escape_xml(s: &str) -> String {
 }
 
 fn time_now_iso() -> String {
-    // Simple ISO 8601 timestamp
-    let now = std::time::SystemTime::now();
-    let duration = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = duration.as_secs();
-    // Rough conversion — good enough for DCP metadata
-    let days = secs / 86400;
-    let years = 1970 + days / 365;
-    format!("{years}-01-01T00:00:00+00:00")
+    chrono::Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_cpl_uses_supplied_identity_and_standard() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CPL_expected.xml");
+        let config = CplConfig {
+            title: "Interop Test".into(),
+            content_kind: "test".into(),
+            standard: crate::Standard::Interop,
+            ..Default::default()
+        };
+
+        assert_eq!(generate_cpl(&config, "expected", &path), 0);
+        let xml = std::fs::read_to_string(path).unwrap();
+        assert!(xml.contains("<Id>urn:uuid:expected</Id>"));
+        assert!(xml.contains("<ContentTitleText>Interop Test</ContentTitleText>"));
+        assert!(xml.contains("PROTO-ASDCP-CPL-20040511"));
+    }
 }

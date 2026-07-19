@@ -37,6 +37,15 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         }
     );
 
+    let Some(j2k_dir) = config.j2k_dir.as_ref() else {
+        tracing::error!("A J2K input directory is required");
+        return -1;
+    };
+    if !j2k_dir.is_dir() {
+        tracing::error!("J2K input directory does not exist: {}", j2k_dir.display());
+        return -1;
+    }
+
     if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
         tracing::error!("Failed to create output directory: {e}");
         return -1;
@@ -54,7 +63,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let picture_mxf_path = config.output_dir.join(&picture_mxf_name);
     let mut picture_duration: u64 = 0;
 
-    if let Some(ref j2k_dir) = config.j2k_dir {
+    {
         // Count frames for duration
         if let Ok(entries) = std::fs::read_dir(j2k_dir) {
             picture_duration = entries
@@ -69,6 +78,10 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                     ext == "j2c" || ext == "j2k"
                 })
                 .count() as u64;
+        }
+        if picture_duration == 0 {
+            tracing::error!("J2K input directory contains no codestreams");
+            return -1;
         }
 
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
@@ -136,11 +149,12 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
     let cpl_config = crate::cpl::CplConfig {
         title: config.title.clone(),
-        content_kind: "feature".into(),
+        content_kind: config.content_type.as_cpl_kind().into(),
         reels: vec![reel],
+        standard: config.standard,
         ..Default::default()
     };
-    if crate::cpl::generate_cpl(&cpl_config, &cpl_path) != 0 {
+    if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
         tracing::error!("Failed to generate CPL");
         return -1;
     }
@@ -157,19 +171,17 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         size: cpl_size,
     }];
 
-    if config.j2k_dir.is_some() {
-        let pic_hash = crate::hash::hash_file(&picture_mxf_path).unwrap_or_default();
-        let pic_size = std::fs::metadata(&picture_mxf_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        pkl_entries.push(crate::pkl::PklEntry {
-            id: picture_uuid.clone(),
-            asset_type: "application/mxf".into(),
-            file: picture_mxf_path.clone(),
-            hash: pic_hash,
-            size: pic_size,
-        });
-    }
+    let pic_hash = crate::hash::hash_file(&picture_mxf_path).unwrap_or_default();
+    let pic_size = std::fs::metadata(&picture_mxf_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    pkl_entries.push(crate::pkl::PklEntry {
+        id: picture_uuid.clone(),
+        asset_type: "application/mxf".into(),
+        file: picture_mxf_path.clone(),
+        hash: pic_hash,
+        size: pic_size,
+    });
     if has_sound {
         let snd_hash = crate::hash::hash_file(&sound_mxf_path).unwrap_or_default();
         let snd_size = std::fs::metadata(&sound_mxf_path)
@@ -184,7 +196,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         });
     }
 
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         return -1;
     }
@@ -198,6 +210,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
+            packing_list: true,
         },
         crate::assetmap::AssetMapEntry {
             id: cpl_uuid,
@@ -206,22 +219,23 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
+            packing_list: false,
         },
     ];
-    if config.j2k_dir.is_some() {
-        am_entries.push(crate::assetmap::AssetMapEntry {
-            id: picture_uuid,
-            path: picture_mxf_name,
-        });
-    }
+    am_entries.push(crate::assetmap::AssetMapEntry {
+        id: picture_uuid,
+        path: picture_mxf_name,
+        packing_list: false,
+    });
     if has_sound {
         am_entries.push(crate::assetmap::AssetMapEntry {
             id: sound_uuid,
             path: sound_mxf_name,
+            packing_list: false,
         });
     }
 
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
         tracing::error!("Failed to generate ASSETMAP");
         return -1;
     }
@@ -247,7 +261,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_dcp() {
+    fn test_create_dcp_requires_picture_input() {
         let dir = tempfile::tempdir().unwrap();
         let config = DcpConfig {
             title: "Test Film".into(),
@@ -256,7 +270,7 @@ mod tests {
             frame_rate_den: 1,
             ..Default::default()
         };
-        assert_eq!(create_dcp(&config), 0);
-        assert!(dir.path().join("ASSETMAP.xml").exists());
+        assert_eq!(create_dcp(&config), -1);
+        assert!(!dir.path().join("ASSETMAP.xml").exists());
     }
 }

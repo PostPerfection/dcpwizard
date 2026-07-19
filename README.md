@@ -4,7 +4,9 @@
 
 [Documentation](https://postperfection.github.io/dcpwizard/)
 
-Digital Cinema Package (DCP) creator — CLI tool and desktop GUI.
+Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
+
+Version 1.1 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. OpenJPEG is the default encoder, and Grok remains optional.
 
 ## Overview
 
@@ -18,93 +20,93 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 ### DCP Creation & Packaging
 - **Original Version (OV) DCP** creation from J2K + WAV
 - **Version File (VF)** creation referencing original reels
-- **Multi-CPL timeline** — multiple compositions sharing track assets
+- **Multi-CPL timeline**, multiple compositions sharing track assets
 - **SMPTE Bv2.1 & Interop** standard support
 - **2K and 4K** resolution (2048×1080, 4096×2160)
-- **High Frame Rate (HFR)** — 24, 25, 30, 48, 60, 96, 120 fps
-- **High Bitrate (HBR)** — up to 500 Mbps for demanding content
+- **High Frame Rate (HFR)**, 24, 25, 30, 48, 60, 96, 120 fps
+- **High Bitrate (HBR)**, up to 500 Mbps for demanding content
 - **Automatic reel splitting** by duration or file size
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **SHA-1 hashing** for integrity verification
 
 ### Encoding & Transcoding
-- **JPEG 2000 encoding** via grok (GPU and CPU)
-- **Streaming pipeline** — video → J2K → MXF → DCP in one pass (no intermediate files)
-- **Video file import** — QuickTime (.mov), MP4, MXF, AVI, MKV, MJ2
-- **Video transcoding** — ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
-- **Image sequence input** — DPX, TIFF, EXR, PNG, BMP, JPEG
-- **J2K transcoder** — re-encode existing JPEG 2000 at a different bitrate
-- **Scale / Crop / Letterbox / Pillarbox** — target resolution adaptation
-- **Colour conversion** — Rec.709, P3-D65, P3-DCI → XYZ with gamma 2.6
-- **Stereoscopic 3D** — frame interleaving from separate L/R eye sequences
+- **JPEG 2000 encoding** via OpenJPEG by default, with optional Grok acceleration
+- **Streaming pipeline**, video → J2K → MXF → DCP in one pass (no intermediate files)
+- **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV, MJ2
+- **Video transcoding**, ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
+- **Image sequence input**, DPX, TIFF, EXR, PNG, BMP, JPEG
+- **J2K transcoder**, re-encode existing JPEG 2000 at a different bitrate
+- **Scale / Crop / Letterbox / Pillarbox**, target resolution adaptation
+- **Colour conversion**, Rec.709, P3-D65, P3-DCI → XYZ with gamma 2.6
+- **Stereoscopic 3D**, frame interleaving from separate L/R eye sequences
 
 ### Encryption & KDM
 - **AES-128 content encryption** (SMPTE compliant)
-- **KDM generation** — Interop & SMPTE, including Dolby Atmos
-- **Batch KDM** — generate for multiple screens in one pass
-- **DKDM support** — generate KDMs from Distribution KDMs
+- **KDM generation**, Interop & SMPTE, including Dolby Atmos
+- **Batch KDM**, generate for multiple screens in one pass
+- **DKDM support**, generate KDMs from Distribution KDMs
 - **Time zone support** in KDM validity periods
-- **Annotation scheme** — customizable KDM annotation patterns
+- **Annotation scheme**, customizable KDM annotation patterns
 - **Trusted Device List** support
-- **Certificate generation** — X.509 cert chain (root → intermediate → signer) for content encryption
-- **Certificate inspection** — display subject, issuer, validity, thumbprint, CA status
+- **Certificate generation**, X.509 cert chain (root → intermediate → signer) for content encryption
+- **Certificate inspection**, display subject, issuer, validity, thumbprint, CA status
 
 ### Subtitles & Captions
 - **SMPTE 428-7 XML subtitles** (CineCanvas) packaging
 - **Interop XML subtitles** packaging
 - **SRT → SMPTE subtitle** conversion
 - **Multilingual subtitles** with RFC 5646 language tags
-- **Subtitle burn-in** — permanently render into video frames (for festivals)
+- **Subtitle burn-in**, permanently render into video frames (for festivals)
 
 ### Audio
-- **Multi-channel audio** — mono, stereo, 5.1, 7.1
+- **Multi-channel audio**, mono, stereo, 5.1, 7.1
 - **Dolby Atmos (IAB)** immersive audio packaging
 - **DTS:X** audio packaging
-- **Loudness measurement** — EBU R128 / ATSC A/85
+- **Loudness measurement**, EBU R128 / ATSC A/85
 - **Channel mapping** configuration
 - **WAV and QuickTime audio** input
 
 ### Quality Control
 - **Integrated QC** via dcpdoctor (SMPTE Bv2.1 compliance checking)
 - **HTML QC report** generation
-- **DCP verification** — validate structure, hashes, XML schemas
-- **Markers** — FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC
+- **DCP verification**, validate structure, hashes, XML schemas
+- **Markers**, FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC
 
 ### HDR & Dolby Vision
-- **HDR detection** — auto-detect SDR, HDR10, HDR10+, Dolby Vision, HLG from source
+- **HDR detection**, auto-detect SDR, HDR10, HDR10+, Dolby Vision, HLG from source
 - **Dolby Vision RPU injection** via dovi_tool
 - **HDR10 static metadata** injection (SMPTE ST 2086 + CTA 861.3)
-- **HDR format conversion** — HDR10 ↔ HLG ↔ SDR tone mapping
+- **HDR format conversion**, HDR10 ↔ HLG ↔ SDR tone mapping
 
 ### Camera Ingest
-- **Camera raw detection** — ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon
-- **Media scanning** — auto-detect resolution, frame rate, codec, reel names
-- **Transcode to intermediate** — DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
+- **Camera raw detection**, ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon
+- **Media scanning**, auto-detect resolution, frame rate, codec, reel names
+- **Transcode to intermediate**, DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
 - **3D LUT application** during ingest
-- **Timeline conform** — assemble reels from EDL (CMX 3600), AAF, FCP XML, OTIO
+- **Timeline conform**, assemble reels from EDL (CMX 3600), AAF, FCP XML, OTIO
 
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
-- **Frame extraction** — extract individual frames as images (thumbnails/preview)
+- **Frame extraction**, extract individual frames as images (thumbnails/preview)
 - **Frame-accurate preview** with display colourspace selection
 
 ### Delivery & Automation
 - **Copy to drive** with post-copy hash verification (USB/CRU)
-- **Watch folder** mode — automated DCP creation on file arrival
+- **Watch folder** mode, automated DCP creation on file arrival
 - **Job queue** with progress tracking and cancellation
 - **REST API** for headless/batch operation
-- **Prometheus metrics endpoint** (`GET /metrics`) — job counts, daemon status for monitoring
+- **Prometheus metrics endpoint** (`GET /metrics`), job counts, daemon status for monitoring
 - **Docker container** for CI/CD pipelines
-- **CLI scriptable** — all features accessible from command line
-- **Version dashboard** — OV/VF management, territory tracking, distribution matrix export
-- **Webhook notifications** — HTTP callbacks on job completion/failure
+- **CLI scriptable**, all features accessible from command line
+- **Version dashboard**, OV/VF management, territory tracking, distribution matrix export
+- **Webhook notifications**, HTTP callbacks on job completion/failure
 
 ### Mastering & Compliance
-- **DCDM creation** — Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
-- **Forensic watermarking** — NexGuard, Civolution, or internal spatial watermark
-- **Trailer packaging** — ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders
-- **Content version tracker** — SQLite database of which version delivered where and when
-- **Accessibility compliance** — verify AD/HI/SL tracks against CVAA, EAA, AODA, Ofcom standards
+- **DCDM creation**, Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
+- **Forensic watermarking**, NexGuard, Civolution, or internal spatial watermark
+- **Trailer packaging**, ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders
+- **Content version tracker**, SQLite database of which version delivered where and when
+- **Accessibility compliance**, verify AD/HI/SL tracks against CVAA, EAA, AODA, Ofcom standards
 
 ## Installation
 
@@ -118,7 +120,7 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
-The CLI binary is fully self-contained (OpenSSL and OpenJPEG are statically linked). Extract and run — no dependencies required.
+The CLI binary is fully self-contained (OpenSSL and OpenJPEG are statically linked). Extract and run, no dependencies required.
 
 ### Install from source
 
@@ -187,7 +189,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Desktop notifications on build complete/fail
 - Conditional button enabling (Build disabled until ready)
 - Built-in mpv preview player with timeline scrubber (click-to-seek, drag-to-scrub, timecode display)
-- Multi-CPL composition tabs — switch, add, remove compositions
+- Multi-CPL composition tabs, switch, add, remove compositions
 - SRT → SMPTE subtitle conversion panel
 - Subtitle burn-in panel
 - Target resolution conversion panel (2K/4K scope/flat/full)
@@ -195,9 +197,9 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 
 ```bash
 cd gui
-npm install
-npm run tauri dev      # development mode
-npm run tauri build    # production build
+pnpm install
+pnpm tauri dev
+pnpm tauri build
 ```
 
 ## CLI Usage
@@ -378,7 +380,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 dcpwizard/
 ├── rust/                # Rust workspace
 │   ├── crates/
-│   │   ├── dcpwizard-core/  # Core library — 59 modules, DCP creation, encoding, encryption, KDM, QC
+│   │   ├── dcpwizard-core/  # Core library, 59 modules, DCP creation, encoding, encryption, KDM, QC
 │   │   └── dcpwizard-cli/   # CLI binary (dcpwizard)
 │   └── Cargo.toml
 ├── gui/                 # Tauri 2 desktop application
@@ -393,4 +395,4 @@ job queue, preferences, REST API, watch folders, and more).
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0, see [LICENSE](LICENSE).

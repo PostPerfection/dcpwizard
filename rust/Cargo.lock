@@ -186,6 +186,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
+name = "bitstream-io"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6099cdc01846bc367c4e7dd630dc5966dccf36b652fae7a74e17b640411a91b2"
+
+[[package]]
+name = "bitvec"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddcec3d12c579d40898fe0a9a358a803c23e9c52ca3c425707f81c9436211837"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
+
+[[package]]
+name = "bitvec_helpers"
+version = "3.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9a6aff977a34114f146bd3379c9d170a8eafcffcdeecbb7cc3bd2470a39709a"
+dependencies = [
+ "bitstream-io",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -326,6 +353,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,13 +405,13 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "dcpdoctor-core"
-version = "0.1.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.0#18899285f4eba4df8ef474f96c8ba93e6ea7f97b"
+version = "0.1.1"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.1#b528ea6879c2ffba2834cc3f34984c59da83c4e6"
 dependencies = [
  "asdcplib",
  "base64",
  "dcpdoctor-imf",
- "postkit 0.1.0 (git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.0)",
+ "postkit 0.1.0",
  "quick-xml",
  "regex-lite",
  "serde",
@@ -383,8 +425,8 @@ dependencies = [
 
 [[package]]
 name = "dcpdoctor-imf"
-version = "0.1.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.0#18899285f4eba4df8ef474f96c8ba93e6ea7f97b"
+version = "0.1.1"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.1#b528ea6879c2ffba2834cc3f34984c59da83c4e6"
 dependencies = [
  "quick-xml",
  "serde",
@@ -392,13 +434,13 @@ dependencies = [
 
 [[package]]
 name = "dcpwizard-cli"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
  "ctrlc",
  "dcpwizard-core",
- "postkit 0.1.0",
+ "postkit 0.5.0",
  "predicates",
  "serde_json",
  "tempfile",
@@ -408,12 +450,12 @@ dependencies = [
 
 [[package]]
 name = "dcpwizard-core"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "asdcplib",
  "chrono",
  "dcpdoctor-core",
- "postkit 0.1.0",
+ "postkit 0.5.0",
  "serde",
  "serde_json",
  "sha1",
@@ -508,6 +550,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolby_vision"
+version = "3.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "533d9f32336f4d03822e87fcee32277fd4a52e3f1278549bf42c8b28e3b0f798"
+dependencies = [
+ "anyhow",
+ "bitvec",
+ "bitvec_helpers",
+ "crc",
+ "roxmltree",
+ "tinyvec",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,6 +636,12 @@ checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "funty"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
 name = "futures-core"
@@ -1064,13 +1126,13 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "postkit"
 version = "0.1.0"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.1#b528ea6879c2ffba2834cc3f34984c59da83c4e6"
 dependencies = [
  "asdcplib",
  "base64",
  "dirs",
  "hex",
  "notify",
- "openjpeg-sys",
  "quick-xml",
  "rcgen",
  "regex",
@@ -1090,14 +1152,16 @@ dependencies = [
 
 [[package]]
 name = "postkit"
-version = "0.1.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?tag=v0.1.0#18899285f4eba4df8ef474f96c8ba93e6ea7f97b"
+version = "0.5.0"
 dependencies = [
  "asdcplib",
  "base64",
+ "chrono",
  "dirs",
+ "dolby_vision",
  "hex",
  "notify",
+ "openjpeg-sys",
  "quick-xml",
  "rcgen",
  "regex",
@@ -1195,6 +1259,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "radium"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
+
+[[package]]
 name = "rcgen"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1267,6 +1337,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rusqlite"
@@ -1461,6 +1537,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tap"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1569,6 +1651,12 @@ dependencies = [
  "num-conv",
  "time-core",
 ]
+
+[[package]]
+name = "tinyvec"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb4ebadaa0af04fab11ae01eb5f9fdb5f9c5b875506e210e71c07873528baa7f"
 
 [[package]]
 name = "tracing"
@@ -2134,6 +2222,15 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "wyz"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
+dependencies = [
+ "tap",
 ]
 
 [[package]]
