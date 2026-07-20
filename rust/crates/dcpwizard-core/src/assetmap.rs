@@ -34,7 +34,9 @@ pub fn generate_assetmap(
     let am = AssetMap {
         uuid: uuid::Uuid::new_v4().to_string(),
         namespace: namespace.to_string(),
+        issuer: "DCP Wizard".into(),
         creator: "DCP Wizard".into(),
+        issue_date: chrono::Utc::now().to_rfc3339(),
         include_volume_count: true,
         assets,
     };
