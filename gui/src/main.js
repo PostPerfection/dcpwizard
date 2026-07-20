@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
-import { open as _open, save } from "@tauri-apps/plugin-dialog";
+import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile } from "./preview.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -306,6 +306,7 @@ function renderAssets() {
       <span class="asset-icon">${icons[a.type]}</span>
       <span class="asset-name" title="${a.path}">${a.name}</span>
       <span class="asset-meta">${a.meta || a.type}</span>
+      <button class="asset-remove" data-remove-id="${a.id}" title="Remove from project">✕</button>
     </div>
   `).join('');
 
@@ -317,6 +318,9 @@ function renderAssets() {
     el.addEventListener('contextmenu', (e) => {
       showContextMenu(e, parseInt(el.dataset.assetId));
     });
+  });
+  list.querySelectorAll('.asset-remove').forEach(el => {
+    el.addEventListener('click', (e) => { e.stopPropagation(); removeAsset(parseInt(el.dataset.removeId)); });
   });
 
   // Re-apply filter
@@ -505,15 +509,15 @@ document.getElementById("prop-browse-key-out")?.addEventListener("click", async 
 
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   const title = document.getElementById("prop-title")?.value?.trim();
-  if (!title) { alert("Enter a project title in Properties"); return; }
+  if (!title) { tauriMessage("Enter a project title in Properties"); return; }
 
   const reel = project.reels[0];
-  if (!reel?.picture) { alert("Import a video asset first"); return; }
+  if (!reel?.picture) { tauriMessage("Import a video asset first"); return; }
 
   const encrypt = document.getElementById("prop-encrypt")?.checked || false;
   const keyOut = document.getElementById("prop-key-out")?.value || "";
   if (encrypt && !keyOut) {
-    alert("Encryption is on: choose a Key Output File in Properties. It holds the plaintext content keys, keep it secret and outside the DCP.");
+    tauriMessage("Encryption is on: choose a Key Output File in Properties. It holds the plaintext content keys, keep it secret and outside the DCP.");
     return;
   }
 
@@ -1011,9 +1015,9 @@ if ("Notification" in window && Notification.permission === "default") {
 }
 
 // === Confirmation Dialogs ===
-document.getElementById("btn-new-project")?.addEventListener("click", () => {
+document.getElementById("btn-new-project")?.addEventListener("click", async () => {
   if (project.assets.length > 0) {
-    if (!confirm("Clear current project and start new? Unsaved changes will be lost.")) return;
+    if (!(await tauriConfirm("Clear current project and start new? Unsaved changes will be lost."))) return;
   }
   project.title = "";
   project.assets = [];
@@ -1077,6 +1081,21 @@ function showContextMenu(e, assetId) {
 
 document.addEventListener("click", () => { if (ctxMenu) ctxMenu.hidden = true; });
 
+async function removeAsset(assetId) {
+  const asset = project.assets.find(a => a.id === assetId);
+  if (!asset) return;
+  if (!(await tauriConfirm(`Remove "${asset.name}" from project?`))) return;
+  project.assets = project.assets.filter(a => a.id !== assetId);
+  project.reels.forEach(r => {
+    if (r.picture?.id === assetId) r.picture = null;
+    if (r.sound?.id === assetId) r.sound = null;
+    if (r.subtitle?.id === assetId) r.subtitle = null;
+  });
+  renderAssets();
+  renderReels();
+  updateStatusStats();
+}
+
 ctxMenu?.querySelectorAll("button").forEach(btn => {
   btn.addEventListener("click", () => {
     const action = btn.dataset.action;
@@ -1085,16 +1104,7 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
     if (action === "preview") {
       previewFile(asset.path);
     } else if (action === "remove") {
-      if (!confirm(`Remove "${asset.name}" from project?`)) return;
-      project.assets = project.assets.filter(a => a.id !== ctxAssetId);
-      project.reels.forEach(r => {
-        if (r.picture?.id === ctxAssetId) r.picture = null;
-        if (r.sound?.id === ctxAssetId) r.sound = null;
-        if (r.subtitle?.id === ctxAssetId) r.subtitle = null;
-      });
-      renderAssets();
-      renderReels();
-      updateStatusStats();
+      removeAsset(ctxAssetId);
     } else if (action === "reveal") {
       invoke("plugin:shell|open", { path: asset.path.replace(/[/\\][^/\\]*$/, '') });
     }
