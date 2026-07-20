@@ -1,6 +1,6 @@
 # Planned
 
-Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizard-core/src, CLI = rust/crates/dcpwizard-cli/src/main.rs, PK = ../../postkit (canonical postkit, path dep).
+Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizard-core/src, CLI = rust/crates/dcpwizard-cli/src/main.rs, PK = extern/postkit (postkit submodule; bump the pin when postkit changes).
 
 ## Fixed in the 2026-07 pass (for reference)
 
