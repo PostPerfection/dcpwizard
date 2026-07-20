@@ -67,6 +67,24 @@ enum Commands {
         #[arg(long)]
         video_bit_rate: Option<u32>,
     },
+    /// Create a supplemental Version File (VF) DCP against an Original Version
+    CreateVf {
+        /// Original Version (OV) DCP directory
+        #[arg(long)]
+        ov: String,
+        /// Output VF directory
+        #[arg(short, long)]
+        output: String,
+        /// VF title (defaults to "<OV title>_VF")
+        #[arg(short, long, default_value = "")]
+        title: String,
+        /// Replace a reel's picture essence: --replace-picture REEL=PATH (repeatable)
+        #[arg(long = "replace-picture", value_name = "REEL=PATH")]
+        replace_picture: Vec<String>,
+        /// Replace a reel's sound essence: --replace-sound REEL=PATH (repeatable)
+        #[arg(long = "replace-sound", value_name = "REEL=PATH")]
+        replace_sound: Vec<String>,
+    },
     /// Encode images to JPEG 2000
     Encode {
         /// Input image directory
@@ -2217,6 +2235,62 @@ fn run() {
                     };
                     dcpwizard_core::dashboard::serve_dashboard(&opts)
                 }
+            }
+        }
+
+        Commands::CreateVf {
+            ov,
+            output,
+            title,
+            replace_picture,
+            replace_sound,
+        } => {
+            // Parse REEL=PATH into a per-reel map, picture and sound sharing reels.
+            let mut reels: std::collections::BTreeMap<u32, dcpwizard_core::vf::ReplacementReel> =
+                std::collections::BTreeMap::new();
+            let mut parse_ok = true;
+            for (specs, is_picture) in [(&replace_picture, true), (&replace_sound, false)] {
+                for spec in specs {
+                    let Some((reel_str, path)) = spec.split_once('=') else {
+                        tracing::error!("bad --replace spec '{spec}', expected REEL=PATH");
+                        parse_ok = false;
+                        continue;
+                    };
+                    let Ok(reel_number) = reel_str.trim().parse::<u32>() else {
+                        tracing::error!("bad reel number in '{spec}'");
+                        parse_ok = false;
+                        continue;
+                    };
+                    let entry =
+                        reels
+                            .entry(reel_number)
+                            .or_insert(dcpwizard_core::vf::ReplacementReel {
+                                reel_number,
+                                ..Default::default()
+                            });
+                    let p = Some(PathBuf::from(path.trim()));
+                    if is_picture {
+                        entry.picture = p;
+                    } else {
+                        entry.sound = p;
+                    }
+                }
+            }
+
+            if !parse_ok {
+                1
+            } else {
+                let config = dcpwizard_core::vf::VfConfig {
+                    ov_dir: PathBuf::from(&ov),
+                    vf_dir: PathBuf::from(&output),
+                    title,
+                    replacement_reels: reels.into_values().collect(),
+                };
+                let code = dcpwizard_core::vf::create_vf(&config);
+                if code == 0 {
+                    println!("Created VF DCP at {output}");
+                }
+                code
             }
         }
     };

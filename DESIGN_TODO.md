@@ -20,12 +20,18 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
 - Batch KDM gained `--cert-dir` (glob a directory of cinema certs); real
   end-to-end test generates one signed KDM per recipient, KeyId-bound and
   xmlsec1-verified (CORE/kdm.rs).
+- VF (supplemental) creation is real and wired (CLI `create-vf`, CORE/vf.rs).
+  Unchanged reels reference the OV's asset ids; replacement essence is wrapped
+  (or a pre-wrapped MXF copied) and registered under its real embedded id in
+  CPL/PKL/ASSETMAP; an `<OriginalPackagingList>` marker makes dcpdoctor detect
+  the VF. Verified end-to-end: `dcpdoctor validate --ov` resolves cross-refs,
+  alone gives the supplemental warning (not cross_ref_broken).
 
 ## Not implemented, de-advertised (build only if wanted)
 
 Dead modules, now honest in README/docs. Wire or delete:
 
-- VF creation (vf.rs), reel splitting (reel.rs), multi-CPL timelines (multi_cpl.rs),
+- Reel splitting (reel.rs), multi-CPL timelines (multi_cpl.rs),
   stereoscopic 3D (stereo3d.rs), HFR validation table (hfr.rs), subtitle packaging
   into a DCP timed-text track (no --subtitle flag, MxfType::TimedText unused),
   Atmos/DTS:X (atmos.rs/dtsx.rs), channel mapping (mca.rs/audio.rs), J2K transcoder

@@ -217,6 +217,13 @@ dcpwizard create --title "My Film" --video ./j2k --output ./dcp --frame-rate 25
 # Full pipeline: video → J2K → DCP in one pass (no intermediate files)
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 
+# Supplemental Version File (VF): replace reel 1's sound against an existing OV.
+# Unchanged reels reference the OV by asset id; only the new MXF ships in the VF.
+# Replacement can be raw essence (WAV/J2K, gets wrapped) or an already-wrapped MXF.
+dcpwizard create-vf --ov ./dcp --output ./dcp_vf --replace-sound 1=./new_mix.wav
+# Validate the VF against its OV (resolves cross-references):
+dcpdoctor validate ./dcp_vf --ov ./dcp
+
 # Encode images to JPEG 2000
 dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250
 
@@ -369,7 +376,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Feature | DCP Wizard | easyDCP Creator+ |
 |---------|-----------|------------------|
 | SMPTE & Interop | ✅ | ✅ |
-| Version Files (VF) | ❌ | ✅ |
+| Version Files (VF) | ✅ | ✅ |
 | Multi-CPL timeline | ❌ | ✅ |
 | CLI scriptable | ✅ | ✅ |
 | Up to 4K | ✅ | ✅ |

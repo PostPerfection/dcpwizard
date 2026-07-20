@@ -14,6 +14,7 @@ DCP creation tool. Rust core with CLI and Tauri GUI.
 ## What is implemented and wired
 
 - OV creation from video files or J2K dirs + WAV: demux, J2K encode (grok subprocess or in-process; OpenJPEG on the create video path), real asdcplib MXF wrapping, CPL/PKL/ASSETMAP/VOLINDEX generation, SHA-1 hashes.
+- Supplemental Version File (VF) creation (`create-vf`): references the OV's real asset ids for unchanged reels, wraps replacement essence (or copies an already-wrapped MXF) and registers it under its real embedded asset id in CPL/PKL/ASSETMAP, carries an `<OriginalPackagingList>` marker so dcpdoctor detects a supplemental. Validating the VF with `--ov` resolves cross-refs; alone it yields the supplemental-OV-not-provided warning, not a hard cross-ref error.
 - Encryption: content keys generated with the OS CSPRNG, essence AES-128 encrypted at wrap time (`postkit::mxf_wrap`, HMAC per SMPTE), PKL/ASSETMAP hashes taken from the final encrypted files, KeyIds written into the CPL. `create --encrypt` requires `--key-out <path>` (clap-enforced); the plaintext keys are written only there, never next to the DCP. The GUI mirrors this: encrypting requires a Key Output File.
 - SMPTE KDM generation, batch, DKDM rewrap (real signed ETM). `kdm --keys <key-out file>` binds the KDM to the DCP's actual image (MDIK) and audio (MDAK) content keys. `kdm-batch` takes repeated `--cert` or a `--cert-dir` of cinema certs and writes one signed KDM per recipient. Certificate chain generation and inspection.
 - verify/info/report via dcpdoctor-core; SRT to subtitle-XML conversion; subtitle/watermark burn-in.
@@ -23,4 +24,4 @@ DCP creation tool. Rust core with CLI and Tauri GUI.
 
 ## Not implemented (de-advertised)
 
-These have no working path and are no longer advertised in README/docs: Version File (VF) creation, reel splitting, multi-CPL timelines, stereoscopic 3D, HFR validation table, subtitle packaging into a DCP timed-text track, Dolby Atmos (IAB) / DTS:X, channel mapping, J2K transcoder. The dead modules remain in the tree but are unreferenced. Interop and Atmos KDM variants are not implemented (SMPTE only). `cli_flags_test.sh` now actually invokes each GUI command line and fails on clap parse errors.
+These have no working path and are no longer advertised in README/docs: reel splitting, multi-CPL timelines, stereoscopic 3D, HFR validation table, subtitle packaging into a DCP timed-text track, Dolby Atmos (IAB) / DTS:X, channel mapping, J2K transcoder. The dead modules remain in the tree but are unreferenced. Interop and Atmos KDM variants are not implemented (SMPTE only). `cli_flags_test.sh` now actually invokes each GUI command line and fails on clap parse errors.

@@ -54,13 +54,14 @@ fn collect_inputs(path: &std::path::Path) -> Result<Vec<PathBuf>, String> {
     Err(format!("input path not found: {}", path.display()))
 }
 
-/// Wrap essence into an MXF container using postkit's asdcplib wrapper.
-pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
+/// Wrap essence into an MXF and return the track file (real embedded asset id,
+/// hash, size, duration). `None` on input-collection or wrap failure.
+pub fn wrap_mxf_result(config: &MxfWrapConfig) -> Option<postkit::mxf_wrap::MxfTrackFile> {
     let input_files = match collect_inputs(&config.input_path) {
         Ok(f) => f,
         Err(e) => {
             tracing::error!("{e}");
-            return -1;
+            return None;
         }
     };
 
@@ -96,9 +97,18 @@ pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
             config.mxf_type,
             config.output_mxf.display()
         );
-        0
+        Some(result)
     } else {
         tracing::error!("MXF wrap failed: {}", result.error);
+        None
+    }
+}
+
+/// Wrap essence into an MXF container using postkit's asdcplib wrapper.
+pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
+    if wrap_mxf_result(config).is_some() {
+        0
+    } else {
         -1
     }
 }
