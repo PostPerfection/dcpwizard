@@ -352,12 +352,12 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📦</div>
             <h3>DCP Creation</h3>
-            <p>OV and VF DCPs, multi-CPL timelines, SMPTE Bv2.1 &amp; Interop. 2K/4K, HFR up to 120fps, HBR up to 500 Mbps. Reel splitting, markers, VOLINDEX.</p>
+            <p>OV DCPs, SMPTE &amp; Interop. 2K/4K, frame rates 24–60 fps, HBR up to 500 Mbps. CPL / PKL / ASSETMAP / VOLINDEX generation with SHA-1 hashing.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🎬</div>
             <h3>JPEG 2000 Encoding</h3>
-            <p>Encode DPX, TIFF, EXR, PNG, and BMP to J2K with OpenJPEG by default. Optional Grok acceleration and bitrate re-encoding remain available.</p>
+            <p>Encode DPX, TIFF, EXR, and PNG to J2K with OpenJPEG on the create video path; the streaming pipeline uses Grok.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎞️</div>
@@ -367,7 +367,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
             <h3>Encryption &amp; KDM</h3>
-            <p>AES-128 encryption. KDM generation (Interop, SMPTE, Atmos). Batch KDM, DKDM, time zones, trusted device lists, forensic marking control, configurable validity periods and formulations (modified-transitional-1, DCI-any, DCI-specific).</p>
+            <p>AES-128 essence encryption. Signed SMPTE (ST 430-1/430-3) KDM generation carrying the DCP's image and audio content keys. Batch KDM, DKDM re-wrap, configurable validity periods and formulations (modified-transitional-1, DCI-any, DCI-specific).</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
@@ -382,22 +382,17 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📝</div>
             <h3>Subtitles</h3>
-            <p>SMPTE 428-7 CineCanvas &amp; Interop XML. SRT import/conversion. Multilingual (RFC 5646). Burn-in for festivals.</p>
+            <p>SRT → SMPTE / Interop subtitle XML conversion. Multilingual (RFC 5646). Burn-in for festivals.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🔊</div>
-            <h3>Audio, Atmos &amp; DTS:X</h3>
-            <p>Mono to 7.1 channel audio. Dolby Atmos (IAB) and DTS:X immersive packaging. Loudness (EBU R128 / ATSC A/85). Channel mapping.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🎥</div>
-            <h3>Stereoscopic 3D</h3>
-            <p>Frame interleaving from separate L/R eye sequences. Full 3D DCP creation with proper MXF track packaging.</p>
+            <h3>Audio</h3>
+            <p>PCM audio wrapping (48 kHz). Loudness measurement (EBU R128 / ATSC A/85). WAV input.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">📤</div>
-            <h3>Export &amp; Delivery</h3>
-            <p>Export DCP to ProRes, H.264, H.265, DNxHR, or image sequence. Copy to drive with hash verification. Frame extraction.</p>
+            <h3>Delivery</h3>
+            <p>Copy to cinema drive with hash verification. Frame extraction.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">⚡</div>
@@ -407,7 +402,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🖥️</div>
             <h3>Desktop GUI</h3>
-            <p>Tauri 2 desktop app with dark theme. Drag-and-drop import, timeline scrubber with timecode, multi-CPL composition tabs, target resolution conversion, SRT→SMPTE subtitle panel, burn-in, GPU toggle, keyboard shortcuts, and desktop notifications.</p>
+            <p>Tauri 2 desktop app with dark theme. Drag-and-drop import, timeline scrubber with timecode, SRT→SMPTE subtitle panel, burn-in, keyboard shortcuts, and desktop notifications.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
@@ -497,13 +492,15 @@
 <span class="comment"># Quick verification (skip hash checks)</span>
 <span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span> <span class="flag">--no-hash-check</span> <span class="flag">--quiet</span>
 
-<span class="comment"># Generate KDM with validity period</span>
-<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> <span class="flag">--output</span> <span class="val">kdm.xml</span> \
-    <span class="flag">--valid-from</span> <span class="val">now</span> <span class="flag">--valid-duration</span> <span class="val">"2 weeks"</span>
+<span class="comment"># Generate KDM with validity period (signer cert/key required)</span>
+<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> \
+    <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
+    <span class="flag">--output</span> <span class="val">kdm.xml</span> <span class="flag">--valid-from</span> <span class="val">now</span> <span class="flag">--valid-to</span> <span class="val">"2 weeks"</span>
 
-<span class="comment"># KDM with formulation and forensic marking control</span>
-<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> <span class="flag">--output</span> <span class="val">kdm.xml</span> \
-    <span class="flag">--formulation</span> <span class="val">dci-any</span> <span class="flag">--disable-forensic-marking-picture</span>
+<span class="comment"># KDM with formulation</span>
+<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> \
+    <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
+    <span class="flag">--output</span> <span class="val">kdm.xml</span> <span class="flag">--formulation</span> <span class="val">dci-any</span>
 
 <span class="comment"># Copy DCP to cinema drive with hash verification</span>
 <span class="cmd">dcpwizard</span> copy <span class="flag">--src</span> <span class="val">./my_dcp</span> <span class="flag">--dst</span> <span class="val">/mnt/cru</span>
@@ -578,31 +575,30 @@
             <tr><th>Feature</th><th style="text-align:center;">DCP Wizard</th><th style="text-align:center;">easyDCP Creator+</th></tr>
         </thead>
         <tbody>
-            <tr><td>SMPTE Bv2.1 &amp; Interop</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Version Files (VF)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Multi-CPL timeline</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>SMPTE &amp; Interop</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Version Files (VF)</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>Multi-CPL timeline</td><td class="no">✗</td><td class="yes">✓</td></tr>
             <tr><td>2K &amp; 4K resolution</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>HFR up to 120fps</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Frame rates 24–60 fps</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>High Bitrate (500 Mbps)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Stereoscopic 3D</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>DPX/TIFF/PNG/EXR/BMP/J2K input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Stereoscopic 3D</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>DPX/TIFF/PNG/EXR input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>QuickTime/MXF/MP4 import</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Scale / Crop / Letterbox</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>J2K Transcoder</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Colour conversion (Rec.709/P3/XYZ)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Audio 2.0–7.1</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Dolby Atmos (IAB)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>DTS:X</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>J2K Transcoder</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>Colour conversion (→ XYZ)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Audio (PCM 5.1)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Immersive audio (Atmos, DTS:X)</td><td class="no">✗</td><td class="yes">✓</td></tr>
             <tr><td>SRT → SMPTE subtitles</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Multilingual CineCanvas</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Subtitle packaging into DCP</td><td class="no">✗</td><td class="yes">✓</td></tr>
             <tr><td>Subtitle burn-in</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>AES-128 encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>KDM (Interop + SMPTE + Atmos)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>DKDM &amp; Trusted Devices</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>AES-128 essence encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>KDM (SMPTE)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DKDM re-wrap</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Integrated QC</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>CLI scriptable</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Desktop GUI</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>DCP Export / Frame extraction</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Frame extraction / copy to drive</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Loudness measurement (R128)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td colspan="3" style="color:var(--accent);font-weight:600;padding-top:20px;">DCP Wizard exclusive</td></tr>
             <tr><td>REST API / Docker</td><td class="yes">✓</td><td class="no">✗</td></tr>

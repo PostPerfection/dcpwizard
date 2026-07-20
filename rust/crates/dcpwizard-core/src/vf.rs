@@ -62,7 +62,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     xml.push_str(&format!("  <Id>urn:uuid:{vf_cpl_uuid}</Id>\n"));
     xml.push_str(&format!(
         "  <ContentTitleText>{}</ContentTitleText>\n",
-        escape_xml(&title)
+        postkit::packaging::escape_xml(&title)
     ));
     xml.push_str("  <IssueDate>2024-01-01T00:00:00+00:00</IssueDate>\n");
     xml.push_str("  <Issuer>DCP Wizard</Issuer>\n");
@@ -254,10 +254,4 @@ pub fn create_vf(config: &VfConfig) -> i32 {
 
     tracing::info!("Created VF DCP at {}", config.vf_dir.display());
     0
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }

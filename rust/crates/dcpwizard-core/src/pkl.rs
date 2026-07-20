@@ -11,43 +11,40 @@ pub struct PklEntry {
     pub size: u64,
 }
 
-/// Generate a Packing List XML.
+/// Generate a Packing List XML via the shared postkit writer.
 pub fn generate_pkl(
     entries: &[PklEntry],
     pkl_uuid: &str,
     standard: crate::Standard,
     output_file: &Path,
 ) -> i32 {
+    use postkit::packaging::{self, PackingList, PklAsset};
+
     let namespace = match standard {
-        crate::Standard::Smpte => "http://www.smpte-ra.org/schemas/429-8/2007/PKL",
-        crate::Standard::Interop => "http://www.digicine.com/PROTO-ASDCP-PKL-20040311#",
+        crate::Standard::Smpte => packaging::ns::PKL_SMPTE,
+        crate::Standard::Interop => packaging::ns::PKL_INTEROP,
     };
 
-    let mut xml = String::new();
-    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str(&format!("<PackingList xmlns=\"{namespace}\">\n"));
-    xml.push_str(&format!("  <Id>urn:uuid:{pkl_uuid}</Id>\n"));
-    xml.push_str(&format!(
-        "  <IssueDate>{}</IssueDate>\n",
-        chrono::Utc::now().to_rfc3339()
-    ));
-    xml.push_str("  <Issuer>DCP Wizard</Issuer>\n");
-    xml.push_str("  <Creator>DCP Wizard</Creator>\n");
-    xml.push_str("  <AssetList>\n");
+    let assets = entries
+        .iter()
+        .map(|e| PklAsset {
+            id: e.id.clone(),
+            hash: e.hash.clone(),
+            size: e.size,
+            asset_type: e.asset_type.clone(),
+        })
+        .collect();
 
-    for entry in entries {
-        xml.push_str("    <Asset>\n");
-        xml.push_str(&format!("      <Id>urn:uuid:{}</Id>\n", entry.id));
-        xml.push_str(&format!("      <Hash>{}</Hash>\n", entry.hash));
-        xml.push_str(&format!("      <Size>{}</Size>\n", entry.size));
-        xml.push_str(&format!("      <Type>{}</Type>\n", entry.asset_type));
-        xml.push_str("    </Asset>\n");
-    }
+    let pkl = PackingList {
+        uuid: pkl_uuid.to_string(),
+        namespace: namespace.to_string(),
+        issuer: "DCP Wizard".into(),
+        creator: "DCP Wizard".into(),
+        issue_date: chrono::Utc::now().to_rfc3339(),
+        assets,
+    };
 
-    xml.push_str("  </AssetList>\n");
-    xml.push_str("</PackingList>\n");
-
-    match std::fs::write(output_file, xml) {
+    match std::fs::write(output_file, pkl.to_xml()) {
         Ok(()) => 0,
         Err(e) => {
             tracing::error!("Failed to write PKL: {e}");

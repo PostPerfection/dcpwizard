@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
-import { open as _open } from "@tauri-apps/plugin-dialog";
+import { open as _open, save } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile } from "./preview.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -115,7 +116,6 @@ function loadSettings() {
     "set-creator": prefs.creator,
     "set-facility": prefs.facility,
     "set-bandwidth": prefs.bandwidth,
-    "set-gpu": prefs.gpu,
     "set-signing-cert": prefs.signingCert,
     "set-signing-key": prefs.signingKey,
     "set-output-dir": prefs.outputDir,
@@ -136,7 +136,6 @@ document.getElementById("settings-form")?.addEventListener("submit", (e) => {
     creator: document.getElementById("set-creator")?.value,
     facility: document.getElementById("set-facility")?.value,
     bandwidth: parseInt(document.getElementById("set-bandwidth")?.value) || 250,
-    gpu: parseInt(document.getElementById("set-gpu")?.value) ?? -1,
     signingCert: document.getElementById("set-signing-cert")?.value,
     signingKey: document.getElementById("set-signing-key")?.value,
     outputDir: document.getElementById("set-output-dir")?.value,
@@ -182,25 +181,23 @@ Object.defineProperty(project, 'reels', {
 
 let nextAssetId = 1;
 
-// === Drop overlay ===
+// === OS file drop (Tauri webview drag-drop) ===
+// A webview's HTML drop event exposes no filesystem path (f.path is Electron
+// only). Tauri's native drag-drop event carries absolute paths.
 const dropOverlay = document.getElementById("drop-overlay");
 
-document.addEventListener("dragover", (e) => {
-  e.preventDefault();
-  if (dropOverlay) dropOverlay.hidden = false;
-});
-document.addEventListener("dragleave", (e) => {
-  if (e.relatedTarget === null && dropOverlay) dropOverlay.hidden = true;
-});
-document.addEventListener("drop", (e) => {
-  e.preventDefault();
-  if (dropOverlay) dropOverlay.hidden = true;
-  // Handle dropped files
-  const files = e.dataTransfer?.files;
-  if (files) {
-    for (const f of files) {
-      importAssetFromPath(f.path || f.name, guessType(f.name));
+getCurrentWebview().onDragDropEvent((event) => {
+  const p = event.payload;
+  if (p.type === "over" || p.type === "enter") {
+    if (dropOverlay) dropOverlay.hidden = false;
+  } else if (p.type === "drop") {
+    if (dropOverlay) dropOverlay.hidden = true;
+    for (const path of p.paths) {
+      importAssetFromPath(path, guessType(path));
     }
+  } else {
+    // "leave" / "cancel"
+    if (dropOverlay) dropOverlay.hidden = true;
   }
 });
 
@@ -498,12 +495,27 @@ document.getElementById("btn-open-project")?.addEventListener("click", async () 
 let currentJobId = null;
 let paused = false;
 
+document.getElementById("prop-browse-key-out")?.addEventListener("click", async () => {
+  const file = await save({
+    defaultPath: "dcp.keys.json",
+    filters: [{ name: "Keys", extensions: ["json"] }],
+  });
+  if (file) document.getElementById("prop-key-out").value = file;
+});
+
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   const title = document.getElementById("prop-title")?.value?.trim();
   if (!title) { alert("Enter a project title in Properties"); return; }
 
   const reel = project.reels[0];
   if (!reel?.picture) { alert("Import a video asset first"); return; }
+
+  const encrypt = document.getElementById("prop-encrypt")?.checked || false;
+  const keyOut = document.getElementById("prop-key-out")?.value || "";
+  if (encrypt && !keyOut) {
+    alert("Encryption is on: choose a Key Output File in Properties. It holds the plaintext content keys, keep it secret and outside the DCP.");
+    return;
+  }
 
   const video = reel.picture.path;
   const audio = reel.sound?.path || null;
@@ -582,11 +594,9 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       resolution: document.getElementById("prop-resolution")?.value || "2k-full",
       framerate: document.getElementById("prop-framerate")?.value || "24",
       bandwidth: parseInt(document.getElementById("prop-bandwidth")?.value) || 250,
-      colour: document.getElementById("prop-colour")?.value || "xyz",
       contentKind: document.getElementById("prop-content-kind")?.value || "feature",
-      encrypt: document.getElementById("prop-encrypt")?.checked || false,
-      stereo_3d: document.getElementById("prop-stereo3d")?.checked || false,
-      channels: document.getElementById("prop-channels")?.value || "5.1",
+      encrypt,
+      keyOut: keyOut || null,
     });
     setStatus("Building DCP...");
   } catch (e) {
@@ -675,7 +685,7 @@ function checkEncryptReady() {
 document.getElementById("run-encrypt")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("encrypt-results");
   resultsBox.classList.add("visible");
-  resultsBox.textContent = "To create an encrypted DCP, enable the Encrypt checkbox in the Properties panel before building.\nStandalone encryption of an existing DCP is not currently supported.";
+  resultsBox.textContent = "To create an encrypted DCP: in the Properties panel, enable Encrypt and set a Key Output File (it holds the plaintext content keys, keep it secret and outside the DCP), then build. Feed that keys file to the KDM panel's Keys File field.\nStandalone encryption of an existing DCP is not currently supported.";
 });
 
 // === Security: KDM ===
@@ -687,6 +697,18 @@ document.getElementById("kdm-browse-cert")?.addEventListener("click", async () =
   const file = await open({ directory: false });
   if (file) { document.getElementById("kdm-cert").value = file; checkKdmReady(); }
 });
+document.getElementById("kdm-browse-signer-cert")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("kdm-signer-cert").value = file; checkKdmReady(); }
+});
+document.getElementById("kdm-browse-signer-key")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("kdm-signer-key").value = file; checkKdmReady(); }
+});
+document.getElementById("kdm-browse-keys")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("kdm-keys").value = file; checkKdmReady(); }
+});
 document.getElementById("kdm-browse-output")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
   if (dir) { document.getElementById("kdm-output").value = dir + "/kdm.xml"; checkKdmReady(); }
@@ -696,20 +718,32 @@ document.getElementById("kdm-content-title")?.addEventListener("input", () => ch
 
 function checkKdmReady() {
   const btn = document.getElementById("run-kdm");
-  if (btn) btn.disabled = !(document.getElementById("kdm-cpl-id")?.value && document.getElementById("kdm-cert")?.value && document.getElementById("kdm-content-title")?.value && document.getElementById("kdm-output")?.value);
+  if (btn) btn.disabled = !(
+    document.getElementById("kdm-cpl-id")?.value &&
+    document.getElementById("kdm-cert")?.value &&
+    document.getElementById("kdm-signer-cert")?.value &&
+    document.getElementById("kdm-signer-key")?.value &&
+    document.getElementById("kdm-content-title")?.value &&
+    document.getElementById("kdm-output")?.value
+  );
 }
 
 document.getElementById("run-kdm")?.addEventListener("click", async () => {
   const cplId = document.getElementById("kdm-cpl-id").value;
   const contentTitle = document.getElementById("kdm-content-title").value;
   const cert = document.getElementById("kdm-cert").value;
+  const signerCert = document.getElementById("kdm-signer-cert").value;
+  const signerKey = document.getElementById("kdm-signer-key").value;
+  const keys = document.getElementById("kdm-keys").value;
   const output = document.getElementById("kdm-output").value;
   const from = document.getElementById("kdm-from").value;
   const to = document.getElementById("kdm-to").value;
   const resultsBox = document.getElementById("kdm-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating KDM...";
-  const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert, "-o", output];
+  const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert,
+    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output];
+  if (keys) args.push("--keys", keys);
   if (from) args.push("-f", from);
   if (to) args.push("-t", to);
   const cmd = Command.sidecar("dcpwizard", args);

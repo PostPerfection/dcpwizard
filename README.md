@@ -19,52 +19,38 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ### DCP Creation & Packaging
 - **Original Version (OV) DCP** creation from J2K + WAV
-- **Version File (VF)** creation referencing original reels
-- **Multi-CPL timeline**, multiple compositions sharing track assets
-- **SMPTE Bv2.1 & Interop** standard support
+- **SMPTE & Interop** standard support
 - **2K and 4K** resolution (2048×1080, 4096×2160)
-- **High Frame Rate (HFR)**, 24, 25, 30, 48, 60, 96, 120 fps
+- **Frame rates** 24, 25, 30, 48, 60 fps
 - **High Bitrate (HBR)**, up to 500 Mbps for demanding content
-- **Automatic reel splitting** by duration or file size
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **SHA-1 hashing** for integrity verification
 
 ### Encoding & Transcoding
-- **JPEG 2000 encoding** via OpenJPEG by default, with optional Grok acceleration
-- **Streaming pipeline**, video → J2K → MXF → DCP in one pass (no intermediate files)
-- **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV, MJ2
+- **JPEG 2000 encoding** via OpenJPEG (create video path) or Grok (streaming pipeline)
+- **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV
 - **Video transcoding**, ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
-- **Image sequence input**, DPX, TIFF, EXR, PNG, BMP, JPEG
-- **J2K transcoder**, re-encode existing JPEG 2000 at a different bitrate
-- **Scale / Crop / Letterbox / Pillarbox**, target resolution adaptation
-- **Colour conversion**, Rec.709, P3-D65, P3-DCI → XYZ with gamma 2.6
-- **Stereoscopic 3D**, frame interleaving from separate L/R eye sequences
+- **Image sequence input**, DPX, TIFF, EXR, PNG
+- **Scale / Crop / Letterbox**, target resolution adaptation
+- **Colour conversion** to XYZ (DCI, gamma 2.6)
 
 ### Encryption & KDM
-- **AES-128 content encryption** (SMPTE compliant)
-- **KDM generation**, Interop & SMPTE, including Dolby Atmos
+- **AES-128 essence encryption**, content keys generated with a CSPRNG, encrypted at wrap time
+- **Signed SMPTE KDM** (ST 430-1 / 430-3) carrying the DCP's image and audio content keys
 - **Batch KDM**, generate for multiple screens in one pass
-- **DKDM support**, generate KDMs from Distribution KDMs
-- **Time zone support** in KDM validity periods
-- **Annotation scheme**, customizable KDM annotation patterns
-- **Trusted Device List** support
-- **Certificate generation**, X.509 cert chain (root → intermediate → signer) for content encryption
+- **DKDM re-wrap**, re-issue KDMs from a Distribution KDM
+- **Certificate generation**, X.509 cert chain (root → intermediate → signer)
 - **Certificate inspection**, display subject, issuer, validity, thumbprint, CA status
 
 ### Subtitles & Captions
-- **SMPTE 428-7 XML subtitles** (CineCanvas) packaging
-- **Interop XML subtitles** packaging
-- **SRT → SMPTE subtitle** conversion
+- **SRT → SMPTE / Interop subtitle XML** conversion
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Subtitle burn-in**, permanently render into video frames (for festivals)
 
 ### Audio
-- **Multi-channel audio**, mono, stereo, 5.1, 7.1
-- **Dolby Atmos (IAB)** immersive audio packaging
-- **DTS:X** audio packaging
+- **PCM audio wrapping** (48 kHz)
 - **Loudness measurement**, EBU R128 / ATSC A/85
-- **Channel mapping** configuration
-- **WAV and QuickTime audio** input
+- **WAV audio** input
 
 ### Quality Control
 - **Integrated QC** via dcpdoctor (SMPTE Bv2.1 compliance checking)
@@ -211,8 +197,12 @@ dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --o
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp --encoder openjpeg
 
-# Create with encryption
-dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp --encrypt
+# Create with encryption. Content keys are generated with a CSPRNG and the
+# essence is AES-128 encrypted at wrap time. --key-out is required: it is the
+# only place the keys are written (never next to the DCP). That file holds the
+# plaintext keys, keep it secret and outside the DCP. Feed it to `kdm --keys`.
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp \
+    --encrypt --key-out ./secret/my_film.keys.json
 
 # Create Interop DCP
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --standard interop
@@ -252,20 +242,20 @@ dcpwizard verify ./my_dcp --strict --quiet
 dcpwizard info ./my_dcp
 
 # Generate KDM
-dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem --output kdm.xml
-
-# KDM with validity period
 dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
-    --output kdm.xml --valid-from now --valid-duration "2 weeks"
+    --signer-cert signer.pem --signer-key signer.key \
+    --keys ./secret/my_film.keys.json --output kdm.xml
+
+# KDM with validity period (--valid-to accepts a relative duration)
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
+    --output kdm.xml --valid-from now --valid-to "2 weeks"
 
 # KDM with specific dates and formulation
 dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --valid-from 2024-06-01T00:00:00+00:00 \
     --valid-to 2024-06-30T23:59:59+00:00 --formulation dci-any
-
-# KDM with forensic marking disabled
-dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
-    --output kdm.xml --disable-forensic-marking-picture
 
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
@@ -376,24 +366,26 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 
 | Feature | DCP Wizard | easyDCP Creator+ |
 |---------|-----------|------------------|
-| SMPTE Bv2.1 & Interop | ✅ | ✅ |
-| Version Files (VF) | ✅ | ✅ |
-| Multi-CPL timeline | ✅ | ✅ |
+| SMPTE & Interop | ✅ | ✅ |
+| Version Files (VF) | ❌ | ✅ |
+| Multi-CPL timeline | ❌ | ✅ |
 | CLI scriptable | ✅ | ✅ |
-| Up to 4K, 2D & 3D | ✅ | ✅ |
-| HFR (up to 120fps) | ✅ | ✅ |
+| Up to 4K | ✅ | ✅ |
+| Stereoscopic 3D | ❌ | ✅ |
+| Frame rates 24–60 fps | ✅ | ✅ |
 | High Bitrate (500 Mbps) | ✅ | ✅ |
-| DPX/TIFF/PNG/BMP/J2K/QuickTime | ✅ | ✅ |
+| DPX/TIFF/PNG/QuickTime input | ✅ | ✅ |
 | Scale/Crop/Letterbox | ✅ | ✅ |
-| J2K Transcoder | ✅ | ✅ |
-| Audio 2.0–7.1, Atmos, DTS:X | ✅ | ✅ |
+| J2K Transcoder | ❌ | ✅ |
+| Audio (PCM 5.1) | ✅ | ✅ |
+| Immersive audio (Atmos, DTS:X) | ❌ | ✅ |
 | SRT→SMPTE subtitles | ✅ | ✅ |
-| Multilingual CineCanvas | ✅ | ✅ |
+| Subtitle packaging into DCP | ❌ | ✅ |
 | Subtitle burn-in | ✅ | ✅ |
 | Integrated QC | ✅ (dcpdoctor) | ✅ (Fraunhofer) |
-| KDM (Interop + SMPTE + Atmos) | ✅ | ✅ |
-| DKDM, Time Zones, Trusted Devices | ✅ | ✅ |
-| DCP Export/Playback | ✅ | ✅ |
+| KDM (SMPTE) | ✅ | ✅ |
+| AES-128 essence encryption | ✅ | ✅ |
+| DKDM re-wrap | ✅ | ✅ |
 | Desktop GUI | ✅ (Tauri) | ✅ (native) |
 | REST API / Docker | ✅ | ❌ |
 | Watch folder automation | ✅ | ❌ |

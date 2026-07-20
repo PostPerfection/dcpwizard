@@ -28,6 +28,9 @@ pub struct MxfWrapConfig {
     pub output_mxf: PathBuf,
     pub mxf_type: MxfType,
     pub frame_rate: u32,
+    /// AES-128 content encryption for J2K picture / PCM sound. Not serialized.
+    #[serde(skip)]
+    pub encryption: Option<postkit::mxf_wrap::MxfEncryption>,
 }
 
 /// Collect sorted files from a directory, or treat a single file as one-element list.
@@ -83,6 +86,7 @@ pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
         fps_num: fps,
         fps_den: 1,
         partition_size: 0,
+        encryption: config.encryption.clone(),
     };
 
     let result = postkit::mxf_wrap::mxf_wrap(&opts);

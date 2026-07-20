@@ -4,11 +4,41 @@
 //! and signs the message per SMPTE 430-3. This layer only maps the CLI's inputs
 //! onto postkit's config types and turns its `Result` into a dcpwizard exit code.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Generate a signed KDM: encrypt a fresh content key to `recipient_cert` and
-/// sign with the signer identity. `valid_from`/`valid_to` accept "now", ISO 8601
-/// or a relative duration ("2 weeks"), parsed by postkit.
+/// Load the content keys from a DCP keys file (written by `create --encrypt`)
+/// for KDM generation, checking they belong to `cpl_id`.
+pub fn load_content_keys(
+    keys_file: &Path,
+    cpl_id: &str,
+) -> Result<Vec<postkit::certificate::KdmContentKey>, String> {
+    let bundle = crate::encrypt::KeyBundle::read(keys_file)?;
+    let want = cpl_id.trim().trim_start_matches("urn:uuid:");
+    let have = bundle.cpl_id.trim().trim_start_matches("urn:uuid:");
+    if !have.is_empty() && !want.is_empty() && have != want {
+        return Err(format!(
+            "keys file {} is for CPL {have}, not {want}",
+            keys_file.display()
+        ));
+    }
+    bundle
+        .keys
+        .iter()
+        .map(|k| {
+            let (key_type, key_id, content_key) = k.to_raw()?;
+            Ok(postkit::certificate::KdmContentKey {
+                key_type,
+                key_id,
+                content_key,
+            })
+        })
+        .collect()
+}
+
+/// Generate a signed KDM. `content_keys` (from the DCP's keys file) binds the
+/// KDM to the encrypted essence; an empty vec makes postkit mint a fresh key.
+/// `valid_from`/`valid_to` accept "now", ISO 8601 or a relative duration
+/// ("2 weeks"), parsed by postkit.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_kdm(
     cpl_id: String,
@@ -20,6 +50,7 @@ pub fn generate_kdm(
     valid_from: String,
     valid_to: String,
     formulation: String,
+    content_keys: Vec<postkit::certificate::KdmContentKey>,
     output: PathBuf,
 ) -> i32 {
     let config = postkit::certificate::KdmConfig {
@@ -33,6 +64,7 @@ pub fn generate_kdm(
         valid_from,
         valid_to,
         formulation,
+        content_keys,
     };
     match postkit::certificate::generate_kdm(&config) {
         Ok(()) => 0,
@@ -57,6 +89,7 @@ pub fn generate_kdm_batch(
     valid_from: String,
     valid_to: String,
     formulation: String,
+    content_keys: Vec<postkit::certificate::KdmContentKey>,
     output_dir: PathBuf,
 ) -> i32 {
     if let Err(e) = std::fs::create_dir_all(&output_dir) {
@@ -82,6 +115,7 @@ pub fn generate_kdm_batch(
             valid_from.clone(),
             valid_to.clone(),
             formulation.clone(),
+            content_keys.clone(),
             output.clone(),
         );
         if code == 0 {
@@ -156,6 +190,7 @@ mod tests {
             "now".into(),
             "2 weeks".into(),
             "modified-transitional-1".into(),
+            Vec::new(),
             out.path().to_path_buf(),
         );
         assert_ne!(code, 0);

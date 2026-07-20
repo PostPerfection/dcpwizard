@@ -121,62 +121,27 @@ struct SrtEntry {
     text: String,
 }
 
+/// Parse SRT via the shared postkit parser, mapping to TTML time strings the
+/// generators below expect.
 fn parse_srt(content: &str) -> Vec<SrtEntry> {
-    let mut entries = Vec::new();
-    let mut lines = content.lines().peekable();
-
-    while lines.peek().is_some() {
-        // Skip blank lines and sequence numbers
-        while let Some(line) = lines.peek() {
-            if line.trim().is_empty() || line.trim().parse::<u32>().is_ok() {
-                lines.next();
-            } else {
-                break;
-            }
-        }
-
-        // Timestamp line: 00:00:01,000 --> 00:00:04,000
-        let ts_line = match lines.next() {
-            Some(l) if l.contains("-->") => l,
-            _ => continue,
-        };
-
-        let parts: Vec<&str> = ts_line.split("-->").collect();
-        if parts.len() != 2 {
-            continue;
-        }
-
-        let start = srt_time_to_ttml(parts[0].trim());
-        let end = srt_time_to_ttml(parts[1].trim());
-
-        let mut text = String::new();
-        while let Some(line) = lines.peek() {
-            if line.trim().is_empty() {
-                break;
-            }
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(lines.next().unwrap().trim());
-        }
-
-        if !text.is_empty() {
-            entries.push(SrtEntry { start, end, text });
-        }
-    }
-
-    entries
+    postkit::subtitle_retime::parse_srt(content)
+        .into_iter()
+        .filter(|c| !c.text.is_empty())
+        .map(|c| SrtEntry {
+            start: ms_to_ttml(c.start_ms),
+            end: ms_to_ttml(c.end_ms),
+            text: c.text,
+        })
+        .collect()
 }
 
-fn srt_time_to_ttml(srt_time: &str) -> String {
-    // Convert "00:00:01,000" to "00:00:01.000"
-    srt_time.replace(',', ".")
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+/// Milliseconds to "HH:MM:SS.mmm".
+fn ms_to_ttml(ms: u64) -> String {
+    let h = ms / 3_600_000;
+    let m = (ms % 3_600_000) / 60_000;
+    let s = (ms % 60_000) / 1000;
+    let millis = ms % 1000;
+    format!("{h:02}:{m:02}:{s:02}.{millis:03}")
 }
 
 fn generate_smpte_ttml(
@@ -213,7 +178,7 @@ fn generate_smpte_ttml(
             let vpos = 85.0 - (j as f64 * 7.0);
             xml.push_str(&format!(
                 "        <dcst:Text Vposition=\"{vpos:.1}\" Valign=\"bottom\" Halign=\"center\">{}</dcst:Text>\n",
-                escape_xml(line)
+                postkit::packaging::escape_xml(line)
             ));
         }
         xml.push_str("      </dcst:Subtitle>\n");
@@ -254,7 +219,7 @@ fn generate_interop_xml(
             let vpos = 85.0 - (j as f64 * 7.0);
             xml.push_str(&format!(
                 "      <Text Vposition=\"{vpos:.1}\" VAlign=\"bottom\" HAlign=\"center\">{}</Text>\n",
-                escape_xml(line)
+                postkit::packaging::escape_xml(line)
             ));
         }
         xml.push_str("    </Subtitle>\n");

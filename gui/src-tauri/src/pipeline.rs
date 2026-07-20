@@ -46,6 +46,7 @@ struct JobConfig {
     colour: String,
     content_kind: String,
     encrypt: bool,
+    key_out: Option<String>,
     stereo_3d: bool,
     channels: String,
 }
@@ -94,11 +95,17 @@ pub async fn submit_job(
     colour: Option<String>,
     content_kind: Option<String>,
     encrypt: Option<bool>,
+    key_out: Option<String>,
     stereo_3d: Option<bool>,
     channels: Option<String>,
 ) -> Result<u64, String> {
     let queue = app.state::<JobQueue>();
     let id = queue.next_id.fetch_add(1, Ordering::Relaxed);
+
+    // Never encrypt without an explicit key destination.
+    if encrypt.unwrap_or(false) && key_out.as_deref().unwrap_or("").is_empty() {
+        return Err("Key Output File is required when encrypting".into());
+    }
 
     let job = JobConfig {
         id,
@@ -114,6 +121,7 @@ pub async fn submit_job(
         colour: colour.unwrap_or_else(|| "xyz".into()),
         content_kind: content_kind.unwrap_or_else(|| "feature".into()),
         encrypt: encrypt.unwrap_or(false),
+        key_out: key_out.filter(|k| !k.is_empty()),
         stereo_3d: stereo_3d.unwrap_or(false),
         channels: channels.unwrap_or_else(|| "5.1".into()),
     };
@@ -276,6 +284,15 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         ),
     );
 
+    // Frame rate drives both the J2K encode (video demux rate) and the CPL.
+    let (fps_num, fps_den) = match job.framerate.as_str() {
+        "25" => (25, 1),
+        "30" => (30, 1),
+        "48" => (48, 1),
+        "60" => (60, 1),
+        _ => (24, 1),
+    };
+
     // Encode using shared pipeline
     let job_id = job.id;
     let app_ref = app.clone();
@@ -283,6 +300,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     let encode_result = postkit::pipeline::run_encode(
         &job.video_path,
         output,
+        fps_num,
         &cancel,
         &pause,
         |p| {
@@ -326,14 +344,6 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         dcpwizard_core::Resolution::TwoK
     };
 
-    let (fps_num, fps_den) = match job.framerate.as_str() {
-        "25" => (25, 1),
-        "30" => (30, 1),
-        "48" => (48, 1),
-        "60" => (60, 1),
-        _ => (24, 1),
-    };
-
     let content_type = match job.content_kind.as_str() {
         "trailer" => dcpwizard_core::ContentType::Trailer,
         "test" => dcpwizard_core::ContentType::Test,
@@ -352,6 +362,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         frame_rate_den: fps_den,
         max_bitrate_mbps: job.bandwidth,
         encrypt: job.encrypt,
+        key_out: job.key_out.as_ref().map(std::path::PathBuf::from),
         stereo_3d: job.stereo_3d,
         j2k_dir: Some(encode_result.j2k_dir.clone()),
         audio_path: job

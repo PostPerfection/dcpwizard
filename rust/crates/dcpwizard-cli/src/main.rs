@@ -41,6 +41,10 @@ enum Commands {
         /// Encrypt the DCP
         #[arg(long)]
         encrypt: bool,
+        /// Where to write the content keys (required with --encrypt). Holds the
+        /// plaintext AES keys: point it outside the DCP and keep it secret.
+        #[arg(long, required_if_eq("encrypt", "true"))]
+        key_out: Option<String>,
         /// J2K encoder: "openjpeg" (default) or "grok"
         #[arg(long, default_value = "openjpeg")]
         encoder: String,
@@ -162,6 +166,10 @@ enum Commands {
         /// KDM formulation: modified-transitional-1 (default), dci-any, dci-specific
         #[arg(long, default_value = "modified-transitional-1")]
         formulation: String,
+        /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
+        /// this KDM should carry. Required to unlock an encrypted DCP.
+        #[arg(long)]
+        keys: Option<String>,
     },
     /// Re-wrap a DKDM to a new recipient
     KdmRewrap {
@@ -466,6 +474,10 @@ enum Commands {
         /// KDM formulation
         #[arg(long, default_value = "modified-transitional-1")]
         formulation: String,
+        /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
+        /// every generated KDM should carry.
+        #[arg(long)]
+        keys: Option<String>,
     },
 
     /// Package a trailer (ratings card + countdown leader + content)
@@ -801,6 +813,7 @@ fn run() {
             output,
             standard,
             encrypt,
+            key_out,
             encoder,
             content_type,
             frame_rate,
@@ -1039,6 +1052,7 @@ fn run() {
                     title,
                     standard: std_val,
                     encrypt,
+                    key_out: key_out.map(PathBuf::from),
                     output_dir: output_dir.clone(),
                     frame_rate_num: fps,
                     frame_rate_den: 1,
@@ -1075,6 +1089,7 @@ fn run() {
                     title,
                     standard: std_val,
                     encrypt,
+                    key_out: key_out.map(PathBuf::from),
                     output_dir,
                     frame_rate_num: frame_rate.unwrap_or(24),
                     frame_rate_den: 1,
@@ -1313,18 +1328,34 @@ fn run() {
             valid_from,
             valid_to,
             formulation,
-        } => dcpwizard_core::kdm::generate_kdm(
-            cpl_id,
-            content_title,
-            PathBuf::from(cert),
-            PathBuf::from(signer_cert),
-            PathBuf::from(signer_key),
-            signer_chain.into_iter().map(PathBuf::from).collect(),
-            valid_from,
-            valid_to,
-            formulation,
-            PathBuf::from(output),
-        ),
+            keys,
+        } => {
+            let content_keys = match keys {
+                Some(path) => {
+                    match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &cpl_id) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                None => Vec::new(),
+            };
+            dcpwizard_core::kdm::generate_kdm(
+                cpl_id,
+                content_title,
+                PathBuf::from(cert),
+                PathBuf::from(signer_cert),
+                PathBuf::from(signer_key),
+                signer_chain.into_iter().map(PathBuf::from).collect(),
+                valid_from,
+                valid_to,
+                formulation,
+                content_keys,
+                PathBuf::from(output),
+            )
+        }
 
         Commands::KdmRewrap {
             dkdm,
@@ -1843,11 +1874,24 @@ fn run() {
             valid_from,
             valid_to,
             formulation,
+            keys,
         } => {
             if certs.is_empty() {
                 tracing::error!("No recipient certificates provided (use --cert, repeatable)");
                 std::process::exit(1);
             }
+            let content_keys = match keys {
+                Some(path) => {
+                    match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &cpl_id) {
+                        Ok(k) => k,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                None => Vec::new(),
+            };
             dcpwizard_core::kdm::generate_kdm_batch(
                 cpl_id,
                 content_title,
@@ -1858,6 +1902,7 @@ fn run() {
                 valid_from,
                 valid_to,
                 formulation,
+                content_keys,
                 PathBuf::from(output_dir),
             )
         }
@@ -1896,9 +1941,9 @@ fn run() {
             let result = postkit::trailer::package_trailer(&opts);
             if result.success {
                 tracing::info!(
-                    "Trailer packaged: {} (CPL {})",
+                    "Trailer packaged: {} ({})",
                     result.output_dir.display(),
-                    result.cpl_uuid
+                    result.output_file.display()
                 );
                 0
             } else {

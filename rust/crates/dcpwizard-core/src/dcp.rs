@@ -12,6 +12,9 @@ pub struct DcpConfig {
     pub frame_rate_den: u32,
     pub max_bitrate_mbps: u32,
     pub encrypt: bool,
+    /// Where to write the content keys when `encrypt` is set. Required for
+    /// encryption; keys are never written next to the DCP by default.
+    pub key_out: Option<PathBuf>,
     pub stereo_3d: bool,
     pub output_dir: PathBuf,
     /// Directory containing J2K frames to wrap into picture MXF
@@ -51,6 +54,14 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         return -1;
     }
 
+    // Fail before doing any work if we'd have nowhere safe to put the keys.
+    if config.encrypt && config.key_out.is_none() {
+        tracing::error!(
+            "--key-out is required when encrypting; keys are never written next to the DCP"
+        );
+        return -1;
+    }
+
     let fps = if config.frame_rate_num > 0 {
         config.frame_rate_num
     } else {
@@ -62,6 +73,20 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let picture_mxf_name = format!("picture_{picture_uuid}.mxf");
     let picture_mxf_path = config.output_dir.join(&picture_mxf_name);
     let mut picture_duration: u64 = 0;
+
+    // Mint content keys up front so the essence is encrypted at wrap time and
+    // the PKL/ASSETMAP hashes below are taken from the final encrypted files.
+    let picture_key = if config.encrypt {
+        match crate::encrypt::generate_content_key(crate::encrypt::KeyType::Mdik, &picture_uuid) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                tracing::error!("content key generation failed: {e}");
+                return -1;
+            }
+        }
+    } else {
+        None
+    };
 
     {
         // Count frames for duration
@@ -89,6 +114,12 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             output_mxf: picture_mxf_path.clone(),
             mxf_type: crate::mxf_wrap::MxfType::J2kPicture,
             frame_rate: fps,
+            encryption: picture_key
+                .as_ref()
+                .map(|k| postkit::mxf_wrap::MxfEncryption {
+                    content_key: k.key,
+                    key_id: k.key_id,
+                }),
         };
         if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
             tracing::error!("Failed to wrap picture MXF");
@@ -106,15 +137,33 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let sound_mxf_path = config.output_dir.join(&sound_mxf_name);
     let mut has_sound = false;
     let sound_duration = picture_duration; // match picture duration
+    let mut sound_key = None;
 
     if let Some(ref audio_path) = config.audio_path
         && audio_path.exists()
     {
+        sound_key = if config.encrypt {
+            match crate::encrypt::generate_content_key(crate::encrypt::KeyType::Mdak, &sound_uuid) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    tracing::error!("content key generation failed: {e}");
+                    return -1;
+                }
+            }
+        } else {
+            None
+        };
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
             input_path: audio_path.clone(),
             output_mxf: sound_mxf_path.clone(),
             mxf_type: crate::mxf_wrap::MxfType::PcmAudio,
             frame_rate: fps,
+            encryption: sound_key
+                .as_ref()
+                .map(|k| postkit::mxf_wrap::MxfEncryption {
+                    content_key: k.key,
+                    key_id: k.key_id,
+                }),
         };
         if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
             tracing::error!("Failed to wrap sound MXF");
@@ -135,6 +184,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         picture_edit_rate_den: 1,
         picture_duration,
         picture_entry_point: 0,
+        picture_key_id: picture_key.as_ref().map(|k| k.info.key_id.clone()),
         sound_id: if has_sound {
             Some(sound_uuid.clone())
         } else {
@@ -144,6 +194,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         sound_edit_rate_den: 1,
         sound_duration,
         sound_entry_point: 0,
+        sound_key_id: sound_key.as_ref().map(|k| k.info.key_id.clone()),
     };
 
     let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
@@ -213,7 +264,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             packing_list: true,
         },
         crate::assetmap::AssetMapEntry {
-            id: cpl_uuid,
+            id: cpl_uuid.clone(),
             path: cpl_path
                 .file_name()
                 .unwrap_or_default()
@@ -240,16 +291,41 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         return -1;
     }
 
-    // Encrypt if requested
+    // Persist the content keys for the KDM step. The essence was already
+    // encrypted at wrap time, so this only writes the keys file. The path is
+    // caller-supplied (key_out); keys are never written next to the DCP.
     if config.encrypt {
-        let enc_config = crate::encrypt::EncryptionConfig {
-            dcp_dir: config.output_dir.clone(),
-            ..Default::default()
+        // Guaranteed Some by the early guard, but stay defensive: never fall
+        // back to a default location for secret key material.
+        let Some(keys_path) = config.key_out.as_ref() else {
+            tracing::error!("--key-out is required when encrypting");
+            return -1;
         };
-        if crate::encrypt::encrypt_dcp(&enc_config) != 0 {
-            tracing::error!("Encryption failed");
+        if let Some(parent) = keys_path.parent().filter(|p| !p.as_os_str().is_empty())
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::error!("Failed to create key-out directory: {e}");
             return -1;
         }
+        let mut bundle = crate::encrypt::KeyBundle {
+            cpl_id: cpl_uuid.clone(),
+            keys: Vec::new(),
+        };
+        if let Some(k) = picture_key {
+            bundle.keys.push(k.info);
+        }
+        if let Some(k) = sound_key {
+            bundle.keys.push(k.info);
+        }
+        if let Err(e) = bundle.write(keys_path) {
+            tracing::error!("Failed to write keys file: {e}");
+            return -1;
+        }
+        tracing::warn!(
+            "Wrote content keys to {} — this file holds the plaintext AES keys. \
+             Keep it secret, do not ship it in the DCP, and use it only to build KDMs.",
+            keys_path.display()
+        );
     }
 
     tracing::info!("DCP created: {}", config.output_dir.display());
@@ -272,5 +348,25 @@ mod tests {
         };
         assert_eq!(create_dcp(&config), -1);
         assert!(!dir.path().join("ASSETMAP.xml").exists());
+    }
+
+    #[test]
+    fn create_dcp_encrypt_requires_key_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let j2k_dir = dir.path().join("j2k");
+        std::fs::create_dir_all(&j2k_dir).unwrap();
+        let config = DcpConfig {
+            title: "Test Film".into(),
+            output_dir: dir.path().join("out"),
+            j2k_dir: Some(j2k_dir),
+            encrypt: true,
+            key_out: None,
+            frame_rate_num: 24,
+            frame_rate_den: 1,
+            ..Default::default()
+        };
+        // must fail before wrapping, and must not write keys anywhere
+        assert_eq!(create_dcp(&config), -1);
+        assert!(!dir.path().join("out/KEYS.json").exists());
     }
 }

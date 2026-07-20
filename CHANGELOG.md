@@ -38,10 +38,11 @@
   - `--output` for writing reports to file (text or HTML)
   - `--quiet` to suppress progress output
 - **CLI: KDM subcommand** — Key Delivery Message generation
-  - `--valid-from` / `--valid-to` / `--valid-duration` for validity periods
-  - Duration parsing ("2 weeks", "30 days", "4 hours")
+  - `--valid-from` / `--valid-to` for validity periods (`--valid-to` accepts a
+    relative duration: "2 weeks", "30 days", "4 hours")
+  - `--keys` to carry the DCP's content keys (from `create --encrypt`)
+  - `--signer-cert` / `--signer-key` (required) for the ETM signature
   - `--formulation` (modified-transitional-1, dci-any, dci-specific)
-  - `--disable-forensic-marking-picture` / `--disable-forensic-marking-audio`
 - **Panic hook** — User-friendly crash messages with issue tracker link
 - **CLI integration tests** — 10 end-to-end tests using assert_cmd
 - **Release CI** — GitHub Actions workflow for building release binaries on tag push
