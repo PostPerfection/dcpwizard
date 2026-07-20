@@ -369,7 +369,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
             <h3>Encryption &amp; KDM</h3>
-            <p>AES-128 essence encryption. Signed SMPTE (ST 430-1/430-3) KDM generation carrying the DCP's image and audio content keys. Batch KDM, DKDM re-wrap, configurable validity periods and formulations (modified-transitional-1, DCI-any, DCI-specific).</p>
+            <p>AES-128 essence encryption. Signed SMPTE (ST 430-1/430-3) KDM generation carrying the DCP's image and audio content keys. Batch KDM, DKDM re-wrap, and configurable validity periods.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
@@ -414,7 +414,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">📥</div>
             <h3>Camera Ingest</h3>
-            <p>Direct ingest from ARRI, RED, Sony, Canon, and Blackmagic RAW camera originals into the DCP pipeline.</p>
+            <p>Detect ARRI, RED, Sony, Canon, and Blackmagic camera formats and transcode ffmpeg-decodable masters (ProRes, DNxHR). True camera RAW needs a vendor decoder.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎬</div>
@@ -499,10 +499,10 @@
     <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
     <span class="flag">--output</span> <span class="val">kdm.xml</span> <span class="flag">--valid-from</span> <span class="val">now</span> <span class="flag">--valid-to</span> <span class="val">"2 weeks"</span>
 
-<span class="comment"># KDM with formulation</span>
-<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> \
+<span class="comment"># Batch KDM: one signed KDM per cinema certificate in a directory</span>
+<span class="cmd">dcpwizard</span> kdm-batch <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert-dir</span> <span class="val">./cinema-certs</span> \
     <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
-    <span class="flag">--output</span> <span class="val">kdm.xml</span> <span class="flag">--formulation</span> <span class="val">dci-any</span>
+    <span class="flag">--output-dir</span> <span class="val">./kdms</span>
 
 <span class="comment"># Copy DCP to cinema drive with hash verification</span>
 <span class="cmd">dcpwizard</span> copy <span class="flag">--src</span> <span class="val">./my_dcp</span> <span class="flag">--dst</span> <span class="val">/mnt/cru</span>
@@ -605,7 +605,7 @@
             <tr><td colspan="3" style="color:var(--accent);font-weight:600;padding-top:20px;">DCP Wizard exclusive</td></tr>
             <tr><td>REST API / Docker</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Watch folder automation</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Camera ingest (ARRI, RED, Sony, Canon)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Camera format detection (ARRI, RED, Sony, Canon)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>EDL/AAF conform</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Dolby Vision / HDR metadata</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Frame-accurate preview</td><td class="yes">✓</td><td class="no">✗</td></tr>

@@ -65,7 +65,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **HDR format conversion**, HDR10 ↔ HLG ↔ SDR tone mapping
 
 ### Camera Ingest
-- **Camera raw detection**, ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon
+- **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon); true RAW is detected and rejected, only ffmpeg-decodable masters (ProRes, DNxHR) transcode
 - **Media scanning**, auto-detect resolution, frame rate, codec, reel names
 - **Transcode to intermediate**, DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
 - **3D LUT application** during ingest
@@ -404,7 +404,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Content version tracking | ✅ | ❌ |
 | Accessibility compliance (CVAA/EAA) | ✅ | ❌ |
 | Dolby Vision / HDR10 / HLG | ✅ | ❌ |
-| Camera ingest (ARRI/RED/BRAW) | ✅ | ❌ |
+| Camera format detection (ARRI/RED/BRAW) | ✅ | ❌ |
 | Timeline conform (EDL/AAF/OTIO) | ✅ | ❌ |
 | Version dashboard & distribution matrix | ✅ | ❌ |
 | Open source | ✅ (GPL-3.0) | ❌ |
