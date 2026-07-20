@@ -251,13 +251,19 @@ mod tests {
         std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
         let found = certs_in_dir(dir.path()).unwrap();
         assert_eq!(found.len(), 2, "only cert extensions counted");
-        assert!(found[0].ends_with("a.crt") && found[1].ends_with("b.pem"), "sorted");
+        assert!(
+            found[0].ends_with("a.crt") && found[1].ends_with("b.pem"),
+            "sorted"
+        );
     }
 
     #[test]
     fn certs_in_dir_empty_or_missing_errors() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(certs_in_dir(dir.path()).is_err(), "empty dir must fail loud");
+        assert!(
+            certs_in_dir(dir.path()).is_err(),
+            "empty dir must fail loud"
+        );
         assert!(certs_in_dir(Path::new("/nonexistent/certs")).is_err());
     }
 
