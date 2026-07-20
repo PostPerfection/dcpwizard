@@ -453,6 +453,10 @@ enum Commands {
         /// Recipient certificate file (repeatable, one KDM generated per cert)
         #[arg(long = "cert")]
         certs: Vec<String>,
+        /// Directory of recipient certificates; every *.pem/*.crt/*.cer in it
+        /// gets a KDM. Combined with any --cert values.
+        #[arg(long)]
+        cert_dir: Option<String>,
         /// Signer leaf certificate file
         #[arg(long)]
         signer_cert: String,
@@ -1867,6 +1871,7 @@ fn run() {
             cpl_id,
             content_title,
             certs,
+            cert_dir,
             signer_cert,
             signer_key,
             signer_chain,
@@ -1876,8 +1881,20 @@ fn run() {
             formulation,
             keys,
         } => {
+            let mut certs: Vec<String> = certs;
+            if let Some(dir) = cert_dir {
+                match dcpwizard_core::kdm::certs_in_dir(&PathBuf::from(&dir)) {
+                    Ok(found) => certs.extend(found),
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             if certs.is_empty() {
-                tracing::error!("No recipient certificates provided (use --cert, repeatable)");
+                tracing::error!(
+                    "No recipient certificates provided (use --cert and/or --cert-dir)"
+                );
                 std::process::exit(1);
             }
             let content_keys = match keys {

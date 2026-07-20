@@ -251,11 +251,11 @@ dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
     --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --valid-from now --valid-to "2 weeks"
 
-# KDM with specific dates and formulation
+# KDM with specific dates
 dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
     --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --valid-from 2024-06-01T00:00:00+00:00 \
-    --valid-to 2024-06-30T23:59:59+00:00 --formulation dci-any
+    --valid-to 2024-06-30T23:59:59+00:00
 
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
@@ -314,12 +314,14 @@ dcpwizard hdr10-inject -i input.mov -o output.mov --max-cll 1000 --max-fall 400
 # Burn a visible watermark into a video/image file
 dcpwizard watermark -i movie.mov -o movie_wm.mov -p "DIST-001-SERIAL"
 
-# Batch KDM: one KDM per recipient certificate in a single pass
+# Batch KDM: one KDM per recipient certificate in a single pass.
+# List certs with repeated --cert, or point --cert-dir at a directory
+# of cinema certs (every *.pem/*.crt/*.cer gets a KDM).
 dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" \
-    --cert screen1.pem --cert screen2.pem \
+    --cert-dir ./cinema-certs \
     --signer-cert signer.pem --signer-key signer.key \
     --signer-chain intermediate.pem --signer-chain root.pem \
-    --output-dir ./kdms
+    --keys ./secret/my_film.keys.json --output-dir ./kdms
 
 # Package a trailer (ratings card + countdown leader + content)
 dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \

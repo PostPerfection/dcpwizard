@@ -14,6 +14,12 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
 - cli_flags_test.sh invokes each GUI command line and fails on clap parse errors.
 - Dedup onto postkit: escape_xml, CPL/PKL/ASSETMAP writers, SRT parsing.
 - dcpdoctor-core git rev bumped to ce050e5.
+- KDM MessageType fixed: always the standard `#kdm-key-type` URI. The old
+  `--formulation` dci-any/dci-specific emitted invented `#kdm-key-type-dci-*`
+  URIs that compliant gear does not recognise as a KDM (PK/certificate.rs).
+- Batch KDM gained `--cert-dir` (glob a directory of cinema certs); real
+  end-to-end test generates one signed KDM per recipient, KeyId-bound and
+  xmlsec1-verified (CORE/kdm.rs).
 
 ## Not implemented, de-advertised (build only if wanted)
 
@@ -27,10 +33,35 @@ Dead modules, now honest in README/docs. Wire or delete:
 
 ## KDM (minor)
 
-- Interop KDM: only SMPTE ETM namespaces exist.
-- `--formulation` dci-any/dci-specific map to invented MessageType URIs.
+- Interop (pre-SMPTE) KDM: deliberately not built. Decision + delta below.
+- `--formulation` is now inert. libdcp uses it to select AuthorizedDeviceInfo +
+  ForensicMarkFlagList (not the MessageType, which is fixed); postkit emits
+  neither, so the flag no longer changes the output. Either implement those
+  extensions or drop the flag from the CLI/config.
 - Duration-based end times computed in the start's offset but labelled +00:00.
 - AnnotationText hardcoded; no Trusted Device List / DeviceList written.
+
+### Interop KDM decision (not building)
+
+The binary key block is a small delta (drop the 4-byte KeyType field: SMPTE 138
+bytes -> Interop 134, per libdcp decrypted_kdm.cc cases 138/134). But:
+
+- libdcp itself only *generates* SMPTE KDMs (`/* XXX: SMPTE only */`, block
+  hardcoded to 138, `Standard::SMPTE` in every encrypt path); it can *read*
+  Interop but never writes it. The reference DCP library declines to emit them.
+- The Interop KDM XML (digicine `PROTO-ASDCP-KDM-20040311#` namespace, KeyIdList
+  without TypedKeyId, ETM element differences) has no authoritative schema or
+  reference sample in the suite to validate against. dcpdoctor's KDM validator is
+  substring-based and would "pass" almost anything, proving nothing.
+- Shipping an unvalidatable crypto artifact that no reference implementation
+  generates is the fail-loud-vs-fake anti-pattern. A subtly-wrong KDM is worse
+  than none.
+
+Interop KDMs are legacy; modern servers accept SMPTE KDMs. Build only if a real
+need appears together with a reference Interop KDM to diff against. Effort if so:
+~half a day (drop KeyType from the 134-byte block, add the digicine namespace and
+a KeyIdList-without-TypedKeyId branch to build_kdm_xml, a format enum on
+KdmConfig, and a CLI `--format interop`), plus real-gear validation.
 
 ## Encode / colour / audio
 

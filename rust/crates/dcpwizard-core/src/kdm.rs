@@ -135,6 +135,35 @@ pub fn generate_kdm_batch(
     }
 }
 
+/// Collect recipient certificate paths from a directory: every *.pem/*.crt/*.cer
+/// in it, sorted for a deterministic KDM order. Errors if the directory cannot be
+/// read or holds no certificate, so a mistyped path fails loud instead of
+/// silently producing zero KDMs.
+pub fn certs_in_dir(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("cannot read cert directory {}: {e}", dir.display()))?;
+    let mut certs: Vec<String> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| matches!(x.to_ascii_lowercase().as_str(), "pem" | "crt" | "cer"))
+                    .unwrap_or(false)
+        })
+        .filter_map(|p| p.to_str().map(String::from))
+        .collect();
+    certs.sort();
+    if certs.is_empty() {
+        return Err(format!(
+            "no certificates (*.pem/*.crt/*.cer) found in {}",
+            dir.display()
+        ));
+    }
+    Ok(certs)
+}
+
 /// Re-wrap a DKDM to a new recipient: decrypt its content keys with the DKDM
 /// recipient's private key, re-encrypt to `recipient_cert` and sign. Empty
 /// `valid_from`/`valid_to` preserve the DKDM's validity window.
@@ -211,5 +240,158 @@ mod tests {
             out.path().to_path_buf(),
         );
         assert_ne!(code, 0);
+    }
+
+    #[test]
+    fn certs_in_dir_lists_only_certs_sorted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("b.pem"), "x").unwrap();
+        std::fs::write(dir.path().join("a.crt"), "x").unwrap();
+        std::fs::write(dir.path().join("k.key"), "x").unwrap(); // private key, excluded
+        std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
+        let found = certs_in_dir(dir.path()).unwrap();
+        assert_eq!(found.len(), 2, "only cert extensions counted");
+        assert!(found[0].ends_with("a.crt") && found[1].ends_with("b.pem"), "sorted");
+    }
+
+    #[test]
+    fn certs_in_dir_empty_or_missing_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(certs_in_dir(dir.path()).is_err(), "empty dir must fail loud");
+        assert!(certs_in_dir(Path::new("/nonexistent/certs")).is_err());
+    }
+
+    #[test]
+    fn batch_reports_failure_for_a_bad_recipient() {
+        let dir = tempfile::tempdir().unwrap();
+        let code = generate_kdm_batch(
+            "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9".into(),
+            "T".into(),
+            vec![PathBuf::from("/nonexistent/recipient.pem")],
+            PathBuf::from("/dev/null"),
+            PathBuf::from("/dev/null"),
+            Vec::new(),
+            "now".into(),
+            "7 days".into(),
+            "modified-transitional-1".into(),
+            Vec::new(),
+            dir.path().join("out"),
+        );
+        assert_ne!(code, 0);
+    }
+
+    use postkit::certificate::{CertOptions, CertType, generate_certificate, generate_chain};
+
+    /// Generate a signer chain in `dir` plus `n` recipient leaf certs in a
+    /// `recipients/` subdir. Returns (signer_cert, signer_key, chain, recipient_dir).
+    fn batch_fixtures(dir: &Path, n: usize) -> (PathBuf, PathBuf, Vec<PathBuf>, PathBuf) {
+        assert_eq!(generate_chain("Acme", dir), 0, "chain generation failed");
+        let recipients = dir.join("recipients");
+        std::fs::create_dir_all(&recipients).unwrap();
+        for i in 0..n {
+            let opts = CertOptions {
+                cert_type: CertType::Leaf,
+                common_name: format!("Screen {i}"),
+                organization: "Cinema".into(),
+                output_cert: recipients.join(format!("screen_{i}.pem")),
+                output_key: recipients.join(format!("screen_{i}.key")),
+                issuer_cert: dir.join("root.pem"),
+                issuer_key: dir.join("root.key"),
+                ..Default::default()
+            };
+            assert_eq!(generate_certificate(&opts), 0, "recipient {i} gen failed");
+        }
+        (
+            dir.join("signer.pem"),
+            dir.join("signer.key"),
+            vec![dir.join("intermediate.pem"), dir.join("root.pem")],
+            recipients,
+        )
+    }
+
+    fn xmlsec1_available() -> bool {
+        std::process::Command::new("xmlsec1")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    // Real end-to-end batch: distinct recipients, bound content KeyId, signed.
+    #[test]
+    fn batch_generates_one_signed_kdm_per_recipient_bound_to_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signer_cert, signer_key, chain, recipients) = batch_fixtures(dir.path(), 2);
+        let certs = certs_in_dir(&recipients).expect("recipients found");
+        assert_eq!(certs.len(), 2, "cert_dir globbing skips the .key files");
+
+        // A known content KeyId, as if taken from the DCP's KEYS.json.
+        let key_id = uuid::Uuid::new_v4();
+        let content_keys = vec![postkit::certificate::KdmContentKey {
+            key_type: *b"MDIK",
+            key_id,
+            content_key: [7u8; 16],
+        }];
+
+        let cpl_id = "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9";
+        let out = dir.path().join("kdms");
+        let code = generate_kdm_batch(
+            cpl_id.into(),
+            "Test Feature".into(),
+            certs.iter().map(PathBuf::from).collect(),
+            signer_cert,
+            signer_key,
+            chain,
+            "now".into(),
+            "7 days".into(),
+            "modified-transitional-1".into(),
+            content_keys,
+            out.clone(),
+        );
+        assert_eq!(code, 0, "batch must succeed for every recipient");
+
+        let kdms: Vec<PathBuf> = std::fs::read_dir(&out)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("xml"))
+            .collect();
+        assert_eq!(kdms.len(), 2, "one KDM per recipient");
+
+        for kdm in &kdms {
+            let xml = std::fs::read_to_string(kdm).unwrap();
+            assert!(
+                xml.contains(&format!(
+                    "<CompositionPlaylistId>urn:uuid:{cpl_id}</CompositionPlaylistId>"
+                )),
+                "KDM must reference the CPL"
+            );
+            assert!(
+                xml.contains(
+                    "<MessageType>http://www.smpte-ra.org/430-1/2006/KDM#kdm-key-type</MessageType>"
+                ),
+                "standard SMPTE KDM MessageType"
+            );
+            assert!(
+                xml.contains(&format!("<KeyId>urn:uuid:{key_id}</KeyId>")),
+                "KeyId must match the DCP's content key"
+            );
+            assert!(xml.contains("<ds:Signature"), "KDM must be signed");
+
+            if xmlsec1_available() {
+                let ok = std::process::Command::new("xmlsec1")
+                    .arg("--verify")
+                    .arg("--trusted-pem")
+                    .arg(dir.path().join("root.pem"))
+                    .args(["--id-attr:Id", "AuthenticatedPublic"])
+                    .args(["--id-attr:Id", "AuthenticatedPrivate"])
+                    .arg(kdm)
+                    .output()
+                    .expect("run xmlsec1")
+                    .status
+                    .success();
+                assert!(ok, "xmlsec1 must verify the batch KDM against the root");
+            }
+        }
     }
 }
