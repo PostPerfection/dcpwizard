@@ -103,7 +103,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ### Mastering & Compliance
 - **DCDM creation**, Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
-- **Forensic watermarking**, NexGuard, Civolution, or internal spatial watermark
+- **Visible watermarking**, burned-in text mark (distributor ID/serial) across image frames
 - **Trailer packaging**, ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders
 - **Content version tracker**, SQLite database of which version delivered where and when
 - **Accessibility compliance**, verify AD/HI/SL tracks against CVAA, EAA, AODA, Ofcom standards
@@ -321,8 +321,43 @@ dcpwizard dv-inject -i input.hevc -r metadata.bin -o output.hevc
 # Inject HDR10 static metadata
 dcpwizard hdr10-inject -i input.mov -o output.mov --max-cll 1000 --max-fall 400
 
-# Apply forensic watermark
-dcpwizard watermark -i ./frames -o ./watermarked -p "DIST-001-SERIAL"
+# Burn a visible watermark into a video/image file
+dcpwizard watermark -i movie.mov -o movie_wm.mov -p "DIST-001-SERIAL"
+
+# Batch KDM: one KDM per recipient certificate in a single pass
+dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" \
+    --cert screen1.pem --cert screen2.pem \
+    --signer-cert signer.pem --signer-key signer.key \
+    --signer-chain intermediate.pem --signer-chain root.pem \
+    --output-dir ./kdms
+
+# Package a trailer (ratings card + countdown leader + content)
+dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
+    --rating "PG-13" --rating-system mpaa --band green --countdown 8
+
+# Generate DCP markers for a composition
+dcpwizard markers --frames 172800        # FFOC/LFOC list
+dcpwizard markers --frames 172800 --xml  # XML MarkerList
+
+# Check accessibility compliance
+dcpwizard accessibility ./my_dcp --standard cvaa   # cvaa|eaa|aoda|ofcom
+
+# Send a webhook notification
+dcpwizard webhook --url https://example.com/hook --event job.completed \
+    --job-id 42 --payload '{"status":"ok"}'
+
+# Content version / delivery tracking (SQLite)
+dcpwizard version record --db deliveries.db --package-uuid <uuid> \
+    --title "My Film" --version OV --destination "AMC" --method hard_drive --verified
+dcpwizard version list --db deliveries.db
+dcpwizard version export --db deliveries.db --output deliveries.csv
+
+# OV/VF version dashboard
+dcpwizard dashboard register --uuid <uuid> --title "My Film" \
+    --version-type OV --territory US --status released
+dcpwizard dashboard list
+dcpwizard dashboard matrix --output distribution.csv
+dcpwizard dashboard serve --port 9090
 ```
 
 ## REST API
@@ -362,7 +397,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Desktop GUI | ✅ (Tauri) | ✅ (native) |
 | REST API / Docker | ✅ | ❌ |
 | Watch folder automation | ✅ | ❌ |
-| Forensic watermarking | ✅ | ❌ |
+| Visible watermarking | ✅ | ❌ |
 | DCDM intermediate format | ✅ | ❌ |
 | Trailer packaging (ratings/leaders) | ✅ | ❌ |
 | Content version tracking | ✅ | ❌ |

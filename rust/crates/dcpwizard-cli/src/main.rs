@@ -47,9 +47,6 @@ enum Commands {
         /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV
         #[arg(long)]
         content_type: Option<String>,
-        /// Container ratio: flat (185), scope (239), full (133)
-        #[arg(long)]
-        container_ratio: Option<String>,
         /// DCP frame rate (auto-detected from source if not specified)
         #[arg(long)]
         frame_rate: Option<u32>,
@@ -65,9 +62,6 @@ enum Commands {
         /// J2K bandwidth in Mbit/s (default: 250 for 2K, 500 for 4K)
         #[arg(long)]
         video_bit_rate: Option<u32>,
-        /// Number of audio channels
-        #[arg(long)]
-        audio_channels: Option<u32>,
     },
     /// Encode images to JPEG 2000
     Encode {
@@ -417,17 +411,17 @@ enum Commands {
         max_fall: u16,
     },
 
-    /// Apply forensic watermark to video frames
+    /// Burn a visible watermark into a video/image file
     Watermark {
-        /// Input video/image sequence
+        /// Input video/image file
         #[arg(short, long)]
         input: String,
 
-        /// Output video/image sequence
+        /// Output video/image file
         #[arg(short, long)]
         output: String,
 
-        /// Watermark payload (distributor ID, serial, etc.)
+        /// Watermark payload (distributor ID, serial, etc.) rendered visibly
         #[arg(short, long)]
         payload: String,
     },
@@ -438,6 +432,235 @@ enum Commands {
         #[command(subcommand)]
         action: CertAction,
     },
+
+    /// Generate KDMs for multiple recipients in one pass
+    #[command(name = "kdm-batch")]
+    KdmBatch {
+        /// CPL ID
+        #[arg(long)]
+        cpl_id: String,
+        /// Content title
+        #[arg(long)]
+        content_title: String,
+        /// Recipient certificate file (repeatable, one KDM generated per cert)
+        #[arg(long = "cert")]
+        certs: Vec<String>,
+        /// Signer leaf certificate file
+        #[arg(long)]
+        signer_cert: String,
+        /// Signer private key file
+        #[arg(long)]
+        signer_key: String,
+        /// Signer CA certificate above the leaf (repeatable)
+        #[arg(long)]
+        signer_chain: Vec<String>,
+        /// Output directory for generated KDMs
+        #[arg(short, long)]
+        output_dir: String,
+        /// Valid from (ISO 8601 or "now")
+        #[arg(short = 'f', long, default_value = "now")]
+        valid_from: String,
+        /// Valid to (ISO 8601 or relative duration, e.g. "2 weeks")
+        #[arg(short = 't', long, default_value = "2 weeks")]
+        valid_to: String,
+        /// KDM formulation
+        #[arg(long, default_value = "modified-transitional-1")]
+        formulation: String,
+    },
+
+    /// Package a trailer (ratings card + countdown leader + content)
+    Trailer {
+        /// Trailer content video file
+        #[arg(short, long)]
+        content: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+        /// Trailer title (rendered on the ratings card)
+        #[arg(long, default_value = "")]
+        title: String,
+        /// Rating text (e.g. "PG-13", "15")
+        #[arg(long, default_value = "")]
+        rating: String,
+        /// Rating system: mpaa, bbfc, fsk, custom
+        #[arg(long, default_value = "mpaa")]
+        rating_system: String,
+        /// Band colour: green, red, yellow
+        #[arg(long, default_value = "green")]
+        band: String,
+        /// Countdown leader length in seconds
+        #[arg(long, default_value = "8")]
+        countdown: u32,
+        /// Frame rate
+        #[arg(long, default_value = "24")]
+        fps: u32,
+    },
+
+    /// Generate DCP markers (FFOC/LFOC) for a composition
+    Markers {
+        /// Composition length in frames
+        #[arg(short, long)]
+        frames: u64,
+        /// Emit an XML MarkerList instead of a plain list
+        #[arg(long)]
+        xml: bool,
+    },
+
+    /// Check accessibility compliance of a DCP
+    Accessibility {
+        /// DCP directory
+        dcp_dir: String,
+        /// Standard: cvaa, eaa, aoda, ofcom
+        #[arg(short, long, default_value = "cvaa")]
+        standard: String,
+    },
+
+    /// Send a webhook notification (HTTP POST via curl)
+    Webhook {
+        /// Target URL
+        #[arg(short, long)]
+        url: String,
+        /// Event type
+        #[arg(long, default_value = "ping")]
+        event: String,
+        /// Job ID
+        #[arg(long, default_value = "")]
+        job_id: String,
+        /// Shared secret (sent as X-Webhook-Secret)
+        #[arg(long, default_value = "")]
+        secret: String,
+        /// JSON payload (defaults to a test ping body)
+        #[arg(long, default_value = "")]
+        payload: String,
+    },
+
+    /// Content version / delivery history tracker (SQLite)
+    Version {
+        #[command(subcommand)]
+        action: VersionAction,
+    },
+
+    /// OV/VF version dashboard and distribution tracking
+    Dashboard {
+        #[command(subcommand)]
+        action: DashboardAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum VersionAction {
+    /// Record a delivery
+    Record {
+        /// Tracker database file
+        #[arg(long, default_value = "deliveries.db")]
+        db: String,
+        /// Package UUID
+        #[arg(long)]
+        package_uuid: String,
+        /// Title
+        #[arg(long, default_value = "")]
+        title: String,
+        /// Version label (e.g. OV, VF)
+        #[arg(long, default_value = "")]
+        version: String,
+        /// Destination
+        #[arg(long, default_value = "")]
+        destination: String,
+        /// Delivery method (e.g. hard_drive, satellite)
+        #[arg(long, default_value = "")]
+        method: String,
+        /// Mark as verified
+        #[arg(long)]
+        verified: bool,
+    },
+    /// List recorded deliveries
+    List {
+        /// Tracker database file
+        #[arg(long, default_value = "deliveries.db")]
+        db: String,
+        /// Filter by package UUID
+        #[arg(long)]
+        package_uuid: Option<String>,
+        /// Filter by destination
+        #[arg(long)]
+        destination: Option<String>,
+    },
+    /// Export delivery history (format by extension: .json or .csv)
+    Export {
+        /// Tracker database file
+        #[arg(long, default_value = "deliveries.db")]
+        db: String,
+        /// Output file (.json or .csv)
+        #[arg(short, long)]
+        output: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DashboardAction {
+    /// Register a DCP version (OV or VF)
+    Register {
+        /// Version UUID
+        #[arg(long)]
+        uuid: String,
+        /// Title
+        #[arg(long)]
+        title: String,
+        /// Version type: OV or VF
+        #[arg(long, default_value = "OV")]
+        version_type: String,
+        /// Territory (ISO 3166-1 alpha-2)
+        #[arg(long, default_value = "")]
+        territory: String,
+        /// Language (RFC 5646)
+        #[arg(long, default_value = "")]
+        language: String,
+        /// Standard: SMPTE or Interop
+        #[arg(long, default_value = "SMPTE")]
+        standard: String,
+        /// DCP path
+        #[arg(long, default_value = "")]
+        dcp_path: String,
+        /// Status: draft, released, archived
+        #[arg(long, default_value = "draft")]
+        status: String,
+        /// KDM recipient theatre (repeatable)
+        #[arg(long = "kdm-recipient")]
+        kdm_recipients: Vec<String>,
+    },
+    /// List registered versions
+    List {
+        /// Filter by territory
+        #[arg(long)]
+        territory: Option<String>,
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Update a version's status
+    Status {
+        /// Version UUID
+        #[arg(long)]
+        uuid: String,
+        /// New status
+        #[arg(long)]
+        status: String,
+    },
+    /// Export the distribution matrix as CSV
+    Matrix {
+        /// Output CSV file
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Start the dashboard HTTP server
+    Serve {
+        /// Listen port
+        #[arg(short, long, default_value = "9090")]
+        port: u32,
+        /// Bind address
+        #[arg(short, long, default_value = "127.0.0.1")]
+        bind: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -445,7 +668,7 @@ enum CertAction {
     /// Generate a full certificate chain (root → intermediate → signer)
     Chain {
         /// Organization name for the certificates
-        #[arg(short, long)]
+        #[arg(long)]
         organization: String,
         /// Output directory for generated certificates
         #[arg(short, long)]
@@ -580,14 +803,12 @@ fn run() {
             encrypt,
             encoder,
             content_type,
-            container_ratio: _container_ratio,
             frame_rate,
             twok,
             fourk,
             threads,
             video_bit_rate,
-            audio_channels: _,
-            profile: _,
+            profile,
         } => {
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
@@ -596,6 +817,38 @@ fn run() {
             } else {
                 dcpwizard_core::Standard::Smpte
             };
+
+            // Resolve delivery profile and apply its presets as defaults; explicit
+            // flags still win.
+            let profile = match profile.as_deref() {
+                Some(name) => match dcpwizard_core::profiles::get_profile(name) {
+                    Some(p) => {
+                        tracing::info!("Using profile '{}': {}", p.name, p.description);
+                        Some(p)
+                    }
+                    None => {
+                        let names: Vec<String> = dcpwizard_core::profiles::all_profiles()
+                            .into_iter()
+                            .map(|p| p.name)
+                            .collect();
+                        tracing::error!(
+                            "Unknown profile '{name}'. Available: {}",
+                            names.join(", ")
+                        );
+                        std::process::exit(1);
+                    }
+                },
+                None => None,
+            };
+            let fourk = fourk
+                || (!twok
+                    && profile
+                        .as_ref()
+                        .map(|p| p.resolution_width >= 4096)
+                        .unwrap_or(false));
+            let frame_rate = frame_rate.or_else(|| profile.as_ref().map(|p| p.frame_rate));
+            let video_bit_rate =
+                video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps));
 
             // Detect if input is a video file (not a J2K directory)
             let is_video_file = video_path.is_file()
@@ -1100,17 +1353,15 @@ fn run() {
         }
 
         Commands::Loudness { audio_file } => {
-            match dcpwizard_core::loudness::measure_loudness(&PathBuf::from(audio_file)) {
-                Ok(result) => {
-                    tracing::info!("Integrated: {:.1} LUFS", result.integrated_lufs);
-                    tracing::info!("True Peak: {:.1} dBTP", result.true_peak_dbtp);
-                    tracing::info!("LRA: {:.1} LU", result.loudness_range_lu);
-                    0
-                }
-                Err(e) => {
-                    tracing::error!("{e}");
-                    1
-                }
+            let result = dcpwizard_core::loudness::measure_loudness(&PathBuf::from(audio_file));
+            if result.success {
+                tracing::info!("Integrated: {:.1} LUFS", result.integrated_lufs);
+                tracing::info!("True Peak: {:.1} dBTP", result.true_peak_dbtp);
+                tracing::info!("LRA: {:.1} LU", result.range_lu);
+                0
+            } else {
+                tracing::error!("{}", result.error);
+                1
             }
         }
 
@@ -1188,30 +1439,21 @@ fn run() {
             output,
             font_size,
         } => {
-            let status = std::process::Command::new("ffmpeg")
-                .arg("-y")
-                .arg("-i")
-                .arg(&input)
-                .arg("-vf")
-                .arg(format!(
-                    "subtitles={}:force_style='FontSize={}'",
-                    subtitles, font_size
-                ))
-                .arg("-c:a")
-                .arg("copy")
-                .arg(&output)
-                .status();
-            match status {
-                Ok(s) if s.success() => {
+            let opts = dcpwizard_core::burnin::BurninOptions {
+                input: PathBuf::from(&input),
+                output: PathBuf::from(&output),
+                subtitle_file: Some(PathBuf::from(&subtitles)),
+                font_size,
+                position: "bottom".to_string(),
+                ..Default::default()
+            };
+            match dcpwizard_core::burnin::burnin(&opts) {
+                Ok(()) => {
                     tracing::info!("Burned subtitles into: {output}");
                     0
                 }
-                Ok(s) => {
-                    tracing::error!("ffmpeg exited with code {}", s.code().unwrap_or(-1));
-                    1
-                }
                 Err(e) => {
-                    tracing::error!("Failed to run ffmpeg: {e}");
+                    tracing::error!("Burn-in failed: {e}");
                     1
                 }
             }
@@ -1334,19 +1576,26 @@ fn run() {
         }
 
         Commands::Conform { input, json } => {
-            let timeline = postkit::conform::parse_timeline(std::path::Path::new(&input));
-            if json {
-                println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
-            } else {
-                println!("Timeline: {}", timeline.title);
-                println!("Format: {:?}", timeline.format);
-                println!("Frame rate: {}", timeline.frame_rate);
-                println!("Events: {}", timeline.events.len());
-                for (i, evt) in timeline.events.iter().enumerate() {
-                    println!("  [{i}] {} -> {}", evt.source_in, evt.source_out);
+            match postkit::conform::parse_timeline(std::path::Path::new(&input)) {
+                Ok(timeline) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
+                    } else {
+                        println!("Timeline: {}", timeline.title);
+                        println!("Format: {:?}", timeline.format);
+                        println!("Frame rate: {}", timeline.frame_rate);
+                        println!("Events: {}", timeline.events.len());
+                        for (i, evt) in timeline.events.iter().enumerate() {
+                            println!("  [{i}] {} -> {}", evt.source_in, evt.source_out);
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("Timeline parse failed: {e}");
+                    1
                 }
             }
-            0
         }
 
         Commands::Ingest {
@@ -1423,30 +1672,17 @@ fn run() {
             output,
             payload,
         } => {
-            // Forensic watermarking using invisible embedding
-            let status = std::process::Command::new("ffmpeg")
-                .arg("-y")
-                .arg("-i")
-                .arg(&input)
-                .arg("-vf")
-                .arg(format!(
-                    "drawtext=text='{payload}':fontsize=1:fontcolor=white@0.01:x=10:y=10"
-                ))
-                .arg("-c:a")
-                .arg("copy")
-                .arg(&output)
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    tracing::info!("Watermark applied: {output}");
+            match dcpwizard_core::watermark::embed_watermark(
+                PathBuf::from(&input),
+                PathBuf::from(&output),
+                &payload,
+            ) {
+                Ok(()) => {
+                    tracing::info!("Visible watermark burned into: {output}");
                     0
                 }
-                Ok(s) => {
-                    tracing::error!("ffmpeg exited with code {}", s.code().unwrap_or(-1));
-                    1
-                }
                 Err(e) => {
-                    tracing::error!("Failed to run ffmpeg: {e}");
+                    tracing::error!("Watermark failed: {e}");
                     1
                 }
             }
@@ -1592,6 +1828,332 @@ fn run() {
                         }
                         _ => 1,
                     }
+                }
+            }
+        }
+
+        Commands::KdmBatch {
+            cpl_id,
+            content_title,
+            certs,
+            signer_cert,
+            signer_key,
+            signer_chain,
+            output_dir,
+            valid_from,
+            valid_to,
+            formulation,
+        } => {
+            if certs.is_empty() {
+                tracing::error!("No recipient certificates provided (use --cert, repeatable)");
+                std::process::exit(1);
+            }
+            dcpwizard_core::kdm::generate_kdm_batch(
+                cpl_id,
+                content_title,
+                certs.into_iter().map(PathBuf::from).collect(),
+                PathBuf::from(signer_cert),
+                PathBuf::from(signer_key),
+                signer_chain.into_iter().map(PathBuf::from).collect(),
+                valid_from,
+                valid_to,
+                formulation,
+                PathBuf::from(output_dir),
+            )
+        }
+
+        Commands::Trailer {
+            content,
+            output,
+            title,
+            rating,
+            rating_system,
+            band,
+            countdown,
+            fps,
+        } => {
+            let opts = postkit::trailer::TrailerOptions {
+                content_dir: PathBuf::from(&content),
+                audio_file: PathBuf::new(),
+                output_dir: PathBuf::from(&output),
+                title,
+                rating,
+                rating_system: match rating_system.to_lowercase().as_str() {
+                    "bbfc" => postkit::trailer::RatingSystem::Bbfc,
+                    "fsk" => postkit::trailer::RatingSystem::Fsk,
+                    "custom" => postkit::trailer::RatingSystem::Custom,
+                    _ => postkit::trailer::RatingSystem::Mpaa,
+                },
+                band: match band.to_lowercase().as_str() {
+                    "red" => postkit::trailer::TrailerBand::Red,
+                    "yellow" => postkit::trailer::TrailerBand::Yellow,
+                    _ => postkit::trailer::TrailerBand::Green,
+                },
+                countdown_seconds: countdown,
+                fps_num: fps,
+                fps_den: 1,
+            };
+            let result = postkit::trailer::package_trailer(&opts);
+            if result.success {
+                tracing::info!(
+                    "Trailer packaged: {} (CPL {})",
+                    result.output_dir.display(),
+                    result.cpl_uuid
+                );
+                0
+            } else {
+                tracing::error!("Trailer packaging failed: {}", result.error);
+                1
+            }
+        }
+
+        Commands::Markers { frames, xml } => {
+            let markers = dcpwizard_core::markers::default_markers(frames);
+            if xml {
+                println!("{}", dcpwizard_core::markers::markers_to_xml(&markers));
+            } else if markers.is_empty() {
+                println!("No markers (composition length is 0 frames)");
+            } else {
+                for m in &markers {
+                    println!("{}\t{}", m.marker.label(), m.frame);
+                }
+            }
+            0
+        }
+
+        Commands::Accessibility { dcp_dir, standard } => {
+            let std_val = match standard.to_lowercase().as_str() {
+                "eaa" => postkit::accessibility::AccessibilityStandard::Eaa,
+                "aoda" => postkit::accessibility::AccessibilityStandard::Aoda,
+                "ofcom" => postkit::accessibility::AccessibilityStandard::Ofcom,
+                _ => postkit::accessibility::AccessibilityStandard::Cvaa,
+            };
+            let result =
+                dcpwizard_core::accessibility::check_accessibility(Path::new(&dcp_dir), std_val);
+            println!("Standard:  {:?}", result.standard);
+            println!("Compliant: {}", result.compliant);
+            println!("Errors:    {}", result.errors);
+            println!("Warnings:  {}", result.warnings);
+            for f in &result.findings {
+                println!(
+                    "  [{:?}] {} ({:?}): {}",
+                    f.severity, f.rule_id, f.track_type, f.description
+                );
+            }
+            if result.compliant { 0 } else { 1 }
+        }
+
+        Commands::Webhook {
+            url,
+            event,
+            job_id,
+            secret,
+            payload,
+        } => {
+            let config = postkit::webhook::WebhookConfig {
+                url,
+                secret,
+                ..Default::default()
+            };
+            let result = if payload.is_empty() && event == "ping" {
+                postkit::webhook::test_webhook(&config)
+            } else {
+                let evt = postkit::webhook::WebhookEvent {
+                    event_type: event,
+                    job_id,
+                    payload_json: payload,
+                    timestamp: String::new(),
+                };
+                postkit::webhook::send_webhook(&config, &evt)
+            };
+            if result.success {
+                tracing::info!(
+                    "Webhook delivered (HTTP {}, {} attempt(s))",
+                    result.http_status,
+                    result.attempts
+                );
+                0
+            } else {
+                tracing::error!(
+                    "Webhook failed after {} attempt(s): {}",
+                    result.attempts,
+                    result.error
+                );
+                1
+            }
+        }
+
+        Commands::Version { action } => match action {
+            VersionAction::Record {
+                db,
+                package_uuid,
+                title,
+                version,
+                destination,
+                method,
+                verified,
+            } => {
+                let mut tracker = dcpwizard_core::version_tracker::VersionTracker::new();
+                if !tracker.open(Path::new(&db)) {
+                    tracing::error!("Failed to open tracker database: {db}");
+                    std::process::exit(1);
+                }
+                let record = dcpwizard_core::version_tracker::DeliveryRecord {
+                    package_uuid,
+                    title,
+                    version,
+                    destination,
+                    delivery_method: method,
+                    timestamp: dcpwizard_core::version_tracker::now_iso(),
+                    verified,
+                };
+                if tracker.record(&record) {
+                    println!("Recorded delivery of {}", record.package_uuid);
+                    0
+                } else {
+                    tracing::error!("Failed to record delivery");
+                    1
+                }
+            }
+            VersionAction::List {
+                db,
+                package_uuid,
+                destination,
+            } => {
+                let mut tracker = dcpwizard_core::version_tracker::VersionTracker::new();
+                if !tracker.open(Path::new(&db)) {
+                    tracing::error!("Failed to open tracker database: {db}");
+                    std::process::exit(1);
+                }
+                let query = dcpwizard_core::version_tracker::VersionQuery {
+                    package_uuid,
+                    destination,
+                    ..Default::default()
+                };
+                let records = tracker.query(&query);
+                if records.is_empty() {
+                    println!("No deliveries recorded");
+                } else {
+                    for r in &records {
+                        println!(
+                            "{}  {}  {}  -> {}  ({}, verified={})",
+                            r.timestamp,
+                            r.package_uuid,
+                            r.title,
+                            r.destination,
+                            r.delivery_method,
+                            r.verified
+                        );
+                    }
+                }
+                0
+            }
+            VersionAction::Export { db, output } => {
+                let mut tracker = dcpwizard_core::version_tracker::VersionTracker::new();
+                if !tracker.open(Path::new(&db)) {
+                    tracing::error!("Failed to open tracker database: {db}");
+                    std::process::exit(1);
+                }
+                let out = PathBuf::from(&output);
+                let ok = if output.to_lowercase().ends_with(".csv") {
+                    tracker.export_csv(&out)
+                } else {
+                    tracker.export_json(&out)
+                };
+                if ok {
+                    println!("Exported delivery history to {output}");
+                    0
+                } else {
+                    tracing::error!("Failed to export delivery history");
+                    1
+                }
+            }
+        },
+
+        Commands::Dashboard { action } => {
+            // register/list/status/matrix operate on postkit's default database;
+            // ensure its schema exists first.
+            let db_path = dcpwizard_core::dashboard::default_db_path();
+            if dcpwizard_core::dashboard::init_database(&db_path) != 0 {
+                tracing::error!("Failed to initialise dashboard database");
+                std::process::exit(1);
+            }
+            match action {
+                DashboardAction::Register {
+                    uuid,
+                    title,
+                    version_type,
+                    territory,
+                    language,
+                    standard,
+                    dcp_path,
+                    status,
+                    kdm_recipients,
+                } => {
+                    let entry = dcpwizard_core::dashboard::VersionEntry {
+                        uuid,
+                        title,
+                        version_type,
+                        territory,
+                        language,
+                        standard,
+                        dcp_path: PathBuf::from(dcp_path),
+                        ov_uuid: String::new(),
+                        created_date: dcpwizard_core::version_tracker::now_iso(),
+                        status,
+                        kdm_recipients,
+                    };
+                    if dcpwizard_core::dashboard::register_version(&entry) == 0 {
+                        println!("Registered version {}", entry.uuid);
+                        0
+                    } else {
+                        1
+                    }
+                }
+                DashboardAction::List { territory, status } => {
+                    let versions = dcpwizard_core::dashboard::list_versions(
+                        territory.as_deref(),
+                        status.as_deref(),
+                    );
+                    if versions.is_empty() {
+                        println!("No versions registered");
+                    } else {
+                        for v in &versions {
+                            println!(
+                                "{}  {}  {}  {}  [{}]",
+                                v.uuid, v.title, v.version_type, v.territory, v.status
+                            );
+                        }
+                    }
+                    0
+                }
+                DashboardAction::Status { uuid, status } => {
+                    if dcpwizard_core::dashboard::update_status(&uuid, &status) == 0 {
+                        println!("Updated {uuid} -> {status}");
+                        0
+                    } else {
+                        tracing::error!("Failed to update status (unknown UUID?)");
+                        1
+                    }
+                }
+                DashboardAction::Matrix { output } => {
+                    if dcpwizard_core::dashboard::export_distribution_matrix(Path::new(&output))
+                        == 0
+                    {
+                        println!("Exported distribution matrix to {output}");
+                        0
+                    } else {
+                        tracing::error!("Failed to export distribution matrix");
+                        1
+                    }
+                }
+                DashboardAction::Serve { port, bind } => {
+                    let opts = dcpwizard_core::dashboard::DashboardOptions {
+                        database_path: db_path,
+                        http_port: port,
+                        bind_address: bind,
+                    };
+                    dcpwizard_core::dashboard::serve_dashboard(&opts)
                 }
             }
         }

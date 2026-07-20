@@ -1,3 +1,10 @@
+//! Job queue with a TCP/IPC daemon.
+//!
+//! Distinct from [`postkit::job_queue`], which is an in-memory queue with job
+//! dependencies but no daemon. This one adds cross-process IPC and job types
+//! bound to dcpwizard's own pipeline (create/verify/export/import DCP), so it
+//! stays local.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

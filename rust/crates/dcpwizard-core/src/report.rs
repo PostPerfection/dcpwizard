@@ -1,3 +1,9 @@
+//! HTML QC report generation.
+//!
+//! [`postkit::report`] is a generic report renderer (severity/category entries).
+//! This builds a DCP-specific HTML report directly from dcpdoctor's QC results
+//! ([`crate::qc`]), so it stays local.
+
 use std::path::Path;
 
 /// Generate an HTML QC report from dcpdoctor verification results.

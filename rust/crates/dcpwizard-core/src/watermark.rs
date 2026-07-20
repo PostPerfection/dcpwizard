@@ -1,40 +1,42 @@
-//! Forensic watermarking for DCP content.
+//! Visible burn-in watermark.
 //!
-//! Delegates to [`postkit::watermark`] for embedding and detecting forensic
-//! watermarks using internal or external backends (NexGuard, Civolution).
+//! Burns a plainly visible text mark (the payload) into the video/image using
+//! postkit's ffmpeg drawtext burn-in. This is a visible mark, not an invisible
+//! or forensic watermark, and carries no recoverable payload.
+//!
+//! (postkit::watermark's "internal" path is not used: it hardcodes a colon in
+//! the drawtext text, which ffmpeg's filter parser rejects. postkit::burnin is
+//! the working visible-text path.)
 
-pub use postkit::watermark::{
-    WatermarkBackend, WatermarkOptions, WatermarkResult, detect_watermark, embed_watermark,
-};
+use std::path::PathBuf;
+
+/// Burn `payload` as a visible text overlay into `input`, writing `output`.
+/// Requires ffmpeg; returns Err with the ffmpeg error if it is missing or fails.
+pub fn embed_watermark(input: PathBuf, output: PathBuf, payload: &str) -> std::io::Result<()> {
+    let opts = postkit::burnin::BurninOptions {
+        input,
+        output,
+        subtitle_file: None,
+        text: Some(payload.to_string()),
+        font_size: 24,
+        font_colour: "white".to_string(),
+        position: "bottom".to_string(),
+    };
+    postkit::burnin::burnin(&opts)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_watermark_backend_default() {
-        assert_eq!(WatermarkBackend::default(), WatermarkBackend::Internal);
-    }
-
-    #[test]
-    fn test_watermark_options_default() {
-        let opts = WatermarkOptions::default();
-        assert!(opts.operator_id.is_empty());
-        assert!(opts.session_id.is_empty());
-        assert_eq!(opts.strength, 0.0);
-    }
-
-    #[test]
-    fn test_embed_watermark_no_frames() {
+    fn test_embed_watermark_missing_input_fails() {
         let dir = tempfile::tempdir().unwrap();
-        let opts = WatermarkOptions {
-            input_dir: dir.path().to_path_buf(),
-            output_dir: dir.path().join("out"),
-            operator_id: "OP1".into(),
-            session_id: "S1".into(),
-            ..Default::default()
-        };
-        let result = embed_watermark(&opts);
-        assert!(!result.success);
+        let result = embed_watermark(
+            dir.path().join("nope.mov"),
+            dir.path().join("out.mov"),
+            "DIST-001",
+        );
+        assert!(result.is_err());
     }
 }

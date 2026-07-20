@@ -37,7 +37,7 @@ mod tests {
             &edl,
             "TITLE: Test\nFCM: NON-DROP FRAME\n\n001  REEL001  V  C        01:00:00:00 01:00:05:00 01:00:00:00 01:00:05:00\n",
         ).unwrap();
-        let tl = parse_timeline(&edl);
+        let tl = parse_timeline(&edl).unwrap();
         assert_eq!(tl.title, "Test");
         assert_eq!(tl.events.len(), 1);
         assert_eq!(tl.events[0].reel_name, "REEL001");

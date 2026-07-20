@@ -5,6 +5,11 @@
 
 pub use postkit::version_tracker::{DeliveryRecord, VersionQuery, VersionTracker};
 
+/// Current UTC time as an RFC 3339 timestamp, for delivery records.
+pub fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,3 +1,9 @@
+//! DCP watch-folder polling.
+//!
+//! [`postkit::watch`] is a generic `notify`-based file watcher emitting raw
+//! fs events. This is higher-level domain logic: it polls for directories that
+//! contain an ASSETMAP (i.e. complete DCPs) and fires once per new package.
+
 use std::path::{Path, PathBuf};
 
 /// Watch a directory for new DCP deliveries by polling for directories

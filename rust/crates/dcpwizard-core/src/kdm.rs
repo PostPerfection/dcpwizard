@@ -43,6 +43,64 @@ pub fn generate_kdm(
     }
 }
 
+/// Generate one KDM per recipient certificate in a single pass. Each KDM is
+/// written to `output_dir/<cert-stem>.kdm.xml`. Returns 0 only if every
+/// recipient succeeded, otherwise 1.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_kdm_batch(
+    cpl_id: String,
+    content_title: String,
+    recipient_certs: Vec<PathBuf>,
+    signer_cert: PathBuf,
+    signer_key: PathBuf,
+    signer_chain: Vec<PathBuf>,
+    valid_from: String,
+    valid_to: String,
+    formulation: String,
+    output_dir: PathBuf,
+) -> i32 {
+    if let Err(e) = std::fs::create_dir_all(&output_dir) {
+        tracing::error!("Failed to create output directory: {e}");
+        return 1;
+    }
+
+    let mut failures = 0;
+    for (i, cert) in recipient_certs.iter().enumerate() {
+        let stem = cert
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("recipient");
+        // index-prefix keeps outputs unique even when recipient certs share a filename
+        let output = output_dir.join(format!("{:03}_{stem}.kdm.xml", i + 1));
+        let code = generate_kdm(
+            cpl_id.clone(),
+            content_title.clone(),
+            cert.clone(),
+            signer_cert.clone(),
+            signer_key.clone(),
+            signer_chain.clone(),
+            valid_from.clone(),
+            valid_to.clone(),
+            formulation.clone(),
+            output.clone(),
+        );
+        if code == 0 {
+            tracing::info!("KDM for {} -> {}", cert.display(), output.display());
+        } else {
+            tracing::error!("KDM generation failed for {}", cert.display());
+            failures += 1;
+        }
+    }
+
+    if failures == 0 {
+        tracing::info!("Generated {} KDM(s)", recipient_certs.len());
+        0
+    } else {
+        tracing::error!("{failures} of {} KDM(s) failed", recipient_certs.len());
+        1
+    }
+}
+
 /// Re-wrap a DKDM to a new recipient: decrypt its content keys with the DKDM
 /// recipient's private key, re-encrypt to `recipient_cert` and sign. Empty
 /// `valid_from`/`valid_to` preserve the DKDM's validity window.

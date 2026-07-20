@@ -9,6 +9,7 @@ description = "DCP Wizard — Digital Cinema Package creation library"
 asdcplib.workspace = true
 chrono = "0.4"
 dcpdoctor-core.workspace = true
+dirs = "6"
 postkit.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,3 +1,9 @@
+//! Application preferences (load/save + XDG path).
+//!
+//! [`postkit::preferences`] only provides JSON schema-version migration helpers,
+//! not a preferences struct or storage. dcpwizard's `Preferences` type and its
+//! config-file location live here.
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

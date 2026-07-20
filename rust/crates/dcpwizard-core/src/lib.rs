@@ -4,7 +4,6 @@ pub mod atmos;
 pub mod audio;
 pub mod burnin;
 pub mod certificate;
-pub mod colour;
 pub mod conform;
 pub mod copy_drive;
 pub mod cpl;

@@ -1,3 +1,11 @@
+//! REST API server for DCP operations.
+//!
+//! Kept separate from [`postkit::rest_api::RestServer`]: postkit's route handler
+//! signature is `Fn(method, path)` and never passes the request body, so it
+//! cannot express the body-consuming `POST /create` and `POST /verify` routes
+//! this server needs. The GET routes (/health, /jobs, /metrics) also depend on
+//! dcpwizard's own job queue.
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 

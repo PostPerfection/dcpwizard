@@ -1,3 +1,9 @@
+//! DCP creation profiles (cinema 2K/4K, trailer, advertisement).
+//!
+//! [`postkit::profiles`] describes delivery-platform encoding targets (Netflix,
+//! Apple, etc.); these are DCP packaging presets consumed by `create --profile`,
+//! a different concept, so they stay local.
+
 use serde::{Deserialize, Serialize};
 
 /// A DCP creation profile with preset settings.
