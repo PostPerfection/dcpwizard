@@ -1,5 +1,21 @@
 use sha1::Digest;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// Evict a file's pages from the page cache so a following read hits the device.
+/// Without this the read-back below just returns the bytes we cached on write and
+/// verifies nothing about what actually landed on the drive.
+#[cfg(unix)]
+fn drop_page_cache(file: &File) {
+    use std::os::unix::io::AsRawFd;
+    unsafe {
+        libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED);
+    }
+}
+
+#[cfg(not(unix))]
+fn drop_page_cache(_file: &File) {}
 
 /// Copy a DCP to a target drive with SHA-1 hash verification.
 pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
@@ -49,13 +65,22 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
 
         let src_hash = sha1_hex(&src_data);
 
-        // Write to destination
-        if let Err(e) = std::fs::write(&dst_path, &src_data) {
-            tracing::error!("Failed to write {}: {e}", dst_path.display());
-            return -1;
+        // Write to destination, flush to the device, then evict from the page
+        // cache so the read-back reads the drive rather than our own write cache.
+        match File::create(&dst_path).and_then(|mut f| {
+            f.write_all(&src_data)?;
+            f.sync_all()?;
+            drop_page_cache(&f);
+            Ok(())
+        }) {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::error!("Failed to write {}: {e}", dst_path.display());
+                return -1;
+            }
         }
 
-        // Verify by reading back and comparing hash
+        // Verify by reading back from the drive and comparing hash
         let dst_data = match std::fs::read(&dst_path) {
             Ok(d) => d,
             Err(e) => {
@@ -121,4 +146,28 @@ fn sha1_hex(data: &[u8]) -> String {
 
 fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copies_and_verifies_nested_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("MyDCP");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("ASSETMAP.xml"), b"a").unwrap();
+        std::fs::write(src.join("sub/picture.mxf"), vec![7u8; 4096]).unwrap();
+
+        let target = dir.path().join("drive");
+        assert_eq!(copy_to_drive(&src, &target), 0);
+
+        let dst = target.join("MyDCP");
+        assert_eq!(std::fs::read(dst.join("ASSETMAP.xml")).unwrap(), b"a");
+        assert_eq!(
+            std::fs::read(dst.join("sub/picture.mxf")).unwrap(),
+            vec![7u8; 4096]
+        );
+    }
 }

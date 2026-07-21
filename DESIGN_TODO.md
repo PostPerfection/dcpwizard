@@ -27,54 +27,119 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
   the VF. Verified end-to-end: `dcpdoctor validate --ov` resolves cross-refs,
   alone gives the supplemental warning (not cross_ref_broken).
 
-## Not implemented, de-advertised (build only if wanted)
+## Planned features
 
-Dead modules, now honest in README/docs. Wire or delete:
+- multi-CPL timelines (multi_cpl.rs create_multi_cpl) still unbuilt.
+- DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
+  DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
+  the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is
+  removed so DTS:X now fails loud as unsupported. Unblock: confirm the DTS:X UL,
+  add a postkit essence type + CPL AuxData DataType, then wire a `--dtsx` flag
+  mirroring `--atmos`.
 
-- Reel splitting (reel.rs), multi-CPL timelines (multi_cpl.rs),
-  stereoscopic 3D (stereo3d.rs), HFR validation table (hfr.rs), subtitle packaging
-  into a DCP timed-text track (no --subtitle flag, MxfType::TimedText unused),
-  Atmos/DTS:X (atmos.rs/dtsx.rs), channel mapping (mca.rs/audio.rs), J2K transcoder
-  (j2k_transcode.rs). The PCM wrapper hardcodes 6ch/24-bit/48k regardless of input.
+Built in the 3D/Atmos/MCA/Interop-KDM pass (obsolete asdcp-wrap scaffolding
+modules stereo3d.rs/atmos.rs/audio.rs/dtsx.rs deleted; the real wiring lives in
+mxf_wrap.rs, dcp.rs, cpl.rs):
+- Stereoscopic 3D: `create --right-eye`; ST 429-10 MainStereoscopicPicture in
+  the CPL (429-10/2008 namespace, prefixed form so children stay in the CPL's
+  429-7 namespace and validate against the clairmeta 429-10 XSD; EditRate =
+  composition rate, FrameRate doubled). postkit `wrap_stereoscopic`. Verified
+  end-to-end: dcpdoctor validate passes with 0 errors and now runs real ST
+  429-10 checks (prefixed form, FrameRate = 2x EditRate, Jpeg2000Stereo
+  essence), proven in the dci-ctp corpus. The stereo element validates against
+  the 429-10 XSD via xmllint.
+- MCA labeling: every PCM wrap carries ST 429-12 labels by channel count
+  (2.0/5.1/7.1); `--hi-channel`/`--vi-channel` add HI/VI-N standalone labels.
+  Verified via asdcplib mca_labels (6ch -> 1 soundfield group + 6 channel labels
+  + ChannelAssignment UL). dcpdoctor now reads the ST 429-12 subdescriptors from
+  the MXF, so its `sound_invalid_channel_count` INFO clears on labeled packages
+  (verified in the dci-ctp corpus: labeled 5.1 clean, unlabeled mono flagged).
+- Dolby Atmos: `create --atmos <file-or-dir>`; ST 429-18 AuxData in the CPL
+  (Dolby 2012/AD namespace, IAB UL 060e2b34.04010105.0e090604.00000000),
+  registered in PKL/ASSETMAP. postkit `EssenceType::Atmos`. One input file = one
+  aux frame; create now refuses when the frame count differs from the picture
+  duration (a short aux track is a broken DCP, caught by ClairMeta
+  check_cpl_reel_duration_picture_aux). Verified with a synthetic per-frame
+  DCData payload: dcpdoctor validate (and validate --atmos) pass with 0 errors.
+  Real-essence conformance needs real Atmos material.
+- Interop KDM: `kdm --format interop` / `kdm-batch --format interop`, threaded to
+  postkit KdmConfig.format. Verified: digicine namespace present, xmlsec1
+  verifies. Legacy output, needs real-gear validation before production use.
+
+Done in the earlier pass:
+- J2K transcoder is real and wired (CLI `transcode-dcp`, j2k_transcode.rs): reads
+  an existing DCP, extracts each reel's J2K frames from the picture MXF (asdcplib
+  jp2k reader), decodes with grk_decompress (raw XYZ components), re-encodes with
+  grok at the bandwidth-derived ratio (apply_xyz_transform off, so the round trip
+  preserves the stored components), rewraps and emits a fresh CPL/PKL/ASSETMAP.
+  Audio/subtitle tracks are copied verbatim (asset ids preserved). Encrypted input
+  is rejected (CPL KeyId + MXF writer_info). get_timeline now also parses the
+  MainSubtitle track so it survives the repackage. Verified end-to-end: a 400 Mbps
+  2K DCP transcoded to 50 Mbps keeps 48 frames / 24 1 edit rate, the picture MXF
+  drops 43.5 MB -> 16.7 MB, and dcpdoctor passes with 0 errors (same one ISDCF
+  naming warning the source already has). Optional `--width`/`--height` rescale via
+  ffmpeg.
+- OpenJPEG removed: grok is the only encoder. The `create --encoder` flag and the
+  openjpeg branch are gone; postkit is built with `grok-ffi` (was `openjpeg`). The
+  bandwidth->ratio math (width*height*36) is now the shared
+  `encode::bandwidth_to_ratio`, used by `create` and `transcode-dcp`.
+- Reel splitting is real: `create --reel-length <minutes>` (reel.rs) splits the
+  picture (per-reel slice of the sorted frame list), audio (sample-accurate WAV
+  slice at frame edges, padded to the reel frame count), and subtitles (DCST
+  re-split by reel and rebased to reel-local time) into one MXF set per reel and
+  emits a multi-reel CPL over a shared PKL/ASSETMAP. Every reel >= 1s; a sub-second
+  remainder merges into the previous reel. Encryption stays coherent (per-reel
+  keys, all reels encrypted). The single-reel path (flag absent) is untouched.
+  postkit has no frame-subrange wrap option, so picture is wrapped from an explicit
+  per-reel file list (mxf_wrap::wrap_mxf_files) and audio/subtitle from temp files.
+  Verified end-to-end: 2-reel DCP with audio and per-reel subtitles passes dcpdoctor
+  with 0 errors and no reel-coherence note; encrypted variant too.
+- HFR validation is real and wired (hfr.rs): legal SMPTE rates 24/25/30/48/50/60/
+  96/100/120 (Interop 24/25/30/48); 4K capped at 30 fps (48+ needs 2K, per the DCI
+  HFR addendum / SMPTE ST 428-11:2013). `create`/pipeline reject illegal fps/resolution
+  combos loudly before encoding; the edit rate threads through CPL and MXF (verified
+  a 48fps 2K DCP validates). GUI frame-rate menus offer exactly the legal set.
+- Subtitle packaging is real: `create --subtitle` -> ST 428-7 DCST XML (schema
+  valid, frame-based timecodes) -> timed-text MXF -> reel/CPL/PKL/ASSETMAP.
+- PCM wrap: postkit already reads the real channel/bit-depth/sample-rate; the wrap
+  now rejects non-DCP sample rates (48/96 kHz only) instead of mislabeling.
+- Deleted (zero callers): dcp_diff, plugin, preferences, geometry, prores shim.
 
 ## KDM (minor)
 
-- Interop (pre-SMPTE) KDM: deliberately not built. Decision + delta below.
-- `--formulation` is now inert. libdcp uses it to select AuthorizedDeviceInfo +
-  ForensicMarkFlagList (not the MessageType, which is fixed); postkit emits
-  neither, so the flag no longer changes the output. Either implement those
-  extensions or drop the flag from the CLI/config.
-- Duration-based end times computed in the start's offset but labelled +00:00.
-- AnnotationText hardcoded; no Trusted Device List / DeviceList written.
+- Interop (pre-SMPTE) KDM: now built via `kdm --format interop` (postkit
+  KdmConfig.format = Interop; digicine 134-byte block). See note below.
+- `--formulation`: removed from CLI/config/docs (was inert; MessageType is fixed
+  and postkit emits no formulation-gated extensions).
+- Duration-based end times now keep the start's UTC offset (resolved on our side
+  in kdm.rs before postkit's duration path, which mislabels them +00:00).
+- AnnotationText: postkit derives it from content_title ("<title> KDM for
+  <recipient>"), not hardcoded. A separate `--annotation` override needs a
+  postkit KdmConfig.annotation field (postkit is frozen here), so not added.
+  No Trusted Device List / DeviceList written.
 
-### Interop KDM decision (not building)
+### Interop KDM (built, legacy)
 
-The binary key block is a small delta (drop the 4-byte KeyType field: SMPTE 138
-bytes -> Interop 134, per libdcp decrypted_kdm.cc cases 138/134). But:
-
-- libdcp itself only *generates* SMPTE KDMs (`/* XXX: SMPTE only */`, block
-  hardcoded to 138, `Standard::SMPTE` in every encrypt path); it can *read*
-  Interop but never writes it. The reference DCP library declines to emit them.
-- The Interop KDM XML (digicine `PROTO-ASDCP-KDM-20040311#` namespace, KeyIdList
-  without TypedKeyId, ETM element differences) has no authoritative schema or
-  reference sample in the suite to validate against. dcpdoctor's KDM validator is
-  substring-based and would "pass" almost anything, proving nothing.
-- Shipping an unvalidatable crypto artifact that no reference implementation
-  generates is the fail-loud-vs-fake anti-pattern. A subtly-wrong KDM is worse
-  than none.
-
-Interop KDMs are legacy; modern servers accept SMPTE KDMs. Build only if a real
-need appears together with a reference Interop KDM to diff against. Effort if so:
-~half a day (drop KeyType from the 134-byte block, add the digicine namespace and
-a KeyIdList-without-TypedKeyId branch to build_kdm_xml, a format enum on
-KdmConfig, and a CLI `--format interop`), plus real-gear validation.
+Implemented: postkit gained `KdmConfig.format` (Smpte/Interop); dcpwizard threads
+it via `kdm --format` and `kdm-batch --format` (default smpte). Interop uses the
+digicine `PROTO-ASDCP-KDM-20040311#` namespace and the 134-byte key block (drops
+the 4-byte KeyType field vs SMPTE 138). Verified: the digicine namespace is
+present and xmlsec1 verifies the signature; postkit's own test asserts the
+134-byte block. Caveat unchanged: no reference Interop KDM exists in the suite to
+diff against and no compliant reference library *generates* Interop (libdcp only
+reads it). Treat Interop output as legacy and validate against real legacy gear
+before production use.
 
 ## Encode / colour / audio
 
-- Encode bandwidth is decorative: StreamEncodeOptions compression_ratio hardcoded
-  10.0 (PK/pipeline.rs); only fps is honoured now.
-- Colour: no P3-D65; `colour --target xyz` maps to bt709/linear (real transforms
-  only in the dcdm path).
+- Encode bandwidth: the GUI now maps the target Mbps to the J2K compression ratio
+  via run_encode_with_ratio (raw = w*h*36); CLI create/pipeline already did. The
+  CLI create path and transcode-dcp share `encode::bandwidth_to_ratio` for this.
+- Encoder: grok only (openjpeg removed). Build needs libgrokj2k on the pkg-config
+  path (grok-ffi links it); runtime needs it on the loader path (LD_LIBRARY_PATH).
+- Colour: `colour --target xyz` now routes through the real DCDM transform (fails
+  loud on an unsupported source). P3-D65 still not added (would need a postkit
+  change, which is frozen here).
 - Markers: only FFOC/LFOC emitted; the other eight are defined but never placed.
 
 ## HDR, ingest, conform (mostly postkit-side)
@@ -87,27 +152,42 @@ KdmConfig, and a CLI `--format interop`), plus real-gear validation.
 
 ## Export, automation, misc
 
-- Export to ProRes/H.264/H.265/DNxHR: real ffmpeg code but only reachable via the
-  batch daemon job type (no subcommand, no GUI).
-- Watch folder only detects finished DCPs; webhooks never triggered by the daemon.
+- Export to ProRes/H.264/H.265/DNxHR: now exposed as `dcpwizard export` (was only
+  reachable via the batch daemon job type).
+- Watch folder: `watch --webhook-url` POSTs a JSON notification when a DCP is
+  detected (was configured but never fired).
 - Job queue progress jumps 0→100; cancel only affects pending jobs; `serve` uses a
   separate in-process queue.
-- copy-to-drive verify reads back without fsync/O_DIRECT; verify --output .pdf falls
-  back to plain text.
+- copy-to-drive verify now flushes to the device (sync_all) and drops the page
+  cache (posix_fadvise DONTNEED) before reading back, so verification is real.
+  `verify --output .pdf` removed (it silently produced plain text).
 - Trailer output is mp4 (no DCP/CPL); accessibility check is substring matching.
 
 ## GUI (remaining)
 
-- "Show in Files" likely broken (plugin:shell open with bare path vs URL-only validation).
-- Encode/transcode panels: resolution/framerate selects, transcode format/bit-depth,
-  copy "verify after copy" checkbox are still decorative.
-- scope/flat/full collapses to bare 2K/4K; content kind "episode" becomes Feature.
+- "Show in Files" fixed: uses tauri-plugin-opener `revealItemInDir` (the shell
+  `open` call only accepted URLs).
+- Transcode format/bit-depth now wired (CLI transcode gained --format/--bit-depth);
+  the copy "verify after copy" checkbox was removed (copy always hash-verifies).
+- scope/flat/full now map to the correct container dimensions; content kind
+  "episode" maps to a real ContentKind (ContentType::Episode added).
+- KDM panel gained a Format select (smpte/interop), wired straight into the
+  `kdm --format` CLI arg (the panel builds args directly, so this is cheap).
+- Create-panel 3D/Atmos pickers NOT wired: the create panel goes through the
+  tauri `submit_job` -> JobConfig -> run_job job queue, not the CLI, so adding
+  `--right-eye`/`--atmos` needs plumbing through the command signature, JobConfig
+  and run_job (structural). Deferred. The CLI path (`create --right-eye/--atmos`)
+  is the way to build 3D/Atmos DCPs for now.
+- Added the asdcplib `[patch]` to gui/src-tauri/Cargo.toml (mirrors rust/Cargo.toml).
+  The postkit MCA bump calls asdcplib::open_write_mca, absent from the git-pinned
+  asdcplib; without the patch the GUI's postkit no longer compiles.
 
 ## Dedup (remaining)
 
-- dcp_diff.rs ~75% similar to imfwizard imp_diff.rs; candidate shared postkit module.
-- Dead unadvertised modules to delete or wire: dcp_diff, plugin, preferences,
-  geometry (PillarBox == Letterbox), prores re-exports.
+- multi_cpl.rs kept: list_cpls/get_timeline are load-bearing for VF (vf.rs) and the
+  GUI timeline panel (gui timeline.rs). Its create_multi_cpl (multi-CPL timeline
+  feature) is still unbuilt.
+- Deleted (zero callers): dcp_diff, plugin, preferences, geometry, prores shim.
 
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)
 
@@ -128,9 +208,23 @@ other:
   setup and build orchestration; they already delegate the encode to
   postkit::pipeline. Diverged enough (lib.rs module names + terminal guard,
   pipeline.rs 467 vs 382 lines) that unifying would need config flags per divergence.
-- .github/workflows/release.yml, gui-release.yml — copies across dcpwizard,
+  2026-07 honesty pass edited pipeline.rs (bandwidth->ratio via
+  run_encode_with_ratio, scope/flat/full container dims, episode ContentKind) and
+  lib.rs (register tauri_plugin_opener). imfwizard already wires bandwidth->ratio;
+  mirror the opener plugin + any container/ContentKind logic that applies there.
+- .github/workflows/ci.yml, release.yml, gui-release.yml — copies across dcpwizard,
   imfwizard, dcpdoctor differing by binary/artifact names + per-app build deps.
-  Separate git repos, so no shared reusable-workflow without a central repo. Keep aligned by hand.
+  Separate git repos, so no shared reusable-workflow without a central repo. Keep
+  aligned by hand. Grok CI addressed 2026-07-21: every job that compiles the rust
+  workspace (ci build + gui, release build + deb, gui-release build-gui) has a
+  cached "Setup grok" step that builds grok v20.3.6 from source with cmake, installs
+  to $GITHUB_WORKSPACE/grok-install, and exports PKG_CONFIG_PATH/LD_LIBRARY_PATH
+  (+ DYLD + bin on PATH) via $GITHUB_ENV. actions/cache keyed on grok tag + runner
+  os, so the cmake build runs once per tag bump. Linux + macOS only; windows legs
+  are continue-on-error since the grok source build there is not wired up. No
+  openjpeg system deps were present to drop. imfwizard mirrors the same step but
+  only in ci (it runs grk_compress at runtime, does not link grok-ffi); dcpdoctor
+  needs no grok (postkit dep has no grok-ffi, no grok usage).
 - tests/cli_flags_test.sh — NOT the same harness as imfwizard's anymore (this one
   runs the binary and checks clap parse errors; imf parses main.js). Different CLIs,
   leave separate.

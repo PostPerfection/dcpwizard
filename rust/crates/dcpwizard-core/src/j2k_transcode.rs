@@ -1,149 +1,622 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-/// J2K transcoding configuration for re-encoding at different bitrate/parameters.
+use asdcplib::jp2k::MxfReader;
+use postkit::grok_encoder::{self, CompressParams, RawFrame};
+
+/// 16 MB covers a single 4K J2K frame.
+const MAX_FRAME_BUF: usize = 16 * 1024 * 1024;
+
+/// Re-encode an existing DCP's picture essence at a different bandwidth (and,
+/// optionally, resolution), copying audio and subtitle tracks unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct J2kTranscodeConfig {
+pub struct DcpTranscodeConfig {
     pub input_dir: PathBuf,
     pub output_dir: PathBuf,
+    /// target picture bandwidth in Mbit/s (required; 0 is rejected)
     pub target_bitrate_mbps: u32,
-    pub resolution_width: u32,
-    pub resolution_height: u32,
-    pub cinema_profile: String,
+    /// optional target resolution; 0 keeps the source dimensions
+    pub target_width: u32,
+    pub target_height: u32,
 }
 
-/// Re-encode JPEG 2000 codestream files at a different bitrate using grk_compress.
-///
-/// Input: directory of J2K files. Each frame is decoded and re-encoded.
-pub fn transcode_j2k(config: &J2kTranscodeConfig) -> i32 {
-    if !config.input_dir.exists() {
-        tracing::error!(
-            "Input J2K directory not found: {}",
-            config.input_dir.display()
-        );
+/// One MXF that ships in the output DCP (declared in CPL/PKL/ASSETMAP).
+struct ShippedAsset {
+    id: String,
+    filename: String,
+    hash: String,
+    size: u64,
+}
+
+/// Result of re-encoding one reel's picture track.
+struct NewPicture {
+    id: String,
+    filename: String,
+    hash: String,
+    size: u64,
+    duration: u64,
+    width: u32,
+    height: u32,
+    edit_rate_num: u32,
+    edit_rate_den: u32,
+}
+
+/// Transcode an existing DCP: re-encode every reel's picture essence to the
+/// target bandwidth, copy audio/subtitle tracks verbatim, and emit a fresh
+/// CPL/PKL/ASSETMAP. Fails loud on encrypted input.
+pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
+    if config.target_bitrate_mbps == 0 {
+        tracing::error!("--video-bit-rate is required and must be > 0");
         return -1;
     }
+    if !config.input_dir.exists() {
+        tracing::error!("Input DCP not found: {}", config.input_dir.display());
+        return -1;
+    }
+    if config.input_dir == config.output_dir {
+        tracing::error!("output must differ from input");
+        return -1;
+    }
+
+    let cpls = crate::multi_cpl::list_cpls(&config.input_dir);
+    let Some(cpl) = cpls.first() else {
+        tracing::error!("No CPL found in {}", config.input_dir.display());
+        return -1;
+    };
+    let cpl_path = config.input_dir.join(&cpl.file_path);
+    let cpl_content = std::fs::read_to_string(&cpl_path).unwrap_or_default();
+    let timeline = crate::multi_cpl::get_timeline(&cpl_path);
+    if timeline.is_empty() {
+        tracing::error!("CPL has no reels");
+        return -1;
+    }
+
+    // fail loud on encryption: the CPL carries KeyId elements and every essence
+    // MXF reports encrypted_essence. We cannot re-encode what we cannot decode.
+    if cpl_content.contains("<KeyId>") {
+        tracing::error!("input DCP is encrypted; transcode requires plaintext essence");
+        return -1;
+    }
+
+    let standard = if cpl_content.contains("digicine.com") {
+        crate::Standard::Interop
+    } else {
+        crate::Standard::Smpte
+    };
+
+    let grk_decompress = match find_grk_decompress() {
+        Some(p) => p,
+        None => {
+            tracing::error!("grk_decompress not found (expected ~/bin/grok/bin or PATH)");
+            return -1;
+        }
+    };
+    let lib_path = crate::grok::grok_lib_path();
 
     if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
         tracing::error!("Failed to create output directory: {e}");
         return -1;
     }
 
-    let mut frames: Vec<PathBuf> = std::fs::read_dir(&config.input_dir)
+    grok_encoder::initialize(0);
+
+    let mut cpl_reels: Vec<crate::cpl::CplReel> = Vec::new();
+    let mut shipped: Vec<ShippedAsset> = Vec::new();
+
+    for entry in &timeline {
+        let src_pic = PathBuf::from(&entry.picture_file);
+        if entry.picture_file.is_empty() || !src_pic.exists() {
+            tracing::error!("reel {} picture MXF not found", entry.reel_number);
+            return -1;
+        }
+        if is_encrypted(&src_pic) {
+            tracing::error!("reel {} picture essence is encrypted", entry.reel_number);
+            return -1;
+        }
+
+        let Some(pic) = transcode_picture(&src_pic, config, &grk_decompress, &lib_path) else {
+            return -1;
+        };
+
+        // copy audio verbatim, keeping its asset id (byte-identical essence)
+        let sound = match copy_track(
+            &entry.sound_file,
+            &entry.sound_asset_id,
+            "sound",
+            &config.output_dir,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        };
+        // copy subtitle verbatim, if present
+        let subtitle = match copy_track(
+            &entry.subtitle_file,
+            &entry.subtitle_asset_id,
+            "subtitle",
+            &config.output_dir,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        };
+
+        let subtitle_lang = if entry.subtitle_language.is_empty() {
+            None
+        } else {
+            Some(entry.subtitle_language.clone())
+        };
+
+        cpl_reels.push(crate::cpl::CplReel {
+            reel_id: uuid::Uuid::new_v4().to_string(),
+            picture_id: pic.id.clone(),
+            picture_width: pic.width,
+            picture_height: pic.height,
+            picture_edit_rate_num: pic.edit_rate_num,
+            picture_edit_rate_den: pic.edit_rate_den,
+            picture_duration: pic.duration,
+            picture_entry_point: 0,
+            picture_key_id: None,
+            sound_id: sound.as_ref().map(|s| s.id.clone()),
+            sound_edit_rate_num: pic.edit_rate_num,
+            sound_edit_rate_den: pic.edit_rate_den,
+            sound_duration: if sound.is_some() { pic.duration } else { 0 },
+            sound_entry_point: 0,
+            sound_key_id: None,
+            subtitle_id: subtitle.as_ref().map(|s| s.id.clone()),
+            subtitle_edit_rate_num: pic.edit_rate_num,
+            subtitle_edit_rate_den: pic.edit_rate_den,
+            subtitle_duration: if subtitle.is_some() { pic.duration } else { 0 },
+            subtitle_entry_point: 0,
+            subtitle_language: subtitle_lang,
+            stereoscopic: false,
+            aux_data: None,
+        });
+
+        shipped.push(ShippedAsset {
+            id: pic.id,
+            filename: pic.filename,
+            hash: pic.hash,
+            size: pic.size,
+        });
+        if let Some(s) = sound {
+            shipped.push(s);
+        }
+        if let Some(s) = subtitle {
+            shipped.push(s);
+        }
+    }
+
+    // ── CPL ────────────────────────────────────────────────────────────
+    let cpl_uuid = uuid::Uuid::new_v4().to_string();
+    let out_cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
+    let content_kind = if cpl.content_kind.is_empty() {
+        "feature".to_string()
+    } else {
+        cpl.content_kind.clone()
+    };
+    let cpl_config = crate::cpl::CplConfig {
+        title: cpl.content_title.clone(),
+        content_kind,
+        rating: String::new(),
+        reels: cpl_reels,
+        standard,
+    };
+    if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &out_cpl_path) != 0 {
+        tracing::error!("Failed to generate CPL");
+        return -1;
+    }
+
+    // ── PKL ────────────────────────────────────────────────────────────
+    let pkl_uuid = uuid::Uuid::new_v4().to_string();
+    let cpl_hash = crate::hash::hash_file(&out_cpl_path).unwrap_or_default();
+    let cpl_size = std::fs::metadata(&out_cpl_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let mut pkl_entries = vec![crate::pkl::PklEntry {
+        id: cpl_uuid.clone(),
+        asset_type: "text/xml".into(),
+        file: out_cpl_path.clone(),
+        hash: cpl_hash,
+        size: cpl_size,
+    }];
+    for a in &shipped {
+        pkl_entries.push(crate::pkl::PklEntry {
+            id: a.id.clone(),
+            asset_type: "application/mxf".into(),
+            file: config.output_dir.join(&a.filename),
+            hash: a.hash.clone(),
+            size: a.size,
+        });
+    }
+    let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, &pkl_path) != 0 {
+        tracing::error!("Failed to generate PKL");
+        return -1;
+    }
+
+    // ── ASSETMAP ───────────────────────────────────────────────────────
+    let mut am_entries = vec![
+        crate::assetmap::AssetMapEntry {
+            id: pkl_uuid,
+            path: file_name(&pkl_path),
+            packing_list: true,
+        },
+        crate::assetmap::AssetMapEntry {
+            id: cpl_uuid,
+            path: file_name(&out_cpl_path),
+            packing_list: false,
+        },
+    ];
+    for a in &shipped {
+        am_entries.push(crate::assetmap::AssetMapEntry {
+            id: a.id.clone(),
+            path: a.filename.clone(),
+            packing_list: false,
+        });
+    }
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard) != 0 {
+        tracing::error!("Failed to generate ASSETMAP");
+        return -1;
+    }
+
+    tracing::info!(
+        "Transcoded DCP to {} ({} reel(s) re-encoded at {} Mbps)",
+        config.output_dir.display(),
+        timeline.len(),
+        config.target_bitrate_mbps
+    );
+    0
+}
+
+/// Re-encode one picture MXF at the target bandwidth. Extracts each J2K frame,
+/// decodes it to a TIFF via grk_decompress, re-encodes the sequence with grok at
+/// the target ratio, wraps a new picture MXF, and returns its identity.
+fn transcode_picture(
+    src_mxf: &Path,
+    config: &DcpTranscodeConfig,
+    grk_decompress: &Path,
+    lib_path: &str,
+) -> Option<NewPicture> {
+    let mut reader = MxfReader::new();
+    if let Err(e) = reader.open_read(&src_mxf.to_string_lossy()) {
+        tracing::error!("Failed to open picture MXF {}: {e}", src_mxf.display());
+        return None;
+    }
+    let desc = match reader.picture_descriptor() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Failed to read picture descriptor: {e}");
+            return None;
+        }
+    };
+    let frame_count = desc.container_duration;
+    if frame_count == 0 {
+        tracing::error!("picture MXF {} has no frames", src_mxf.display());
+        return None;
+    }
+    let src_w = desc.stored_width;
+    let src_h = desc.stored_height;
+    let edit_num = desc.edit_rate.numerator.max(1) as u32;
+    let edit_den = desc.edit_rate.denominator.max(1) as u32;
+    let fps = (edit_num as f64 / edit_den as f64).round() as u32;
+
+    let resize = config.target_width > 0 && config.target_height > 0;
+    let (out_w, out_h) = if resize {
+        (config.target_width, config.target_height)
+    } else {
+        (src_w, src_h)
+    };
+
+    let ratio = crate::encode::bandwidth_to_ratio(out_w, out_h, fps, config.target_bitrate_mbps);
+
+    let work = config
+        .output_dir
+        .join(format!(".transcode_{}", uuid::Uuid::new_v4()));
+    let tiff_dir = work.join("tiff");
+    let j2k_dir = work.join("j2k");
+    if std::fs::create_dir_all(&tiff_dir).is_err() || std::fs::create_dir_all(&j2k_dir).is_err() {
+        tracing::error!("Failed to create transcode work dir");
+        return None;
+    }
+
+    // decode every frame to a TIFF (grk_decompress emits raw XYZ components)
+    let mut buf = vec![0u8; MAX_FRAME_BUF];
+    for i in 0..frame_count {
+        let n = match reader.read_frame(i, &mut buf, None, None) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::error!("Failed to read frame {i}: {e}");
+                let _ = std::fs::remove_dir_all(&work);
+                return None;
+            }
+        };
+        let j2c = work.join(format!("frame_{i:07}.j2c"));
+        let tif = tiff_dir.join(format!("frame_{i:07}.tif"));
+        if std::fs::write(&j2c, &buf[..n]).is_err() {
+            tracing::error!("Failed to write extracted frame {i}");
+            let _ = std::fs::remove_dir_all(&work);
+            return None;
+        }
+        if !decompress_frame(grk_decompress, lib_path, &j2c, &tif) {
+            let _ = std::fs::remove_dir_all(&work);
+            return None;
+        }
+        let _ = std::fs::remove_file(&j2c);
+        if resize && !scale_tiff(&tif, out_w, out_h) {
+            let _ = std::fs::remove_dir_all(&work);
+            return None;
+        }
+    }
+
+    if !encode_tiffs(&tiff_dir, &j2k_dir, ratio, fps) {
+        let _ = std::fs::remove_dir_all(&work);
+        return None;
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let filename = format!("picture_{id}.mxf");
+    let out_mxf = config.output_dir.join(&filename);
+    let track = crate::mxf_wrap::wrap_mxf_files(
+        sorted_files(&j2k_dir),
+        &out_mxf,
+        crate::mxf_wrap::MxfType::J2kPicture,
+        fps,
+        None,
+        None,
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    let track = track?;
+
+    let hash = crate::hash::hash_file(&out_mxf).ok()?;
+    let size = std::fs::metadata(&out_mxf).map(|m| m.len()).unwrap_or(0);
+    Some(NewPicture {
+        id: track.uuid,
+        filename,
+        hash,
+        size,
+        duration: if track.duration > 0 {
+            track.duration
+        } else {
+            frame_count as u64
+        },
+        width: out_w,
+        height: out_h,
+        edit_rate_num: edit_num,
+        edit_rate_den: edit_den,
+    })
+}
+
+/// Encode a directory of TIFFs to J2K with grok at the given ratio. XYZ transform
+/// is off: the decoded components are already XYZ, so re-encoding preserves them.
+fn encode_tiffs(tiff_dir: &Path, out_dir: &Path, ratio: f64, fps: u32) -> bool {
+    let frames = sorted_files(tiff_dir);
+    if frames.is_empty() {
+        tracing::error!("no decoded frames to re-encode");
+        return false;
+    }
+    let total = frames.len() as u64;
+    let params = CompressParams {
+        compression_ratio: ratio,
+        frame_rate: fps as u16,
+        ..CompressParams::default()
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut iter = frames.into_iter().enumerate();
+    let result = grok_encoder::encode_pipeline(
+        out_dir,
+        &params,
+        total,
+        &cancel,
+        || {
+            let (idx, path) = iter.next()?;
+            match crate::grok::load_tiff(&path) {
+                Ok(tf) => Some(RawFrame::Planar {
+                    components: tf.components,
+                    width: tf.width,
+                    height: tf.height,
+                    precision: tf.precision,
+                    index: idx as u64,
+                }),
+                Err(e) => {
+                    tracing::error!("Failed to load {}: {e}", path.display());
+                    None
+                }
+            }
+        },
+        |_p| {},
+    );
+    if !result.success {
+        tracing::error!("re-encode failed: {}", result.error);
+    }
+    result.success
+}
+
+/// Copy an essence MXF into the output DCP unchanged, keeping its asset id.
+/// Returns `Ok(None)` when there is no such track.
+fn copy_track(
+    src_file: &str,
+    asset_id: &str,
+    prefix: &str,
+    out_dir: &Path,
+) -> Result<Option<ShippedAsset>, String> {
+    if src_file.is_empty() || asset_id.is_empty() {
+        return Ok(None);
+    }
+    let src = PathBuf::from(src_file);
+    if !src.exists() {
+        return Err(format!("{prefix} MXF not found: {src_file}"));
+    }
+    let filename = format!("{prefix}_{asset_id}.mxf");
+    let dst = out_dir.join(&filename);
+    std::fs::copy(&src, &dst).map_err(|e| format!("failed to copy {prefix} MXF: {e}"))?;
+    let hash = crate::hash::hash_file(&dst)?;
+    let size = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
+    Ok(Some(ShippedAsset {
+        id: asset_id.to_string(),
+        filename,
+        hash,
+        size,
+    }))
+}
+
+/// True when the MXF reports encrypted essence.
+fn is_encrypted(mxf: &Path) -> bool {
+    let mut reader = MxfReader::new();
+    if reader.open_read(&mxf.to_string_lossy()).is_err() {
+        return false;
+    }
+    reader
+        .writer_info()
+        .map(|w| w.encrypted_essence)
+        .unwrap_or(false)
+}
+
+/// Decode a single J2K codestream to a TIFF with grk_decompress.
+fn decompress_frame(grk: &Path, lib_path: &str, input: &Path, output: &Path) -> bool {
+    let out = std::process::Command::new(grk)
+        .env("LD_LIBRARY_PATH", lib_path)
+        .arg("-i")
+        .arg(input)
+        .arg("-o")
+        .arg(output)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => true,
+        Ok(o) => {
+            tracing::error!(
+                "grk_decompress failed for {}: {}",
+                input.display(),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            tracing::error!("Failed to run grk_decompress: {e}");
+            false
+        }
+    }
+}
+
+/// Scale a TIFF in place to the target dimensions using ffmpeg.
+fn scale_tiff(tif: &Path, w: u32, h: u32) -> bool {
+    let tmp = tif.with_extension("scaled.tif");
+    let out = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-i")
+        .arg(tif)
+        .arg("-vf")
+        .arg(format!("scale={w}:{h}"))
+        .arg(&tmp)
+        .output();
+    match out {
+        Ok(o) if o.status.success() => std::fs::rename(&tmp, tif).is_ok(),
+        Ok(o) => {
+            tracing::error!(
+                "ffmpeg scale failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            tracing::error!("Failed to run ffmpeg: {e}");
+            false
+        }
+    }
+}
+
+fn find_grk_decompress() -> Option<PathBuf> {
+    // sibling of grk_compress in ~/bin/grok/bin, else PATH
+    if let Some(comp) = crate::grok::find_grk_compress()
+        && let Some(dir) = comp.parent()
+    {
+        let p = dir.join("grk_decompress");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    std::process::Command::new("which")
+        .arg("grk_decompress")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| PathBuf::from(s.trim()))
+}
+
+fn sorted_files(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| matches!(e, "j2c" | "j2k"))
-        })
+        .filter(|p| p.is_file())
         .collect();
-    frames.sort();
+    v.sort();
+    v
+}
 
-    if frames.is_empty() {
-        tracing::error!("No J2K frames found in {}", config.input_dir.display());
-        return -1;
+fn file_name(p: &Path) -> String {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_track_absent_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        // no file and no id -> no track to ship
+        assert!(copy_track("", "", "sound", dir.path()).unwrap().is_none());
+        assert!(
+            copy_track("", "some-id", "sound", dir.path())
+                .unwrap()
+                .is_none()
+        );
     }
 
-    let bitrate = if config.target_bitrate_mbps == 0 {
-        250
-    } else {
-        config.target_bitrate_mbps
-    };
-
-    let profile = if config.cinema_profile.is_empty() {
-        "cinema2K"
-    } else {
-        &config.cinema_profile
-    };
-
-    let total = frames.len();
-    tracing::info!("Re-encoding {total} J2K frames at {bitrate} Mbps");
-
-    for (i, frame) in frames.iter().enumerate() {
-        let stem = frame
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("frame");
-        let output = config.output_dir.join(format!("{stem}.j2c"));
-
-        // grk_decompress to intermediate, then grk_compress
-        let tmp_tiff = config.output_dir.join(format!("{stem}_tmp.tif"));
-
-        // Decompress J2K → TIFF
-        let decompress = std::process::Command::new("grk_decompress")
-            .arg("-i")
-            .arg(frame)
-            .arg("-o")
-            .arg(&tmp_tiff)
-            .output();
-
-        match &decompress {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                tracing::error!(
-                    "grk_decompress failed for {}: {}",
-                    frame.display(),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                let _ = std::fs::remove_file(&tmp_tiff);
-                return -1;
-            }
-            Err(e) => {
-                tracing::error!("Failed to run grk_decompress: {e}");
-                return -1;
-            }
-        }
-
-        // Re-compress TIFF → J2K at new bitrate
-        let mut compress_cmd = std::process::Command::new("grk_compress");
-        compress_cmd
-            .arg("-i")
-            .arg(&tmp_tiff)
-            .arg("-o")
-            .arg(&output)
-            .arg("-r")
-            .arg(bitrate.to_string())
-            .arg(format!("-{profile}"))
-            .arg("24");
-
-        if config.resolution_width > 0 && config.resolution_height > 0 {
-            compress_cmd
-                .arg("-W")
-                .arg(config.resolution_width.to_string())
-                .arg("-H")
-                .arg(config.resolution_height.to_string());
-        }
-
-        let compress = compress_cmd.output();
-        let _ = std::fs::remove_file(&tmp_tiff);
-
-        match compress {
-            Ok(o) if o.status.success() => {
-                if (i + 1) % 100 == 0 || i + 1 == total {
-                    tracing::info!("Re-encoded [{}/{}] frames", i + 1, total);
-                }
-            }
-            Ok(o) => {
-                tracing::error!(
-                    "grk_compress failed for {}: {}",
-                    frame.display(),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                return -1;
-            }
-            Err(e) => {
-                tracing::error!("Failed to run grk_compress: {e}");
-                return -1;
-            }
-        }
+    #[test]
+    fn copy_track_missing_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = copy_track("/nope/missing.mxf", "abc", "sound", dir.path());
+        assert!(r.is_err());
     }
 
-    tracing::info!(
-        "Re-encoded {total} frames to {}",
-        config.output_dir.display()
-    );
-    0
+    #[test]
+    fn copy_track_copies_and_keeps_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("in.mxf");
+        std::fs::write(&src, b"essence bytes").unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let a = copy_track(&src.to_string_lossy(), "the-id", "sound", &out)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.id, "the-id");
+        assert_eq!(a.filename, "sound_the-id.mxf");
+        assert!(out.join(&a.filename).exists());
+        assert_eq!(a.size, 13);
+    }
+
+    #[test]
+    fn transcode_rejects_zero_bitrate() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = DcpTranscodeConfig {
+            input_dir: dir.path().to_path_buf(),
+            output_dir: dir.path().join("out"),
+            target_bitrate_mbps: 0,
+            ..Default::default()
+        };
+        assert_eq!(transcode_dcp(&config), -1);
+    }
 }

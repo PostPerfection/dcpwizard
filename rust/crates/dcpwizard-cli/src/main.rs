@@ -29,6 +29,12 @@ enum Commands {
         /// Audio WAV file
         #[arg(long)]
         audio: Option<String>,
+        /// SRT subtitle file to package as a SMPTE timed-text track (ST 428-7)
+        #[arg(long)]
+        subtitle: Option<String>,
+        /// Subtitle language code (e.g. "en", "fr")
+        #[arg(long, default_value = "en")]
+        subtitle_language: String,
         /// Output directory
         #[arg(short, long)]
         output: String,
@@ -45,9 +51,6 @@ enum Commands {
         /// plaintext AES keys: point it outside the DCP and keep it secret.
         #[arg(long, required_if_eq("encrypt", "true"))]
         key_out: Option<String>,
-        /// J2K encoder: "openjpeg" (default) or "grok"
-        #[arg(long, default_value = "openjpeg")]
-        encoder: String,
         /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV
         #[arg(long)]
         content_type: Option<String>,
@@ -66,6 +69,21 @@ enum Commands {
         /// J2K bandwidth in Mbit/s (default: 250 for 2K, 500 for 4K)
         #[arg(long)]
         video_bit_rate: Option<u32>,
+        /// Split into reels of at most N minutes each (default: single reel)
+        #[arg(long)]
+        reel_length: Option<u32>,
+        /// Right-eye video/J2K for a stereoscopic 3D DCP (main input is left eye)
+        #[arg(long)]
+        right_eye: Option<String>,
+        /// Dolby Atmos / DCData bitstream to wrap as a ST 429-18 auxiliary track
+        #[arg(long)]
+        atmos: Option<String>,
+        /// Sound channel index (0-based) carrying the Hearing Impaired (HI) track
+        #[arg(long)]
+        hi_channel: Option<u32>,
+        /// Sound channel index (0-based) carrying the Visually Impaired (VI-N) track
+        #[arg(long)]
+        vi_channel: Option<u32>,
     },
     /// Create a supplemental Version File (VF) DCP against an Original Version
     CreateVf {
@@ -126,6 +144,30 @@ enum Commands {
         /// Output directory
         #[arg(short, long)]
         output: String,
+        /// Image format: tiff (default), dpx, exr, png
+        #[arg(long, default_value = "tiff")]
+        format: String,
+        /// Bit depth: 16 (default), 10, or 8
+        #[arg(long, default_value = "16")]
+        bit_depth: u32,
+    },
+    /// Re-encode an existing DCP's picture essence to a lower bandwidth
+    TranscodeDcp {
+        /// Input DCP directory
+        #[arg(short, long)]
+        input: String,
+        /// Output DCP directory (must differ from input)
+        #[arg(short, long)]
+        output: String,
+        /// Target picture bandwidth in Mbit/s
+        #[arg(long)]
+        video_bit_rate: u32,
+        /// Optional target width (with --height, rescales the picture)
+        #[arg(long)]
+        width: Option<u32>,
+        /// Optional target height (with --width, rescales the picture)
+        #[arg(long)]
+        height: Option<u32>,
     },
     /// Verify an existing DCP
     Verify {
@@ -140,7 +182,7 @@ enum Commands {
         /// Require strict SMPTE Bv2.1 compliance
         #[arg(long)]
         strict: bool,
-        /// Write report to file (.txt, .html, or .pdf)
+        /// Write report to file (.txt or .html)
         #[arg(short, long)]
         output: Option<String>,
         /// Quiet mode (exit code only, no output)
@@ -181,13 +223,13 @@ enum Commands {
         /// Valid to: ISO 8601 or a relative duration (e.g. "2 weeks", "30 days")
         #[arg(short = 't', long, default_value = "2 weeks")]
         valid_to: String,
-        /// KDM formulation: modified-transitional-1 (default), dci-any, dci-specific
-        #[arg(long, default_value = "modified-transitional-1")]
-        formulation: String,
         /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
         /// this KDM should carry. Required to unlock an encrypted DCP.
         #[arg(long)]
         keys: Option<String>,
+        /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
+        #[arg(long, default_value = "smpte")]
+        format: String,
     },
     /// Re-wrap a DKDM to a new recipient
     KdmRewrap {
@@ -252,6 +294,27 @@ enum Commands {
     Watch {
         /// Directory to watch
         dir: String,
+        /// POST a JSON notification to this URL when a new DCP is detected
+        #[arg(long)]
+        webhook_url: Option<String>,
+    },
+    /// Export a DCP picture MXF to a delivery format via ffmpeg
+    Export {
+        /// Input picture MXF
+        #[arg(long)]
+        input: String,
+        /// Output file (or directory for image-sequence)
+        #[arg(short, long)]
+        output: String,
+        /// Format: prores, h264, h265, dnxhr, image-sequence
+        #[arg(long, default_value = "h264")]
+        format: String,
+        /// Quality CRF for h264/h265 (lower is better; default 18)
+        #[arg(long, default_value = "18")]
+        crf: u32,
+        /// Optional sound MXF to mux into the output
+        #[arg(long)]
+        audio: Option<String>,
     },
     /// Generate shell completion
     Completion {
@@ -493,13 +556,13 @@ enum Commands {
         /// Valid to (ISO 8601 or relative duration, e.g. "2 weeks")
         #[arg(short = 't', long, default_value = "2 weeks")]
         valid_to: String,
-        /// KDM formulation
-        #[arg(long, default_value = "modified-transitional-1")]
-        formulation: String,
         /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
         /// every generated KDM should carry.
         #[arg(long)]
         keys: Option<String>,
+        /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
+        #[arg(long, default_value = "smpte")]
+        format: String,
     },
 
     /// Package a trailer (ratings card + countdown leader + content)
@@ -832,18 +895,24 @@ fn run() {
             title,
             video,
             audio,
+            subtitle,
+            subtitle_language,
             output,
             standard,
             encrypt,
             key_out,
-            encoder,
             content_type,
             frame_rate,
             twok,
             fourk,
             threads,
             video_bit_rate,
+            reel_length,
             profile,
+            right_eye,
+            atmos,
+            hi_channel,
+            vi_channel,
         } => {
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
@@ -917,7 +986,7 @@ fn run() {
                 let j2k_dir = output_dir.join("j2k");
                 let _ = std::fs::create_dir_all(&j2k_dir);
 
-                tracing::info!("Detected video file input — using {} encoder", encoder);
+                tracing::info!("Detected video file input — using grok encoder");
 
                 // Probe video for frame rate and resolution
                 let video_info = dcpwizard_core::probe::probe_video(&video_path);
@@ -931,6 +1000,16 @@ fn run() {
                     .as_ref()
                     .map(|v| (v.width, v.height, v.total_frames))
                     .unwrap_or((2048, 1080, 0));
+
+                // reject an illegal fps/resolution combo before the encode runs
+                if let Err(e) = dcpwizard_core::hfr::validate_fps_resolution(
+                    fps,
+                    fourk,
+                    std_val == dcpwizard_core::Standard::Smpte,
+                ) {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
 
                 // Apply resolution override
                 if fourk {
@@ -953,14 +1032,11 @@ fn run() {
                 }
 
                 // Compute compression ratio from bitrate if specified
-                let compression_ratio = if let Some(mbps) = video_bit_rate {
-                    // DCI J2K: raw = width*height*36 bits/frame
-                    // ratio = raw_bits_per_frame / target_bits_per_frame
-                    let raw_bits = width as f64 * height as f64 * 36.0;
-                    let target_bits = (mbps as f64 * 1_000_000.0) / fps as f64;
-                    (raw_bits / target_bits).max(1.0)
-                } else {
-                    10.0
+                let compression_ratio = match video_bit_rate {
+                    Some(mbps) => {
+                        dcpwizard_core::encode::bandwidth_to_ratio(width, height, fps, mbps)
+                    }
+                    None => 10.0,
                 };
 
                 let _num_threads = threads.unwrap_or(0); // reserved for future use
@@ -977,49 +1053,26 @@ fn run() {
                     cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 });
 
-                let result = if encoder == "openjpeg" {
-                    postkit::openjpeg_encoder::encode_video_pipeline_opj(
-                        &video_path,
-                        &j2k_dir,
-                        &params,
-                        total_frames as u64,
-                        width,
-                        height,
-                        &cancel,
-                        |p: EncodeProgress| {
-                            let percent = if p.total_frames > 0 {
-                                (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
-                            } else {
-                                0.0
-                            };
-                            eprint!(
-                                "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
-                                p.frames_encoded, p.total_frames, percent, p.fps
-                            );
-                        },
-                    )
-                } else {
-                    grok_encoder::encode_video_pipeline(
-                        &video_path,
-                        &j2k_dir,
-                        &params,
-                        total_frames as u64,
-                        width,
-                        height,
-                        &cancel,
-                        |p: EncodeProgress| {
-                            let percent = if p.total_frames > 0 {
-                                (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
-                            } else {
-                                0.0
-                            };
-                            eprint!(
-                                "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
-                                p.frames_encoded, p.total_frames, percent, p.fps
-                            );
-                        },
-                    )
-                };
+                let result = grok_encoder::encode_video_pipeline(
+                    &video_path,
+                    &j2k_dir,
+                    &params,
+                    total_frames as u64,
+                    width,
+                    height,
+                    &cancel,
+                    |p: EncodeProgress| {
+                        let percent = if p.total_frames > 0 {
+                            (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
+                        } else {
+                            0.0
+                        };
+                        eprint!(
+                            "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
+                            p.frames_encoded, p.total_frames, percent, p.fps
+                        );
+                    },
+                );
                 eprintln!();
 
                 if !result.success {
@@ -1027,6 +1080,32 @@ fn run() {
                     std::process::exit(1);
                 }
                 tracing::info!("Encoded {} frames", result.frames_encoded);
+
+                // Stereoscopic: encode the right eye into its own dir at the same
+                // settings (main input is the left eye).
+                let right_eye_dir = if let Some(ref re) = right_eye {
+                    let re_path = PathBuf::from(re);
+                    let j2k_right = output_dir.join("j2k_right");
+                    let _ = std::fs::create_dir_all(&j2k_right);
+                    tracing::info!("Encoding right eye: {}", re_path.display());
+                    let re_result = grok_encoder::encode_video_pipeline(
+                        &re_path,
+                        &j2k_right,
+                        &params,
+                        total_frames as u64,
+                        width,
+                        height,
+                        &cancel,
+                        |_p: EncodeProgress| {},
+                    );
+                    if !re_result.success {
+                        tracing::error!("Right-eye encode failed: {}", re_result.error);
+                        std::process::exit(1);
+                    }
+                    Some(j2k_right)
+                } else {
+                    None
+                };
 
                 // Auto-demux audio from video if --audio not provided
                 let audio_path = if let Some(a) = audio {
@@ -1083,12 +1162,23 @@ fn run() {
                     max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(j2k_dir.clone()),
                     audio_path: audio_path.clone(),
+                    subtitle_path: subtitle.clone().map(PathBuf::from),
+                    subtitle_language: subtitle_language.clone(),
+                    reel_length_minutes: reel_length.unwrap_or(0),
+                    right_eye_dir: right_eye_dir.clone(),
+                    atmos_path: atmos.clone().map(PathBuf::from),
+                    hi_channel,
+                    vi_channel,
+                    stereo_3d: right_eye_dir.is_some(),
                     ..Default::default()
                 };
                 let code = dcpwizard_core::dcp::create_dcp(&config);
 
                 // Clean up intermediate files
                 let _ = std::fs::remove_dir_all(&j2k_dir);
+                if let Some(ref d) = right_eye_dir {
+                    let _ = std::fs::remove_dir_all(d);
+                }
                 if let Some(ref wav) = audio_path
                     && wav.file_name().and_then(|f| f.to_str()) == Some("audio_demux.wav")
                 {
@@ -1120,6 +1210,14 @@ fn run() {
                     max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(video_path),
                     audio_path: audio.map(PathBuf::from),
+                    subtitle_path: subtitle.map(PathBuf::from),
+                    subtitle_language,
+                    reel_length_minutes: reel_length.unwrap_or(0),
+                    stereo_3d: right_eye.is_some(),
+                    right_eye_dir: right_eye.map(PathBuf::from),
+                    atmos_path: atmos.map(PathBuf::from),
+                    hi_channel,
+                    vi_channel,
                     ..Default::default()
                 };
                 dcpwizard_core::dcp::create_dcp(&config)
@@ -1268,13 +1366,46 @@ fn run() {
             }
         }
 
-        Commands::Transcode { input, output } => {
+        Commands::Transcode {
+            input,
+            output,
+            format,
+            bit_depth,
+        } => {
+            // 8/10/16-bit packed RGB pixel formats ffmpeg understands for these codecs
+            let pixel_format = match bit_depth {
+                8 => "rgb24",
+                10 | 16 => "rgb48le",
+                other => {
+                    tracing::error!("unsupported bit depth {other}; use 8, 10 or 16");
+                    std::process::exit(1);
+                }
+            };
             let config = dcpwizard_core::transcode::TranscodeConfig {
                 input_file: PathBuf::from(input),
                 output_dir: PathBuf::from(output),
+                image_format: format,
+                pixel_format: pixel_format.to_string(),
                 ..Default::default()
             };
             dcpwizard_core::transcode::transcode_to_sequence(&config)
+        }
+
+        Commands::TranscodeDcp {
+            input,
+            output,
+            video_bit_rate,
+            width,
+            height,
+        } => {
+            let config = dcpwizard_core::j2k_transcode::DcpTranscodeConfig {
+                input_dir: PathBuf::from(input),
+                output_dir: PathBuf::from(output),
+                target_bitrate_mbps: video_bit_rate,
+                target_width: width.unwrap_or(0),
+                target_height: height.unwrap_or(0),
+            };
+            dcpwizard_core::j2k_transcode::transcode_dcp(&config)
         }
 
         Commands::Verify {
@@ -1349,9 +1480,16 @@ fn run() {
             output,
             valid_from,
             valid_to,
-            formulation,
             keys,
+            format,
         } => {
+            let format = match dcpwizard_core::kdm::parse_format(&format) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+            };
             let content_keys = match keys {
                 Some(path) => {
                     match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &cpl_id) {
@@ -1373,9 +1511,9 @@ fn run() {
                 signer_chain.into_iter().map(PathBuf::from).collect(),
                 valid_from,
                 valid_to,
-                formulation,
                 content_keys,
                 PathBuf::from(output),
+                format,
             )
         }
 
@@ -1424,16 +1562,66 @@ fn run() {
 
         Commands::Serve { bind } => dcpwizard_core::rest_api::start_rest_api(&bind),
 
-        Commands::Watch { dir } => {
+        Commands::Watch { dir, webhook_url } => {
+            let webhook = webhook_url.map(|url| postkit::webhook::WebhookConfig {
+                url,
+                ..Default::default()
+            });
             dcpwizard_core::watch::watch_directory(
                 &PathBuf::from(dir),
                 std::time::Duration::from_secs(5),
                 &|| false,
                 |p| {
                     tracing::info!("New DCP detected: {}", p.display());
+                    if let Some(ref cfg) = webhook {
+                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                        let evt = postkit::webhook::WebhookEvent {
+                            event_type: "dcp.detected".into(),
+                            job_id: name.to_string(),
+                            payload_json: postkit::webhook::build_job_completed_payload(
+                                name, p, 0.0,
+                            ),
+                            timestamp: String::new(),
+                        };
+                        let res = postkit::webhook::send_webhook(cfg, &evt);
+                        if !res.success {
+                            tracing::warn!("webhook delivery failed: {}", res.error);
+                        }
+                    }
                 },
             );
             0
+        }
+
+        Commands::Export {
+            input,
+            output,
+            format,
+            crf,
+            audio,
+        } => {
+            use dcpwizard_core::export::{ExportConfig, ExportFormat, export_dcp};
+            let fmt = match format.to_lowercase().as_str() {
+                "prores" => ExportFormat::ProRes,
+                "h264" | "x264" | "avc" => ExportFormat::H264,
+                "h265" | "hevc" | "x265" => ExportFormat::H265,
+                "dnxhr" | "dnxhd" => ExportFormat::DnxHr,
+                "image-sequence" | "images" | "png" => ExportFormat::ImageSequence,
+                other => {
+                    tracing::error!(
+                        "unknown export format '{other}'; use prores, h264, h265, dnxhr or image-sequence"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let config = ExportConfig {
+                input_mxf: PathBuf::from(input),
+                output_path: PathBuf::from(output),
+                format: fmt,
+                quality_crf: crf,
+                audio_mxf: audio.map(PathBuf::from),
+            };
+            export_dcp(&config)
         }
 
         Commands::Completion { shell } => {
@@ -1609,21 +1797,49 @@ fn run() {
             target,
             lut,
         } => {
-            let opts = postkit::colour::ColourConvertOptions {
-                input: std::path::PathBuf::from(&input),
-                output: std::path::PathBuf::from(&output),
-                source_space: parse_colour_space(&source),
-                target_space: parse_colour_space(&target),
-                lut_path: lut.map(std::path::PathBuf::from),
-            };
-            match postkit::colour::convert_colour(&opts) {
-                Ok(()) => {
-                    tracing::info!("Colour converted {source} -> {target}: {output}");
+            // X'Y'Z' (DCDM) is not an ffmpeg colorspace-filter target; route it
+            // through the real Rec.709/P3/Rec.2020 -> DCI X'Y'Z' transform in the
+            // dcdm module (fails loud on an unsupported source there).
+            if parse_colour_space(&target) == postkit::colour::ColourSpace::Xyz {
+                let opts = postkit::dcdm::DcdmOptions {
+                    input_dir: std::path::PathBuf::from(&input),
+                    output_dir: std::path::PathBuf::from(&output),
+                    encoding: postkit::dcdm::DcdmColourEncoding::Xyz12Bit,
+                    width: 0,
+                    height: 0,
+                    fps_num: 24,
+                    fps_den: 1,
+                    colour_space: source.clone(),
+                    lut_path: lut.map(std::path::PathBuf::from).unwrap_or_default(),
+                };
+                let result = postkit::dcdm::create_dcdm(&opts);
+                if result.success {
+                    tracing::info!(
+                        "Colour converted {source} -> xyz (DCDM): {} frames written",
+                        result.frames_written
+                    );
                     0
-                }
-                Err(e) => {
-                    tracing::error!("Colour conversion failed: {e}");
+                } else {
+                    tracing::error!("Colour conversion failed: {}", result.error);
                     1
+                }
+            } else {
+                let opts = postkit::colour::ColourConvertOptions {
+                    input: std::path::PathBuf::from(&input),
+                    output: std::path::PathBuf::from(&output),
+                    source_space: parse_colour_space(&source),
+                    target_space: parse_colour_space(&target),
+                    lut_path: lut.map(std::path::PathBuf::from),
+                };
+                match postkit::colour::convert_colour(&opts) {
+                    Ok(()) => {
+                        tracing::info!("Colour converted {source} -> {target}: {output}");
+                        0
+                    }
+                    Err(e) => {
+                        tracing::error!("Colour conversion failed: {e}");
+                        1
+                    }
                 }
             }
         }
@@ -1896,9 +2112,16 @@ fn run() {
             output_dir,
             valid_from,
             valid_to,
-            formulation,
             keys,
+            format,
         } => {
+            let format = match dcpwizard_core::kdm::parse_format(&format) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+            };
             let mut certs: Vec<String> = certs;
             if let Some(dir) = cert_dir {
                 match dcpwizard_core::kdm::certs_in_dir(&PathBuf::from(&dir)) {
@@ -1936,9 +2159,9 @@ fn run() {
                 signer_chain.into_iter().map(PathBuf::from).collect(),
                 valid_from,
                 valid_to,
-                formulation,
                 content_keys,
                 PathBuf::from(output_dir),
+                format,
             )
         }
 

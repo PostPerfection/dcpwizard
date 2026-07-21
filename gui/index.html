@@ -194,8 +194,12 @@
                       <option value="24">24 fps</option>
                       <option value="25">25 fps</option>
                       <option value="30">30 fps</option>
-                      <option value="48">48 fps (HFR)</option>
-                      <option value="60">60 fps (HFR)</option>
+                      <option value="48">48 fps (HFR, 2K)</option>
+                      <option value="50">50 fps (HFR, 2K)</option>
+                      <option value="60">60 fps (HFR, 2K)</option>
+                      <option value="96">96 fps (HFR, 2K)</option>
+                      <option value="100">100 fps (HFR, 2K)</option>
+                      <option value="120">120 fps (HFR, 2K)</option>
                       <option value="auto">Auto (from source)</option>
                     </select>
                   </div>
@@ -361,6 +365,13 @@
                 <input type="datetime-local" id="kdm-to">
               </div>
               <div class="prop-field">
+                <label>Format</label>
+                <select id="kdm-format">
+                  <option value="smpte" selected>SMPTE</option>
+                  <option value="interop">Interop (legacy)</option>
+                </select>
+              </div>
+              <div class="prop-field">
                 <label>Output</label>
                 <div class="input-with-btn">
                   <input id="kdm-output" type="text" placeholder="Select output…" readonly>
@@ -411,7 +422,12 @@
                   <option value="24">24 fps</option>
                   <option value="25">25 fps</option>
                   <option value="30">30 fps</option>
-                  <option value="48">48 fps (HFR)</option>
+                  <option value="48">48 fps (HFR, 2K)</option>
+                  <option value="50">50 fps (HFR, 2K)</option>
+                  <option value="60">60 fps (HFR, 2K)</option>
+                  <option value="96">96 fps (HFR, 2K)</option>
+                  <option value="100">100 fps (HFR, 2K)</option>
+                  <option value="120">120 fps (HFR, 2K)</option>
                 </select>
               </div>
               <button id="run-encode" class="btn-primary" disabled>Encode</button>
@@ -489,9 +505,7 @@
                   <button id="copy-browse-dest" class="btn-sm">…</button>
                 </div>
               </div>
-              <div class="prop-field">
-                <label><input type="checkbox" id="copy-verify" checked> Verify after copy</label>
-              </div>
+              <p class="field-hint">Every file is hash-verified against the source after copy.</p>
               <button id="copy-start" class="btn-primary" disabled>Copy DCP</button>
               <div id="copy-results" class="results-box"></div>
             </section>

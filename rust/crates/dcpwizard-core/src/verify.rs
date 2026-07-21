@@ -57,6 +57,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
             check_signatures: true,
             check_picture_details: !options.skip_picture_check,
             strict_smpte: false,
+            ov: None,
         }
     };
 

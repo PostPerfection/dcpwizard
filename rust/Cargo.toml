@@ -8,10 +8,10 @@ license = "GPL-3.0-or-later"
 version = "1.1.0"
 
 [workspace.dependencies]
-asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "cb3f3de" }
+asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "5fe4d61" }
 clap = { version = "4", features = ["derive"] }
-dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "ce050e5" }
-postkit = { path = "../extern/postkit", features = ["openjpeg"] }
+dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "888954f" }
+postkit = { path = "../extern/postkit", features = ["grok-ffi"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"

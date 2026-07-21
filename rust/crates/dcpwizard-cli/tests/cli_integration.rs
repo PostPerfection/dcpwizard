@@ -107,8 +107,7 @@ fn kdm_help() {
         .stdout(predicate::str::contains("--signer-cert"))
         .stdout(predicate::str::contains("--signer-key"))
         .stdout(predicate::str::contains("--valid-from"))
-        .stdout(predicate::str::contains("--valid-to"))
-        .stdout(predicate::str::contains("--formulation"));
+        .stdout(predicate::str::contains("--valid-to"));
 }
 
 #[test]

@@ -157,6 +157,14 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             sound_duration: sound.as_ref().map(|s| s.1).unwrap_or(0),
             sound_entry_point: 0,
             sound_key_id: None,
+            subtitle_id: None,
+            subtitle_edit_rate_num: 0,
+            subtitle_edit_rate_den: 0,
+            subtitle_duration: 0,
+            subtitle_entry_point: 0,
+            subtitle_language: None,
+            stereoscopic: false,
+            aux_data: None,
         });
     }
 
@@ -309,6 +317,7 @@ fn prepare_asset(
             mxf_type,
             frame_rate: fps,
             encryption: None,
+            mca_config: None,
         };
         let tf = crate::mxf_wrap::wrap_mxf_result(&wrap_config)?;
         let duration = if tf.duration > 0 {

@@ -19,6 +19,8 @@ pub struct SubtitleConfig {
     pub language: String,
     pub font_size: u32,
     pub font_color: String,
+    /// Edit rate for the SMPTE timecode / EditRate (frames per second).
+    pub fps: u32,
 }
 
 /// Import subtitles from SRT format and convert to TTML/XML for DCP packaging.
@@ -56,10 +58,11 @@ pub fn import_subtitles(config: &SubtitleConfig) -> i32 {
     } else {
         &config.font_color
     };
+    let fps = if config.fps == 0 { 24 } else { config.fps };
 
     let xml = match config.format {
         SubtitleFormat::SmpteXml | SubtitleFormat::Srt => {
-            generate_smpte_ttml(&entries, lang, font_size, font_color)
+            generate_smpte_ttml(&entries, lang, font_size, font_color, fps)
         }
         SubtitleFormat::InteropXml => generate_interop_xml(&entries, lang, font_size, font_color),
     };
@@ -116,27 +119,70 @@ pub fn burnin_subtitles(input_video: &Path, subtitle_file: &Path, output_video: 
 }
 
 struct SrtEntry {
-    start: String,
-    end: String,
+    start_ms: u64,
+    end_ms: u64,
     text: String,
 }
 
-/// Parse SRT via the shared postkit parser, mapping to TTML time strings the
-/// generators below expect.
+/// Parse SRT via the shared postkit parser, keeping raw millisecond timing so
+/// each format below can render it at its own timecode rate.
 fn parse_srt(content: &str) -> Vec<SrtEntry> {
     postkit::subtitle_retime::parse_srt(content)
         .into_iter()
         .filter(|c| !c.text.is_empty())
         .map(|c| SrtEntry {
-            start: ms_to_ttml(c.start_ms),
-            end: ms_to_ttml(c.end_ms),
+            start_ms: c.start_ms,
+            end_ms: c.end_ms,
             text: c.text,
         })
         .collect()
 }
 
-/// Milliseconds to "HH:MM:SS.mmm".
-fn ms_to_ttml(ms: u64) -> String {
+/// A subtitle cue in whole picture frames, used by reel splitting to filter and
+/// rebase cues onto per-reel timelines.
+#[derive(Debug, Clone)]
+pub struct SubCue {
+    pub start_frame: u64,
+    pub end_frame: u64,
+    pub text: String,
+}
+
+/// Frame count to ST 428-7 timecode "HH:MM:SS:FF" at `fps` frames/sec.
+fn frames_to_dcst(total_frames: u64, fps: u32) -> String {
+    let fps = fps.max(1) as u64;
+    let frames = total_frames % fps;
+    let secs = total_frames / fps;
+    format!(
+        "{:02}:{:02}:{:02}:{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60,
+        frames
+    )
+}
+
+/// Parse an SRT file into frame-based cues at `fps` (for reel splitting).
+pub fn parse_srt_frames(path: &Path, fps: u32) -> Result<Vec<SubCue>, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let fps64 = fps.max(1) as u64;
+    Ok(parse_srt(&content)
+        .into_iter()
+        .map(|e| SubCue {
+            start_frame: e.start_ms * fps64 / 1000,
+            end_frame: e.end_ms * fps64 / 1000,
+            text: e.text,
+        })
+        .collect())
+}
+
+/// Write a reel's DCST from frame-based cues (already rebased to reel-local 0).
+pub fn write_dcst_frames(cues: &[SubCue], lang: &str, fps: u32, out: &Path) -> Result<(), String> {
+    let xml = render_dcst_frames(cues, lang, 42, "FFFFFFFF", fps);
+    std::fs::write(out, xml).map_err(|e| e.to_string())
+}
+
+/// Milliseconds to Interop "HH:MM:SS.mmm".
+fn ms_to_interop(ms: u64) -> String {
     let h = ms / 3_600_000;
     let m = (ms % 3_600_000) / 60_000;
     let s = (ms % 60_000) / 1000;
@@ -149,32 +195,59 @@ fn generate_smpte_ttml(
     lang: &str,
     font_size: u32,
     font_color: &str,
+    fps: u32,
+) -> String {
+    let fps64 = fps.max(1) as u64;
+    let cues: Vec<SubCue> = entries
+        .iter()
+        .map(|e| SubCue {
+            start_frame: e.start_ms * fps64 / 1000,
+            end_frame: e.end_ms * fps64 / 1000,
+            text: e.text.clone(),
+        })
+        .collect();
+    render_dcst_frames(&cues, lang, font_size, font_color, fps)
+}
+
+/// Shared ST 428-7 DCST renderer working from frame-based cues. Both the
+/// single-reel path (via [`generate_smpte_ttml`]) and reel splitting use it.
+fn render_dcst_frames(
+    cues: &[SubCue],
+    lang: &str,
+    font_size: u32,
+    font_color: &str,
+    fps: u32,
 ) -> String {
     let sub_id = uuid::Uuid::new_v4();
+    // ~1/12 s fade, expressed in frames like the rest of the timecodes
+    let fade = format!("00:00:00:{:02}", (fps as f64 / 12.0).round() as u64);
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<dcst:SubtitleReel xmlns:dcst=\"http://www.smpte-ra.org/schemas/428-7/2010/DCST\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\n");
     xml.push_str(&format!("  <dcst:Id>urn:uuid:{sub_id}</dcst:Id>\n"));
     xml.push_str("  <dcst:ContentTitleText>Subtitles</dcst:ContentTitleText>\n");
     xml.push_str("  <dcst:AnnotationText>Subtitles</dcst:AnnotationText>\n");
-    xml.push_str("  <dcst:IssueDate>2024-01-01T00:00:00+00:00</dcst:IssueDate>\n");
+    xml.push_str(&format!(
+        "  <dcst:IssueDate>{}</dcst:IssueDate>\n",
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00")
+    ));
     xml.push_str("  <dcst:ReelNumber>1</dcst:ReelNumber>\n");
     xml.push_str(&format!("  <dcst:Language>{lang}</dcst:Language>\n"));
-    xml.push_str("  <dcst:EditRate>24 1</dcst:EditRate>\n");
-    xml.push_str("  <dcst:TimeCodeRate>24</dcst:TimeCodeRate>\n");
+    xml.push_str(&format!("  <dcst:EditRate>{fps} 1</dcst:EditRate>\n"));
+    xml.push_str(&format!("  <dcst:TimeCodeRate>{fps}</dcst:TimeCodeRate>\n"));
     xml.push_str("  <dcst:SubtitleList>\n");
     xml.push_str(&format!(
         "    <dcst:Font ID=\"font1\" Color=\"{font_color}\" Size=\"{font_size}\" Effect=\"shadow\" EffectColor=\"FF000000\">\n"
     ));
 
-    for (i, entry) in entries.iter().enumerate() {
+    for (i, cue) in cues.iter().enumerate() {
         xml.push_str(&format!(
-            "      <dcst:Subtitle SpotNumber=\"{}\" TimeIn=\"{}\" TimeOut=\"{}\" FadeUpTime=\"00:00:00.083\" FadeDownTime=\"00:00:00.083\">\n",
+            "      <dcst:Subtitle SpotNumber=\"{}\" TimeIn=\"{}\" TimeOut=\"{}\" FadeUpTime=\"{fade}\" FadeDownTime=\"{fade}\">\n",
             i + 1,
-            entry.start,
-            entry.end
+            frames_to_dcst(cue.start_frame, fps),
+            frames_to_dcst(cue.end_frame, fps),
         ));
-        for (j, line) in entry.text.split('\n').enumerate() {
+        for (j, line) in cue.text.split('\n').enumerate() {
             let vpos = 85.0 - (j as f64 * 7.0);
             xml.push_str(&format!(
                 "        <dcst:Text Vposition=\"{vpos:.1}\" Valign=\"bottom\" Halign=\"center\">{}</dcst:Text>\n",
@@ -212,8 +285,8 @@ fn generate_interop_xml(
         xml.push_str(&format!(
             "    <Subtitle SpotNumber=\"{}\" TimeIn=\"{}\" TimeOut=\"{}\" FadeUpTime=\"2\" FadeDownTime=\"2\">\n",
             i + 1,
-            entry.start,
-            entry.end
+            ms_to_interop(entry.start_ms),
+            ms_to_interop(entry.end_ms),
         ));
         for (j, line) in entry.text.split('\n').enumerate() {
             let vpos = 85.0 - (j as f64 * 7.0);
@@ -235,7 +308,7 @@ pub fn convert_srt_to_dcp_xml(
     input: &Path,
     output: &Path,
     language: &str,
-    _fps: u32,
+    fps: u32,
 ) -> Result<(), String> {
     let config = SubtitleConfig {
         input_file: input.to_path_buf(),
@@ -244,6 +317,7 @@ pub fn convert_srt_to_dcp_xml(
         language: language.to_string(),
         font_size: 42,
         font_color: "FFFFFFFF".to_string(),
+        fps,
     };
     let code = import_subtitles(&config);
     if code == 0 {

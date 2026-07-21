@@ -344,17 +344,34 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         "25" => (25, 1),
         "30" => (30, 1),
         "48" => (48, 1),
+        "50" => (50, 1),
         "60" => (60, 1),
+        "96" => (96, 1),
+        "100" => (100, 1),
+        "120" => (120, 1),
         _ => (24, 1),
     };
+
+    // Map the target bandwidth (Mbps) to a J2K compression ratio, matching the
+    // CLI convention (raw = w*h*36 bits/frame). Only honoured for video input;
+    // image/J2K sequences fall back to the encoder default.
+    let compression_ratio = dcpwizard_core::probe::probe_video(&job.video_path)
+        .map(|info| {
+            let fps = (fps_num as f64).max(1.0);
+            let raw_bits = info.width as f64 * info.height as f64 * 36.0;
+            let target_bits = (job.bandwidth as f64 * 1_000_000.0) / fps;
+            (raw_bits / target_bits).max(1.0)
+        })
+        .unwrap_or(10.0);
 
     // Encode using shared pipeline
     let job_id = job.id;
     let app_ref = app.clone();
     let log_ref = log_file.clone();
-    let encode_result = postkit::pipeline::run_encode(
+    let encode_result = postkit::pipeline::run_encode_with_ratio(
         &job.video_path,
         output,
+        compression_ratio,
         fps_num,
         &cancel,
         &pause,
@@ -398,12 +415,23 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     } else {
         dcpwizard_core::Resolution::TwoK
     };
+    // scope/flat/full are distinct containers, not just 2K vs 4K
+    let (container_width, container_height) = match job.resolution.as_str() {
+        "2k-scope" => (2048, 858),
+        "2k-flat" => (1998, 1080),
+        "2k-full" => (2048, 1080),
+        "4k-scope" => (4096, 1716),
+        "4k-flat" => (3996, 2160),
+        "4k-full" => (4096, 2160),
+        _ => (0, 0),
+    };
 
     let content_type = match job.content_kind.as_str() {
         "trailer" => dcpwizard_core::ContentType::Trailer,
         "test" => dcpwizard_core::ContentType::Test,
         "short" => dcpwizard_core::ContentType::Short,
         "advertisement" => dcpwizard_core::ContentType::Advertisement,
+        "episode" => dcpwizard_core::ContentType::Episode,
         _ => dcpwizard_core::ContentType::Feature,
     };
 
@@ -411,6 +439,8 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         title: job.title.clone(),
         standard,
         resolution,
+        container_width,
+        container_height,
         content_type,
         output_dir: job.output_dir.clone(),
         frame_rate_num: fps_num,
@@ -425,6 +455,8 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             .as_ref()
             .filter(|a| !a.is_empty())
             .map(std::path::PathBuf::from),
+        // subtitles are packaged via the CLI create --subtitle path, not the batch job
+        ..Default::default()
     };
 
     let rc = dcpwizard_core::dcp::create_dcp(&config);

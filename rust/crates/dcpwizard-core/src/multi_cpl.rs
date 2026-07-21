@@ -28,8 +28,11 @@ pub struct TimelineEntry {
     pub edit_rate: String,
     pub picture_asset_id: String,
     pub sound_asset_id: String,
+    pub subtitle_asset_id: String,
     pub picture_file: String,
     pub sound_file: String,
+    pub subtitle_file: String,
+    pub subtitle_language: String,
 }
 
 /// List all CPLs in a DCP by parsing the ASSETMAP.
@@ -125,8 +128,11 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
     let mut edit_rate = String::new();
     let mut picture_id = String::new();
     let mut sound_id = String::new();
+    let mut subtitle_id = String::new();
+    let mut subtitle_lang = String::new();
     let mut in_picture = false;
     let mut in_sound = false;
+    let mut in_subtitle = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -140,8 +146,11 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             edit_rate.clear();
             picture_id.clear();
             sound_id.clear();
+            subtitle_id.clear();
+            subtitle_lang.clear();
             in_picture = false;
             in_sound = false;
+            in_subtitle = false;
         } else if trimmed.contains("</Reel>") {
             if in_reel {
                 let picture_file = asset_map
@@ -152,6 +161,10 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
                     .get(&sound_id)
                     .map(|p| dcp_dir.join(p).to_string_lossy().into_owned())
                     .unwrap_or_default();
+                let subtitle_file = asset_map
+                    .get(&subtitle_id)
+                    .map(|p| dcp_dir.join(p).to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 entries.push(TimelineEntry {
                     reel_id: reel_id.clone(),
                     reel_number,
@@ -160,8 +173,11 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
                     edit_rate: edit_rate.clone(),
                     picture_asset_id: picture_id.clone(),
                     sound_asset_id: sound_id.clone(),
+                    subtitle_asset_id: subtitle_id.clone(),
                     picture_file,
                     sound_file,
+                    subtitle_file,
+                    subtitle_language: subtitle_lang.clone(),
                 });
             }
             in_reel = false;
@@ -169,27 +185,43 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             if trimmed.contains("MainPicture") && trimmed.contains('<') && !trimmed.contains('/') {
                 in_picture = true;
                 in_sound = false;
+                in_subtitle = false;
             } else if trimmed.contains("MainSound")
                 && trimmed.contains('<')
                 && !trimmed.contains('/')
             {
                 in_sound = true;
                 in_picture = false;
+                in_subtitle = false;
+            } else if trimmed.contains("MainSubtitle")
+                && trimmed.contains('<')
+                && !trimmed.contains('/')
+            {
+                in_subtitle = true;
+                in_picture = false;
+                in_sound = false;
             } else if trimmed.contains("</MainPicture>") {
                 in_picture = false;
             } else if trimmed.contains("</MainSound>") {
                 in_sound = false;
+            } else if trimmed.contains("</MainSubtitle>") {
+                in_subtitle = false;
             }
 
             if let Some(id) = extract_xml_value(trimmed, "Id") {
                 let clean_id = id.replace("urn:uuid:", "");
-                if reel_id.is_empty() && !in_picture && !in_sound {
+                if reel_id.is_empty() && !in_picture && !in_sound && !in_subtitle {
                     reel_id = clean_id;
                 } else if in_picture && picture_id.is_empty() {
                     picture_id = clean_id;
                 } else if in_sound && sound_id.is_empty() {
                     sound_id = clean_id;
+                } else if in_subtitle && subtitle_id.is_empty() {
+                    subtitle_id = clean_id;
                 }
+            }
+            if in_subtitle && let Some(lang) = extract_xml_value(trimmed, "Language") {
+                subtitle_lang = lang;
             }
             if let Some(d) = extract_xml_value(trimmed, "Duration")
                 && let Ok(v) = d.parse::<u64>()

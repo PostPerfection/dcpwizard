@@ -1,7 +1,5 @@
 pub mod accessibility;
 pub mod assetmap;
-pub mod atmos;
-pub mod audio;
 pub mod burnin;
 pub mod certificate;
 pub mod conform;
@@ -11,14 +9,11 @@ pub mod cpl_annotation;
 pub mod dashboard;
 pub mod dcdm;
 pub mod dcp;
-pub mod dcp_diff;
 pub mod dolby_vision;
-pub mod dtsx;
 pub mod edl_import;
 pub mod encode;
 pub mod encrypt;
 pub mod export;
-pub mod geometry;
 pub mod grok;
 pub mod hash;
 pub mod hfr;
@@ -35,18 +30,14 @@ pub mod multi_cpl;
 pub mod mxf_wrap;
 pub mod otioz_import;
 pub mod pkl;
-pub mod plugin;
-pub mod preferences;
 pub mod preview;
 pub mod probe;
 pub mod profiles;
-pub mod prores;
 pub mod qc;
 pub mod reel;
 pub mod report;
 pub mod rest_api;
 pub mod shell_completion;
-pub mod stereo3d;
 pub mod subtitle;
 pub mod subtitle_retime;
 pub mod trailer;
@@ -116,6 +107,8 @@ pub enum ContentType {
     PublicServiceAnnouncement,
     /// Advertisement
     Advertisement,
+    /// Episode (episodic content)
+    Episode,
 }
 
 impl ContentType {
@@ -132,6 +125,7 @@ impl ContentType {
             "POL" => Some(Self::Policy),
             "PSA" => Some(Self::PublicServiceAnnouncement),
             "ADV" => Some(Self::Advertisement),
+            "EPS" => Some(Self::Episode),
             _ => None,
         }
     }
@@ -149,6 +143,7 @@ impl ContentType {
             Self::Policy => "policy",
             Self::PublicServiceAnnouncement => "psa",
             Self::Advertisement => "advertisement",
+            Self::Episode => "episode",
         }
     }
 }

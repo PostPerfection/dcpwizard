@@ -10,7 +10,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// MXF essence type.
+/// MXF essence type. DTS:X is intentionally absent: postkit has no confirmed
+/// DataEssenceCoding UL for it, so wrapping it as Atmos (the old behaviour) would
+/// emit the wrong essence UL. DTS:X stays unsupported until the UL is confirmed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MxfType {
     #[default]
@@ -18,7 +20,6 @@ pub enum MxfType {
     PcmAudio,
     TimedText,
     Atmos,
-    DtsX,
 }
 
 /// MXF wrapping configuration.
@@ -31,6 +32,10 @@ pub struct MxfWrapConfig {
     /// AES-128 content encryption for J2K picture / PCM sound. Not serialized.
     #[serde(skip)]
     pub encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+    /// ST 429-12 MCA channel-label config for a PCM wrap (e.g.
+    /// `"51(L,R,C,LFE,Ls,Rs)"`). None auto-derives from the probed channel count.
+    #[serde(skip)]
+    pub mca_config: Option<String>,
 }
 
 /// Collect sorted files from a directory, or treat a single file as one-element list.
@@ -54,6 +59,85 @@ fn collect_inputs(path: &std::path::Path) -> Result<Vec<PathBuf>, String> {
     Err(format!("input path not found: {}", path.display()))
 }
 
+/// DCP-legal PCM sample rates (SMPTE 428-2 / DCI): 48 kHz and 96 kHz. postkit
+/// wraps the real channel count / bit depth / sample rate it reads from the WAV,
+/// but happily wraps any rate; a DCP with 44.1 kHz sound is illegal, so reject
+/// non-DCP rates here instead of shipping a mislabeled MXF.
+const DCP_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
+
+/// Read the `fmt ` chunk body (channels at +2, sample rate at +4) from a WAV.
+/// Reads a bounded prefix since the fmt chunk sits near the file start.
+fn wav_fmt(path: &std::path::Path) -> Result<(u16, u32), String> {
+    use std::io::Read;
+    let mut f =
+        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let mut buf = vec![0u8; 65536];
+    let n = f
+        .read(&mut buf)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let d = &buf[..n];
+    if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
+        return Err(format!("{} is not a RIFF/WAVE file", path.display()));
+    }
+    let mut pos = 12usize;
+    while pos + 8 <= d.len() {
+        let size = u32::from_le_bytes([d[pos + 4], d[pos + 5], d[pos + 6], d[pos + 7]]) as usize;
+        let body = pos + 8;
+        if &d[pos..pos + 4] == b"fmt " && body + 8 <= d.len() {
+            let channels = u16::from_le_bytes([d[body + 2], d[body + 3]]);
+            let sample_rate =
+                u32::from_le_bytes([d[body + 4], d[body + 5], d[body + 6], d[body + 7]]);
+            return Ok((channels, sample_rate));
+        }
+        pos = body + size + (size & 1);
+    }
+    Err(format!("no fmt chunk found in {}", path.display()))
+}
+
+/// Probe a WAV's channel count for MCA labelling.
+pub fn wav_channels(path: &std::path::Path) -> Result<u16, String> {
+    wav_fmt(path).map(|(ch, _)| ch)
+}
+
+/// Build a ST 429-12 MCA config for a sound wrap from the channel count plus
+/// optional accessibility (HI/VI) channel indices. The main layout is 2.0/5.1/
+/// 7.1 by channel count; HI and VI-N are labelled as standalone channels at the
+/// given indices. Returns None when the layout has no asdcplib DCP label.
+pub fn build_mca_config(
+    channel_count: u32,
+    hi_channel: Option<u32>,
+    vi_channel: Option<u32>,
+) -> Option<String> {
+    use postkit::mca::{McaLabel, McaTagSymbol};
+
+    let extra = hi_channel.is_some() as u32 + vi_channel.is_some() as u32;
+    let main_count = channel_count.saturating_sub(extra);
+    // main layout by channel count; 8 is 7.1 here (postkit's detect_soundfield
+    // treats 8 as 5.1+HI+VI, but accessibility tracks are opt-in via the flags).
+    let mut sf = match main_count {
+        2 => postkit::mca::soundfield_stereo(),
+        6 => postkit::mca::soundfield_51(),
+        8 => postkit::mca::soundfield_71(),
+        n => postkit::mca::detect_soundfield(n),
+    };
+    let mut push = |symbol: McaTagSymbol, index: u32| {
+        sf.channels.push(McaLabel {
+            symbol,
+            tag_name: symbol.tag_name().to_string(),
+            tag_symbol: symbol.symbol_string().to_string(),
+            channel_index: index,
+            spoken_language: String::new(),
+        });
+    };
+    if let Some(idx) = hi_channel {
+        push(McaTagSymbol::Hi, idx);
+    }
+    if let Some(idx) = vi_channel {
+        push(McaTagSymbol::Vi, idx);
+    }
+    postkit::mca::soundfield_to_mca_config(&sf)
+}
+
 /// Wrap essence into an MXF and return the track file (real embedded asset id,
 /// hash, size, duration). `None` on input-collection or wrap failure.
 pub fn wrap_mxf_result(config: &MxfWrapConfig) -> Option<postkit::mxf_wrap::MxfTrackFile> {
@@ -64,39 +148,81 @@ pub fn wrap_mxf_result(config: &MxfWrapConfig) -> Option<postkit::mxf_wrap::MxfT
             return None;
         }
     };
+    wrap_mxf_files(
+        input_files,
+        &config.output_mxf,
+        config.mxf_type,
+        config.frame_rate,
+        config.encryption.clone(),
+        config.mca_config.clone(),
+    )
+}
 
-    // DTS:X shares the Atmos (IAB data essence) wrapper path.
-    let essence_type = match config.mxf_type {
+/// Wrap an explicit, ordered list of essence files (already collected/sorted).
+/// Used by reel splitting to wrap a per-reel J2K frame subrange without touching
+/// postkit (whose wrapper always consumes every file it is given).
+pub fn wrap_mxf_files(
+    input_files: Vec<PathBuf>,
+    output_mxf: &std::path::Path,
+    mxf_type: MxfType,
+    frame_rate: u32,
+    encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+    mca_config: Option<String>,
+) -> Option<postkit::mxf_wrap::MxfTrackFile> {
+    if input_files.is_empty() {
+        tracing::error!("no essence files to wrap into {}", output_mxf.display());
+        return None;
+    }
+
+    // PCM: reject non-DCP sample rates and derive MCA labels from the channel
+    // count when the caller gave no explicit config.
+    let mut mca_config = mca_config;
+    if mxf_type == MxfType::PcmAudio {
+        for f in &input_files {
+            let (channels, sr) = match wav_fmt(f) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return None;
+                }
+            };
+            if !DCP_SAMPLE_RATES.contains(&sr) {
+                tracing::error!(
+                    "audio {} is {sr} Hz; DCP requires 48000 or 96000 Hz",
+                    f.display()
+                );
+                return None;
+            }
+            if mca_config.is_none() {
+                mca_config = build_mca_config(channels as u32, None, None);
+            }
+        }
+    }
+
+    let essence_type = match mxf_type {
         MxfType::J2kPicture => postkit::mxf_wrap::EssenceType::J2k,
         MxfType::PcmAudio => postkit::mxf_wrap::EssenceType::Pcm,
         MxfType::TimedText => postkit::mxf_wrap::EssenceType::TimedText,
-        MxfType::Atmos | MxfType::DtsX => postkit::mxf_wrap::EssenceType::Atmos,
+        MxfType::Atmos => postkit::mxf_wrap::EssenceType::Atmos,
     };
 
-    let fps = if config.frame_rate == 0 {
-        24
-    } else {
-        config.frame_rate
-    };
+    let fps = if frame_rate == 0 { 24 } else { frame_rate };
 
     let opts = postkit::mxf_wrap::MxfWrapOptions {
         input_files,
-        output: config.output_mxf.clone(),
+        output: output_mxf.to_path_buf(),
         essence_type,
         standard: postkit::mxf_wrap::MxfStandard::AsDcp,
         fps_num: fps,
         fps_den: 1,
         partition_size: 0,
-        encryption: config.encryption.clone(),
+        encryption,
+        mca_config,
     };
 
     let result = postkit::mxf_wrap::mxf_wrap(&opts);
     if result.success {
-        tracing::info!(
-            "Wrapped {:?} to MXF: {}",
-            config.mxf_type,
-            config.output_mxf.display()
-        );
+        tracing::info!("Wrapped {:?} to MXF: {}", mxf_type, output_mxf.display());
         Some(result)
     } else {
         tracing::error!("MXF wrap failed: {}", result.error);
@@ -110,5 +236,122 @@ pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
         0
     } else {
         -1
+    }
+}
+
+/// Wrap a stereoscopic (ST 429-10) picture MXF from equal-length left/right eye
+/// frame lists. `fps` is the composition edit rate; the essence carries two
+/// frames per edit unit (left then right). Returns the track file (real embedded
+/// asset id, hash, size, per-eye frame count as duration) or None on failure.
+pub fn wrap_stereoscopic_files(
+    left_files: Vec<PathBuf>,
+    right_files: Vec<PathBuf>,
+    output_mxf: &std::path::Path,
+    fps: u32,
+    encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+) -> Option<postkit::mxf_wrap::MxfTrackFile> {
+    if left_files.is_empty() || right_files.is_empty() {
+        tracing::error!("stereoscopic wrap needs both eyes");
+        return None;
+    }
+    if left_files.len() != right_files.len() {
+        tracing::error!(
+            "eye frame count mismatch: left={}, right={}",
+            left_files.len(),
+            right_files.len()
+        );
+        return None;
+    }
+    let fps = if fps == 0 { 24 } else { fps };
+    let opts = postkit::mxf_wrap::StereoscopicWrapOptions {
+        left_files,
+        right_files,
+        output: output_mxf.to_path_buf(),
+        fps_num: fps,
+        fps_den: 1,
+        encryption,
+    };
+    let result = postkit::mxf_wrap::wrap_stereoscopic(&opts);
+    if result.success {
+        tracing::info!("Wrapped stereoscopic MXF: {}", output_mxf.display());
+        Some(result)
+    } else {
+        tracing::error!("stereoscopic MXF wrap failed: {}", result.error);
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // minimal RIFF/WAVE header with the given sample rate and no audio payload
+    fn write_wav(path: &std::path::Path, sample_rate: u32) {
+        let channels: u16 = 2;
+        let bits: u16 = 24;
+        let block_align = (bits / 8) * channels;
+        let byte_rate = sample_rate * block_align as u32;
+        let mut w = Vec::new();
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&36u32.to_le_bytes());
+        w.extend_from_slice(b"WAVE");
+        w.extend_from_slice(b"fmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        w.extend_from_slice(&channels.to_le_bytes());
+        w.extend_from_slice(&sample_rate.to_le_bytes());
+        w.extend_from_slice(&byte_rate.to_le_bytes());
+        w.extend_from_slice(&block_align.to_le_bytes());
+        w.extend_from_slice(&bits.to_le_bytes());
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&0u32.to_le_bytes());
+        std::fs::File::create(path).unwrap().write_all(&w).unwrap();
+    }
+
+    #[test]
+    fn reads_fmt_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.wav");
+        write_wav(&p, 44_100);
+        let (channels, sr) = wav_fmt(&p).unwrap();
+        assert_eq!(sr, 44_100);
+        assert_eq!(channels, 2);
+    }
+
+    #[test]
+    fn mca_config_by_channel_count() {
+        assert_eq!(build_mca_config(2, None, None).as_deref(), Some("L,R"));
+        assert_eq!(
+            build_mca_config(6, None, None).as_deref(),
+            Some("51(L,R,C,LFE,Ls,Rs)")
+        );
+        assert_eq!(
+            build_mca_config(8, None, None).as_deref(),
+            Some("71(L,R,C,LFE,Ls,Rs,Lrs,Rrs)")
+        );
+        // 5.1 plus HI/VI accessibility channels at indices 6 and 7
+        assert_eq!(
+            build_mca_config(8, Some(6), Some(7)).as_deref(),
+            Some("51(L,R,C,LFE,Ls,Rs),HI,VIN")
+        );
+    }
+
+    #[test]
+    fn rejects_non_dcp_sample_rate() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("bad.wav");
+        write_wav(&wav, 44_100);
+        let config = MxfWrapConfig {
+            input_path: wav,
+            output_mxf: dir.path().join("out.mxf"),
+            mxf_type: MxfType::PcmAudio,
+            frame_rate: 24,
+            encryption: None,
+            mca_config: None,
+        };
+        // 44.1 kHz is illegal in a DCP: wrap must fail loud, not mislabel it
+        assert!(wrap_mxf_result(&config).is_none());
+        assert!(!config.output_mxf.exists());
     }
 }

@@ -6,6 +6,19 @@
 
 use std::path::{Path, PathBuf};
 
+pub use postkit::certificate::KdmFormat;
+
+/// Parse the `--format` flag ("smpte" default, or "interop").
+pub fn parse_format(s: &str) -> Result<KdmFormat, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "smpte" | "" => Ok(KdmFormat::Smpte),
+        "interop" => Ok(KdmFormat::Interop),
+        other => Err(format!(
+            "unknown KDM format '{other}' (use smpte or interop)"
+        )),
+    }
+}
+
 /// Load the content keys from a DCP keys file (written by `create --encrypt`)
 /// for KDM generation, checking they belong to `cpl_id`.
 pub fn load_content_keys(
@@ -35,10 +48,66 @@ pub fn load_content_keys(
         .collect()
 }
 
+/// Parse a human-friendly duration ("2 weeks", "30 days", "7d", "24h", "2w").
+/// Duplicates postkit's private parser so we can resolve the window ourselves.
+fn parse_duration(s: &str) -> Result<chrono::Duration, String> {
+    let s = s.trim().to_lowercase();
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() == 2 {
+        let n: i64 = parts[0]
+            .parse()
+            .map_err(|_| format!("invalid number in duration: '{}'", parts[0]))?;
+        let unit = parts[1].trim_end_matches('s');
+        return match unit {
+            "second" | "sec" => Ok(chrono::Duration::seconds(n)),
+            "minute" | "min" => Ok(chrono::Duration::minutes(n)),
+            "hour" | "hr" => Ok(chrono::Duration::hours(n)),
+            "day" => Ok(chrono::Duration::days(n)),
+            "week" | "wk" => Ok(chrono::Duration::weeks(n)),
+            _ => Err(format!("unknown duration unit: '{unit}'")),
+        };
+    }
+    for (suffix, mult) in [('h', 1i64), ('d', 24), ('w', 24 * 7)] {
+        if let Some(stripped) = s.strip_suffix(suffix) {
+            let n: i64 = stripped
+                .parse()
+                .map_err(|_| format!("invalid duration: '{s}'"))?;
+            return Ok(chrono::Duration::hours(n * mult));
+        }
+    }
+    Err(format!("cannot parse duration: '{s}'"))
+}
+
+/// Resolve the KDM validity window so a duration-based end time keeps the
+/// start's UTC offset. postkit's duration path formats the end with a literal
+/// +00:00 even when the start is in another offset (mislabeling the instant);
+/// handing it absolute ISO timestamps avoids that branch.
+fn resolve_validity(valid_from: &str, valid_to: &str) -> Result<(String, String), String> {
+    let from = if valid_from.is_empty() || valid_from == "now" {
+        chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S+00:00")
+            .to_string()
+    } else {
+        valid_from.to_string()
+    };
+    // an absolute ISO end passes through; a duration is added in the start's offset
+    let looks_absolute = valid_to.contains('T')
+        || (valid_to.len() >= 10 && valid_to.as_bytes().get(4) == Some(&b'-'));
+    let to = if valid_to.is_empty() || looks_absolute {
+        valid_to.to_string()
+    } else {
+        let start = chrono::DateTime::parse_from_rfc3339(&from)
+            .map_err(|e| format!("cannot parse valid-from '{from}': {e}"))?;
+        let dur = parse_duration(valid_to)?;
+        (start + dur).format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+    };
+    Ok((from, to))
+}
+
 /// Generate a signed KDM. `content_keys` (from the DCP's keys file) binds the
 /// KDM to the encrypted essence; an empty vec makes postkit mint a fresh key.
 /// `valid_from`/`valid_to` accept "now", ISO 8601 or a relative duration
-/// ("2 weeks"), parsed by postkit.
+/// ("2 weeks"); the window is resolved here so a duration keeps the start offset.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_kdm(
     cpl_id: String,
@@ -49,10 +118,17 @@ pub fn generate_kdm(
     signer_chain: Vec<PathBuf>,
     valid_from: String,
     valid_to: String,
-    formulation: String,
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output: PathBuf,
+    format: KdmFormat,
 ) -> i32 {
+    let (valid_from, valid_to) = match resolve_validity(&valid_from, &valid_to) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
     let config = postkit::certificate::KdmConfig {
         cpl_id,
         content_title,
@@ -63,8 +139,11 @@ pub fn generate_kdm(
         output_file: output,
         valid_from,
         valid_to,
-        formulation,
+        // formulation stays constant; the SMPTE MessageType is fixed (ST 430-1
+        // 6.1) and Interop uses the digicine ETM instead. `format` selects which.
+        formulation: "modified-transitional-1".to_string(),
         content_keys,
+        format,
     };
     match postkit::certificate::generate_kdm(&config) {
         Ok(()) => 0,
@@ -88,9 +167,9 @@ pub fn generate_kdm_batch(
     signer_chain: Vec<PathBuf>,
     valid_from: String,
     valid_to: String,
-    formulation: String,
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output_dir: PathBuf,
+    format: KdmFormat,
 ) -> i32 {
     if let Err(e) = std::fs::create_dir_all(&output_dir) {
         tracing::error!("Failed to create output directory: {e}");
@@ -114,9 +193,9 @@ pub fn generate_kdm_batch(
             signer_chain.clone(),
             valid_from.clone(),
             valid_to.clone(),
-            formulation.clone(),
             content_keys.clone(),
             output.clone(),
+            format,
         );
         if code == 0 {
             tracing::info!("KDM for {} -> {}", cert.display(), output.display());
@@ -218,11 +297,27 @@ mod tests {
             Vec::new(),
             "now".into(),
             "2 weeks".into(),
-            "modified-transitional-1".into(),
             Vec::new(),
             out.path().to_path_buf(),
+            KdmFormat::Smpte,
         );
         assert_ne!(code, 0);
+    }
+
+    #[test]
+    fn duration_end_keeps_start_offset() {
+        // start in +02:00; a 1-day duration must land at the same wall clock in
+        // +02:00, not be relabeled +00:00 (which would be 2 hours off).
+        let (from, to) = resolve_validity("2024-06-01T00:00:00+02:00", "1 day").unwrap();
+        assert_eq!(from, "2024-06-01T00:00:00+02:00");
+        assert_eq!(to, "2024-06-02T00:00:00+02:00");
+    }
+
+    #[test]
+    fn absolute_end_passes_through() {
+        let (_, to) =
+            resolve_validity("2024-06-01T00:00:00+00:00", "2024-06-15T00:00:00+00:00").unwrap();
+        assert_eq!(to, "2024-06-15T00:00:00+00:00");
     }
 
     #[test]
@@ -279,9 +374,9 @@ mod tests {
             Vec::new(),
             "now".into(),
             "7 days".into(),
-            "modified-transitional-1".into(),
             Vec::new(),
             dir.path().join("out"),
+            KdmFormat::Smpte,
         );
         assert_ne!(code, 0);
     }
@@ -350,9 +445,9 @@ mod tests {
             chain,
             "now".into(),
             "7 days".into(),
-            "modified-transitional-1".into(),
             content_keys,
             out.clone(),
+            KdmFormat::Smpte,
         );
         assert_eq!(code, 0, "batch must succeed for every recipient");
 
@@ -398,6 +493,61 @@ mod tests {
                     .success();
                 assert!(ok, "xmlsec1 must verify the batch KDM against the root");
             }
+        }
+    }
+
+    // Interop KDM: digicine namespace, signed, xmlsec1-verifiable. The 134-byte
+    // (vs SMPTE 138) key block is inside the RSA-encrypted CipherData and is
+    // asserted in postkit's own interop_kdm_key_block_is_134_bytes test.
+    #[test]
+    fn interop_kdm_uses_digicine_namespace_and_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signer_cert, signer_key, chain, recipients) = batch_fixtures(dir.path(), 1);
+        let recipient = certs_in_dir(&recipients).unwrap()[0].clone();
+
+        let key_id = uuid::Uuid::new_v4();
+        let content_keys = vec![postkit::certificate::KdmContentKey {
+            key_type: *b"MDIK",
+            key_id,
+            content_key: [3u8; 16],
+        }];
+
+        let out = dir.path().join("interop.kdm.xml");
+        let code = generate_kdm(
+            "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9".into(),
+            "Interop Feature".into(),
+            PathBuf::from(recipient),
+            signer_cert,
+            signer_key,
+            chain,
+            "now".into(),
+            "7 days".into(),
+            content_keys,
+            out.clone(),
+            KdmFormat::Interop,
+        );
+        assert_eq!(code, 0, "interop KDM generation must succeed");
+
+        let xml = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            xml.contains("http://www.digicine.com/PROTO-ASDCP-KDM-20040311#"),
+            "interop KDM must use the digicine namespace"
+        );
+        assert!(xml.contains("<ds:Signature"), "interop KDM must be signed");
+
+        if xmlsec1_available() {
+            let ok = std::process::Command::new("xmlsec1")
+                .arg("--verify")
+                .arg("--trusted-pem")
+                .arg(dir.path().join("root.pem"))
+                .args(["--id-attr:Id", "AuthenticatedPublic"])
+                .args(["--id-attr:Id", "AuthenticatedPrivate"])
+                .arg(&out)
+                .output()
+                .expect("run xmlsec1")
+                .status
+                .success();
+            assert!(ok, "xmlsec1 must verify the interop KDM against the root");
         }
     }
 }

@@ -6,7 +6,7 @@
 
 Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
 
-Version 1.1 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. OpenJPEG is the default encoder, and Grok remains optional.
+Version 1.1 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
 
 ## Overview
 
@@ -21,13 +21,14 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Original Version (OV) DCP** creation from J2K + WAV
 - **SMPTE & Interop** standard support
 - **2K and 4K** resolution (2048×1080, 4096×2160)
-- **Frame rates** 24, 25, 30, 48, 60 fps
+- **Frame rates** 24, 25, 30 fps (2K/4K); HFR 48, 50, 60, 96, 100, 120 fps (2K only)
+- **Reel splitting** via `create --reel-length <minutes>` (multi-reel CPL, sample-accurate audio and per-reel subtitle boundaries)
 - **High Bitrate (HBR)**, up to 500 Mbps for demanding content
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **SHA-1 hashing** for integrity verification
 
 ### Encoding & Transcoding
-- **JPEG 2000 encoding** via OpenJPEG (create video path) or Grok (streaming pipeline)
+- **JPEG 2000 encoding** via Grok (create, pipeline, and DCP transcode paths)
 - **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV
 - **Video transcoding**, ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
 - **Image sequence input**, DPX, TIFF, EXR, PNG
@@ -44,6 +45,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 
 ### Subtitles & Captions
 - **SRT → SMPTE / Interop subtitle XML** conversion
+- **Subtitle packaging** into a DCP timed-text track (ST 428-7 DCST wrapped as an MXF, registered in the CPL) via `create --subtitle`
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Subtitle burn-in**, permanently render into video frames (for festivals)
 
@@ -106,7 +108,7 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
-The CLI binary is fully self-contained (OpenSSL and OpenJPEG are statically linked). Extract and run, no dependencies required.
+The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, so the Grok runtime must be present. Point `LD_LIBRARY_PATH` at Grok's `lib64` (Linux) or the equivalent before running.
 
 ### Install from source
 
@@ -115,6 +117,11 @@ The CLI binary is fully self-contained (OpenSSL and OpenJPEG are statically link
 ```bash
 sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev
 # For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+# Grok (libgrokj2k) must be discoverable by pkg-config at build time and its
+# shared lib loadable at runtime. Build it from source or install a release, then:
+export PKG_CONFIG_PATH="/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/path/to/grok/lib64:$LD_LIBRARY_PATH"
 
 cd rust
 cargo build --release
@@ -195,7 +202,11 @@ pnpm tauri build
 dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --output ./dcp
 
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
-dcpwizard create --title "My Film" --video movie.mov --output ./dcp --encoder openjpeg
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp
+
+# Transcode an existing DCP's picture essence to a lower bandwidth (audio and
+# subtitle tracks are copied unchanged; encrypted input is rejected)
+dcpwizard transcode-dcp --input ./dcp --output ./dcp_light --video-bit-rate 100
 
 # Create with encryption. Content keys are generated with a CSPRNG and the
 # essence is AES-128 encrypted at wrap time. --key-out is required: it is the
@@ -214,6 +225,28 @@ dcpwizard create --title "My Trailer" --video trailer.mov --output ./dcp \
 # Create with frame rate override
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --frame-rate 25
 
+# Split a long feature into ~20-minute reels (multi-reel CPL)
+dcpwizard create --title "My Feature" --video ./j2k --audio ./audio.wav \
+    --output ./dcp --reel-length 20
+
+# Create with a subtitle track (SRT -> ST 428-7 timed text, wrapped and registered)
+dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
+    --subtitle subs.srt --subtitle-language en
+
+# Stereoscopic 3D: main input is the left eye, --right-eye is the right eye
+# (both encoded at the same settings, wrapped into one ST 429-10 picture MXF)
+dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
+    --output ./dcp --frame-rate 24
+
+# Dolby Atmos aux track (ST 429-18). Pass a bitstream file or a directory of
+# per-frame payloads. Real-essence conformance needs real Atmos material.
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
+    --output ./dcp --atmos ./atmos.iab
+
+# Accessibility channels: label sound channel 6 as HI and 7 as VI-N
+dcpwizard create --title "My Film" --video ./j2k --audio ./8ch.wav \
+    --output ./dcp --hi-channel 6 --vi-channel 7
+
 # Full pipeline: video → J2K → DCP in one pass (no intermediate files)
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 
@@ -227,8 +260,11 @@ dcpdoctor validate ./dcp_vf --ov ./dcp
 # Encode images to JPEG 2000
 dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250
 
-# Transcode video to image sequence
-dcpwizard transcode --input movie.mov --output ./sequence
+# Transcode video to image sequence (format/bit-depth optional)
+dcpwizard transcode --input movie.mov --output ./sequence --format dpx --bit-depth 16
+
+# Export a DCP picture MXF to a delivery format (ProRes/H.264/H.265/DNxHR/image-sequence)
+dcpwizard export --input picture.mxf --output out.mp4 --format h264 --audio sound.mxf
 
 # Create DCDM (Digital Cinema Distribution Master)
 dcpwizard dcdm -i ./frames -o ./dcdm --colour-space rec709
@@ -263,6 +299,12 @@ dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
     --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --valid-from 2024-06-01T00:00:00+00:00 \
     --valid-to 2024-06-30T23:59:59+00:00
+
+# Interop (legacy) KDM. --format defaults to smpte; interop uses the digicine
+# ETM. Validate against real legacy gear before production use.
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
+    --output kdm.xml --format interop
 
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
@@ -380,19 +422,20 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Multi-CPL timeline | ❌ | ✅ |
 | CLI scriptable | ✅ | ✅ |
 | Up to 4K | ✅ | ✅ |
-| Stereoscopic 3D | ❌ | ✅ |
+| Stereoscopic 3D | ✅ | ✅ |
 | Frame rates 24–60 fps | ✅ | ✅ |
 | High Bitrate (500 Mbps) | ✅ | ✅ |
 | DPX/TIFF/PNG/QuickTime input | ✅ | ✅ |
 | Scale/Crop/Letterbox | ✅ | ✅ |
 | J2K Transcoder | ❌ | ✅ |
 | Audio (PCM 5.1) | ✅ | ✅ |
-| Immersive audio (Atmos, DTS:X) | ❌ | ✅ |
+| Immersive audio (Dolby Atmos) | ✅ | ✅ |
+| MCA channel labeling (2.0/5.1/7.1 + HI/VI) | ✅ | ✅ |
 | SRT→SMPTE subtitles | ✅ | ✅ |
 | Subtitle packaging into DCP | ❌ | ✅ |
 | Subtitle burn-in | ✅ | ✅ |
 | Integrated QC | ✅ (dcpdoctor) | ✅ (Fraunhofer) |
-| KDM (SMPTE) | ✅ | ✅ |
+| KDM (SMPTE + Interop) | ✅ | ✅ |
 | AES-128 essence encryption | ✅ | ✅ |
 | DKDM re-wrap | ✅ | ✅ |
 | Desktop GUI | ✅ (Tauri) | ✅ (native) |

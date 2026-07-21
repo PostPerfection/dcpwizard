@@ -15,6 +15,17 @@ pub struct EncodeConfig {
     pub output_dir: PathBuf,
 }
 
+/// Convert a target J2K bandwidth (Mbit/s) to a grok compression ratio for the
+/// given picture size and frame rate. Raw DCI codestream is width*height*36
+/// bits/frame (12-bit XYZ, 3 components); ratio = raw_bits / target_bits.
+pub fn bandwidth_to_ratio(width: u32, height: u32, fps: u32, mbps: u32) -> f64 {
+    let fps = fps.max(1) as f64;
+    let mbps = (mbps as f64).max(1.0);
+    let raw_bits = width as f64 * height as f64 * 36.0;
+    let target_bits = (mbps * 1_000_000.0) / fps;
+    (raw_bits / target_bits).max(1.0)
+}
+
 /// Encode image sequence to JPEG 2000 using in-process Grok FFI pipeline.
 pub fn encode_j2k(config: &EncodeConfig) -> i32 {
     let mut frames: Vec<PathBuf> = std::fs::read_dir(&config.input_dir)
@@ -102,4 +113,36 @@ pub fn encode_j2k(config: &EncodeConfig) -> i32 {
         ratio,
     );
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ratio_scales_inversely_with_bandwidth() {
+        // 2K 24fps: raw = 2048*1080*36 = ~79.6 Mbit/frame -> ~1911 Mbit/s raw.
+        // At 250 Mbps target the ratio is ~7.6:1; halving the bandwidth doubles it.
+        let r250 = bandwidth_to_ratio(2048, 1080, 24, 250);
+        let r125 = bandwidth_to_ratio(2048, 1080, 24, 125);
+        assert!((r250 - 7.64).abs() < 0.1, "got {r250}");
+        assert!((r125 / r250 - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn ratio_never_below_one() {
+        // absurdly high bandwidth would give sub-1 ratio; clamp keeps it lossless-ish
+        assert_eq!(bandwidth_to_ratio(2048, 1080, 24, 100_000), 1.0);
+    }
+
+    #[test]
+    fn ratio_accounts_for_resolution_and_fps() {
+        // 4K has 4x the pixels, so at the same bandwidth the ratio is 4x higher
+        let two_k = bandwidth_to_ratio(2048, 1080, 24, 250);
+        let four_k = bandwidth_to_ratio(4096, 2160, 24, 250);
+        assert!((four_k / two_k - 4.0).abs() < 0.01);
+        // doubling fps halves per-frame budget, doubling the ratio
+        let hfr = bandwidth_to_ratio(2048, 1080, 48, 250);
+        assert!((hfr / two_k - 2.0).abs() < 0.01);
+    }
 }

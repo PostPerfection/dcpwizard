@@ -21,6 +21,9 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
+    # windows: grok source build not wired up and the build needs grok-ffi, so
+    # allow it to fail rather than block the run.
+    continue-on-error: ${{ matrix.os == 'windows-2022' }}
 
     steps:
       - name: Enable long paths (Windows)
@@ -62,6 +65,34 @@ jobs:
           $env:VCPKG_BUILD_TYPE="release"
           vcpkg install libxml2 openssl xerces-c --triplet x64-windows
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      # build grok (jpeg 2000 codec) from source once per tag, cached.
+      # provides libgrokj2k on the pkg-config + loader paths and grk_compress on PATH.
+      - name: Cache grok
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/grok-install
+          key: grok-${{ runner.os }}-v20.3.6
+
+      - name: Setup grok
+        if: runner.os != 'Windows'
+        env:
+          GROK_TAG: v20.3.6
+        run: |
+          prefix="$GITHUB_WORKSPACE/grok-install"
+          if [ ! -x "$prefix/bin/grk_compress" ]; then
+            git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$GROK_TAG" \
+              https://github.com/GrokImageCompression/grok.git "$RUNNER_TEMP/grok-src"
+            cmake -S "$RUNNER_TEMP/grok-src" -B "$RUNNER_TEMP/grok-build" \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"
+            cmake --build "$RUNNER_TEMP/grok-build" --parallel
+            cmake --install "$RUNNER_TEMP/grok-build"
+          fi
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
 
       - name: Build
         working-directory: rust
@@ -106,6 +137,34 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+
+      # build grok (jpeg 2000 codec) from source once per tag, cached.
+      # provides libgrokj2k on the pkg-config + loader paths and grk_compress on PATH.
+      - name: Cache grok
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/grok-install
+          key: grok-${{ runner.os }}-v20.3.6
+
+      - name: Setup grok
+        if: runner.os != 'Windows'
+        env:
+          GROK_TAG: v20.3.6
+        run: |
+          prefix="$GITHUB_WORKSPACE/grok-install"
+          if [ ! -x "$prefix/bin/grk_compress" ]; then
+            git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$GROK_TAG" \
+              https://github.com/GrokImageCompression/grok.git "$RUNNER_TEMP/grok-src"
+            cmake -S "$RUNNER_TEMP/grok-src" -B "$RUNNER_TEMP/grok-build" \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"
+            cmake --build "$RUNNER_TEMP/grok-build" --parallel
+            cmake --install "$RUNNER_TEMP/grok-build"
+          fi
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
 
       - name: Build frontend
         working-directory: gui

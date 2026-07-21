@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile } from "./preview.js";
@@ -742,11 +743,12 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
   const output = document.getElementById("kdm-output").value;
   const from = document.getElementById("kdm-from").value;
   const to = document.getElementById("kdm-to").value;
+  const format = document.getElementById("kdm-format")?.value || "smpte";
   const resultsBox = document.getElementById("kdm-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating KDM...";
   const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert,
-    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output];
+    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output, "--format", format];
   if (keys) args.push("--keys", keys);
   if (from) args.push("-f", from);
   if (to) args.push("-t", to);
@@ -990,7 +992,7 @@ document.getElementById("tc-start")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("tc-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Transcoding...";
-  const args = ["transcode", "-i", input, "-o", output];
+  const args = ["transcode", "-i", input, "-o", output, "--format", format, "--bit-depth", bitdepth];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -1034,7 +1036,6 @@ function checkCopyReady() {
 document.getElementById("copy-start")?.addEventListener("click", async () => {
   const source = document.getElementById("copy-source").value;
   const dest = document.getElementById("copy-dest").value;
-  const verify = document.getElementById("copy-verify")?.checked;
   const resultsBox = document.getElementById("copy-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Copying...";
@@ -1218,7 +1219,8 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
     } else if (action === "remove") {
       removeAsset(ctxAssetId);
     } else if (action === "reveal") {
-      invoke("plugin:shell|open", { path: asset.path.replace(/[/\\][^/\\]*$/, '') });
+      // reveals the file in the OS file manager (shell open only accepts URLs)
+      revealItemInDir(asset.path);
     }
     ctxMenu.hidden = true;
   });
