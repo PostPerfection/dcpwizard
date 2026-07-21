@@ -99,10 +99,12 @@ Done in the earlier pass:
   HFR addendum / SMPTE ST 428-11:2013). `create`/pipeline reject illegal fps/resolution
   combos loudly before encoding; the edit rate threads through CPL and MXF (verified
   a 48fps 2K DCP validates). GUI frame-rate menus offer exactly the legal set.
-- Subtitle packaging is real: `create --subtitle` -> ST 428-7 DCST XML (schema
-  valid, frame-based timecodes) -> timed-text MXF -> reel/CPL/PKL/ASSETMAP.
-- PCM wrap: postkit already reads the real channel/bit-depth/sample-rate; the wrap
-  now rejects non-DCP sample rates (48/96 kHz only) instead of mislabeling.
+- Subtitle packaging is real: `create --subtitle` converts SRT to ST 428-7 DCST XML
+  and wraps supplied SMPTE XML unchanged, preserving authored placement and styling.
+  3D subtitle depth is unsupported.
+- PCM wrap rejects non-DCP sample rates (48/96 kHz only). Six-channel input is
+  padded to 16 PCM channels; `--audio-input-order lrc-ls-rs-lfe` explicitly remaps
+  that source order to L/R/C/LFE/Ls/Rs before wrapping.
 - Deleted (zero callers): dcp_diff, plugin, preferences, geometry, prores shim.
 
 ## KDM (minor)
@@ -144,8 +146,9 @@ before production use.
 
 ## HDR, ingest, conform (mostly postkit-side)
 
-- hdr10-inject writes a container tag, not ST 2086/CTA 861.3 SEI (PK/dolby_vision.rs).
-- HDR10/HLG/SDR conversion exists in postkit but nothing calls it.
+- HDR source creation requires `--hdr-to-dci-lut`; the LUT runs through postkit's
+  colour path before J2K encoding. `--allow-generic-hdr-tonemap` is opt-in and warns
+  because FFmpeg tone mapping is not a delivery transform.
 - Camera raw: ARRIRAW/R3D/BRAW detected but ffmpeg can't decode them; Sony not detected.
 - ingest has no --lut flag (apply_lut hardcoded false).
 - conform parses and prints only (no reel assembly); only CMX3600 EDL and FCP7 xmeml work.
