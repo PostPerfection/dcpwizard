@@ -85,6 +85,8 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     } else {
         crate::Standard::Smpte
     };
+    // vf inherits the ov's picture dimensions (reel coherence keeps them uniform).
+    let (pic_w, pic_h) = parse_screen_aspect(&ov_cpl_content);
 
     let mut cpl_reels: Vec<crate::cpl::CplReel> = Vec::new();
     let mut new_assets: Vec<NewAsset> = Vec::new();
@@ -142,6 +144,8 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         cpl_reels.push(crate::cpl::CplReel {
             reel_id: uuid::Uuid::new_v4().to_string(),
             picture_id,
+            picture_width: pic_w,
+            picture_height: pic_h,
             picture_edit_rate_num: edit_num,
             picture_edit_rate_den: edit_den,
             picture_duration,
@@ -346,6 +350,28 @@ fn file_name(p: &Path) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or_default()
         .to_string()
+}
+
+/// Picture dimensions from the OV CPL's ScreenAspectRatio. SMPTE carries a
+/// "w h" pair; Interop carries a decimal, from which we recover w at 1080p.
+fn parse_screen_aspect(cpl: &str) -> (u32, u32) {
+    let inner = cpl
+        .split_once("<ScreenAspectRatio>")
+        .and_then(|(_, r)| r.split_once("</ScreenAspectRatio>"))
+        .map(|(v, _)| v.trim());
+    match inner {
+        Some(v) if v.contains(char::is_whitespace) => {
+            let mut it = v.split_whitespace();
+            let w = it.next().and_then(|x| x.parse().ok()).unwrap_or(2048);
+            let h = it.next().and_then(|x| x.parse().ok()).unwrap_or(1080);
+            (w, h)
+        }
+        Some(v) => match v.parse::<f64>() {
+            Ok(r) if r > 0.0 => ((r * 1080.0).round() as u32, 1080),
+            _ => (2048, 1080),
+        },
+        None => (2048, 1080),
+    }
 }
 
 /// Find the OV's PKL id (the id to record as the original package). Skips any

@@ -16,6 +16,8 @@ pub struct CplConfig {
 pub struct CplReel {
     pub reel_id: String,
     pub picture_id: String,
+    pub picture_width: u32,
+    pub picture_height: u32,
     pub picture_edit_rate_num: u32,
     pub picture_edit_rate_den: u32,
     pub picture_duration: u64,
@@ -46,6 +48,8 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
         .map(|r| DcpCplReel {
             reel_id: r.reel_id.clone(),
             picture_id: r.picture_id.clone(),
+            picture_width: r.picture_width,
+            picture_height: r.picture_height,
             picture_edit_rate_num: r.picture_edit_rate_num,
             picture_edit_rate_den: r.picture_edit_rate_den,
             picture_duration: r.picture_duration,

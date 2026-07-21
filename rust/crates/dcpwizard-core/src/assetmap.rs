@@ -37,7 +37,6 @@ pub fn generate_assetmap(
         issuer: "DCP Wizard".into(),
         creator: "DCP Wizard".into(),
         issue_date: chrono::Utc::now().to_rfc3339(),
-        include_volume_count: true,
         assets,
     };
 

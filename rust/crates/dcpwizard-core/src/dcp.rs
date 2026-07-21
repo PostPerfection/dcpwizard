@@ -180,6 +180,8 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let reel = crate::cpl::CplReel {
         reel_id: uuid::Uuid::new_v4().to_string(),
         picture_id: picture_uuid.clone(),
+        picture_width: config.resolution.width(),
+        picture_height: config.resolution.height(),
         picture_edit_rate_num: fps,
         picture_edit_rate_den: 1,
         picture_duration,
