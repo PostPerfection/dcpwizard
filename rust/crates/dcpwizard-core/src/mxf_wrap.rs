@@ -8,7 +8,17 @@
 //! subtitle timing.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Declared 5.1 channel order for input WAV files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AudioInputOrder {
+    /// L, R, C, LFE, Ls, Rs. This is the DCP order.
+    #[default]
+    Canonical51,
+    /// L, R, C, Ls, Rs, LFE. This order is common in source files.
+    LrcLsRsLfe,
+}
 
 /// MXF essence type. DTS:X is intentionally absent: postkit has no confirmed
 /// DataEssenceCoding UL for it, so wrapping it as Atmos (the old behaviour) would
@@ -99,6 +109,92 @@ pub fn wav_channels(path: &std::path::Path) -> Result<u16, String> {
     wav_fmt(path).map(|(ch, _)| ch)
 }
 
+/// Expand a six-channel WAV to DCP's 16-channel PCM layout. The first six
+/// channels are canonical DCP 5.1 and channels 7 through 16 are silent.
+/// Returns false when the source is not 5.1 and was left untouched.
+pub fn prepare_51_audio(
+    input: &Path,
+    output: &Path,
+    input_order: AudioInputOrder,
+) -> Result<bool, String> {
+    let data = std::fs::read(input).map_err(|e| format!("cannot read {}: {e}", input.display()))?;
+    if data.len() < 12 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err(format!("{} is not a RIFF/WAVE file", input.display()));
+    }
+
+    let mut pos = 12usize;
+    let mut fmt = None;
+    let mut payload = None;
+    while pos + 8 <= data.len() {
+        let size = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
+        let body = pos + 8;
+        if body + size > data.len() {
+            return Err(format!("{} has a truncated WAV chunk", input.display()));
+        }
+        match &data[pos..pos + 4] {
+            b"fmt " if size >= 16 => fmt = Some(&data[body..body + size]),
+            b"data" => payload = Some(&data[body..body + size]),
+            _ => {}
+        }
+        pos = body + size + (size & 1);
+    }
+    let Some(fmt) = fmt else {
+        return Err(format!("no fmt chunk found in {}", input.display()));
+    };
+    let Some(payload) = payload else {
+        return Err(format!("no data chunk found in {}", input.display()));
+    };
+    let format = u16::from_le_bytes(fmt[0..2].try_into().unwrap());
+    let channels = u16::from_le_bytes(fmt[2..4].try_into().unwrap());
+    if channels != 6 {
+        return Ok(false);
+    }
+    if format != 1 {
+        return Err(format!("{} must use PCM WAV samples", input.display()));
+    }
+    let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
+    let bits = u16::from_le_bytes(fmt[14..16].try_into().unwrap());
+    if bits == 0 || !bits.is_multiple_of(8) {
+        return Err(format!("{} has unsupported PCM bit depth", input.display()));
+    }
+    let sample_bytes = (bits / 8) as usize;
+    let source_frame_bytes = sample_bytes * 6;
+    if payload.len() % source_frame_bytes != 0 {
+        return Err(format!("{} has incomplete audio frames", input.display()));
+    }
+
+    let order = match input_order {
+        AudioInputOrder::Canonical51 => [0, 1, 2, 3, 4, 5],
+        AudioInputOrder::LrcLsRsLfe => [0, 1, 2, 5, 3, 4],
+    };
+    let output_frame_bytes = sample_bytes * 16;
+    let mut wav = Vec::with_capacity(44 + payload.len() / source_frame_bytes * output_frame_bytes);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&0u32.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&(sample_rate * output_frame_bytes as u32).to_le_bytes());
+    wav.extend_from_slice(&(output_frame_bytes as u16).to_le_bytes());
+    wav.extend_from_slice(&bits.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&0u32.to_le_bytes());
+    for frame in payload.chunks_exact(source_frame_bytes) {
+        for channel in order {
+            let start = channel * sample_bytes;
+            wav.extend_from_slice(&frame[start..start + sample_bytes]);
+        }
+        wav.extend(std::iter::repeat_n(0, sample_bytes * 10));
+    }
+    let data_size = (wav.len() - 44) as u32;
+    wav[4..8].copy_from_slice(&(wav.len() as u32 - 8).to_le_bytes());
+    wav[40..44].copy_from_slice(&data_size.to_le_bytes());
+    std::fs::write(output, wav).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
+    Ok(true)
+}
+
 /// Build a ST 429-12 MCA config for a sound wrap from the channel count plus
 /// optional accessibility (HI/VI) channel indices. The main layout is 2.0/5.1/
 /// 7.1 by channel count; HI and VI-N are labelled as standalone channels at the
@@ -116,7 +212,7 @@ pub fn build_mca_config(
     // treats 8 as 5.1+HI+VI, but accessibility tracks are opt-in via the flags).
     let mut sf = match main_count {
         2 => postkit::mca::soundfield_stereo(),
-        6 => postkit::mca::soundfield_51(),
+        6 | 16 => postkit::mca::soundfield_51(),
         8 => postkit::mca::soundfield_71(),
         n => postkit::mca::detect_soundfield(n),
     };
@@ -335,6 +431,64 @@ mod tests {
             build_mca_config(8, Some(6), Some(7)).as_deref(),
             Some("51(L,R,C,LFE,Ls,Rs),HI,VIN")
         );
+    }
+
+    #[test]
+    fn pads_51_to_16_channels_with_canonical_mca_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.wav");
+        let output = dir.path().join("dcp.wav");
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&54u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&6u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&864_000u32.to_le_bytes());
+        wav.extend_from_slice(&18u16.to_le_bytes());
+        wav.extend_from_slice(&24u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&18u32.to_le_bytes());
+        for sample in 1u8..=18 {
+            wav.push(sample);
+        }
+        std::fs::write(&input, wav).unwrap();
+
+        assert!(prepare_51_audio(&input, &output, AudioInputOrder::Canonical51).unwrap());
+        assert_eq!(wav_channels(&output).unwrap(), 16);
+        assert_eq!(
+            build_mca_config(16, None, None).as_deref(),
+            Some("51(L,R,C,LFE,Ls,Rs)")
+        );
+    }
+
+    #[test]
+    fn reorders_alternate_51_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.wav");
+        let output = dir.path().join("dcp.wav");
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&54u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&6u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&288_000u32.to_le_bytes());
+        wav.extend_from_slice(&6u16.to_le_bytes());
+        wav.extend_from_slice(&8u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&6u32.to_le_bytes());
+        wav.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        std::fs::write(&input, wav).unwrap();
+
+        prepare_51_audio(&input, &output, AudioInputOrder::LrcLsRsLfe).unwrap();
+        let wav = std::fs::read(output).unwrap();
+        assert_eq!(&wav[44..50], &[1, 2, 3, 6, 4, 5]);
+        assert!(wav[50..60].iter().all(|sample| *sample == 0));
     }
 
     #[test]

@@ -25,8 +25,11 @@ pub struct DcpConfig {
     pub j2k_dir: Option<PathBuf>,
     /// Audio WAV file to wrap into sound MXF
     pub audio_path: Option<PathBuf>,
-    /// SRT subtitle file to convert to SMPTE timed text (ST 428-7) and wrap as a
-    /// subtitle track.
+    /// Declared channel order for a six-channel input WAV. DCPwizard never
+    /// guesses this order.
+    pub audio_input_order: crate::mxf_wrap::AudioInputOrder,
+    /// SRT subtitle file to convert, or supplied SMPTE timed-text XML to wrap as
+    /// a subtitle track.
     pub subtitle_path: Option<PathBuf>,
     /// Subtitle language code (default "en").
     pub subtitle_language: String,
@@ -121,13 +124,38 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
 
     let stereoscopic = config.right_eye_dir.is_some();
 
+    let prepared_audio = match config.audio_path.as_ref().filter(|path| path.exists()) {
+        Some(path) => {
+            let output = config
+                .output_dir
+                .join(format!(".dcpwizard_audio_{}.wav", uuid::Uuid::new_v4()));
+            match crate::mxf_wrap::prepare_51_audio(path, &output, config.audio_input_order) {
+                Ok(true) => Some(output),
+                Ok(false) => None,
+                Err(e) => {
+                    tracing::error!("audio preparation failed: {e}");
+                    return -1;
+                }
+            }
+        }
+        None => None,
+    };
+
     // multi-reel path is opt-in; the single-reel path below is unchanged
     if config.reel_length_minutes > 0 {
         if stereoscopic || config.atmos_path.is_some() {
             tracing::error!("stereoscopic 3D and Atmos are not supported with reel splitting");
             return -1;
         }
-        return crate::reel::create_multi_reel_dcp(config, fps);
+        let mut reel_config = config.clone();
+        if let Some(path) = prepared_audio.as_ref() {
+            reel_config.audio_path = Some(path.clone());
+        }
+        let code = crate::reel::create_multi_reel_dcp(&reel_config, fps);
+        if let Some(path) = prepared_audio {
+            let _ = std::fs::remove_file(path);
+        }
+        return code;
     }
 
     // ── Wrap picture MXF ──────────────────────────────────────────────
@@ -219,7 +247,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let sound_duration = picture_duration; // match picture duration
     let mut sound_key = None;
 
-    if let Some(ref audio_path) = config.audio_path
+    if let Some(audio_path) = prepared_audio.as_ref().or(config.audio_path.as_ref())
         && audio_path.exists()
     {
         sound_key = if config.encrypt {
@@ -277,20 +305,29 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         &config.subtitle_language
     };
 
-    if let Some(ref srt_path) = config.subtitle_path
-        && srt_path.exists()
+    if let Some(subtitle_path) = config.subtitle_path.as_ref()
+        && subtitle_path.exists()
     {
-        // SRT -> ST 428-7 DCST XML at the picture edit rate, then wrap the XML
-        // into a timed-text MXF (asdcplib reads the timing back out of the XML).
-        let dcst_path = config
-            .output_dir
-            .join(format!("subtitle_{subtitle_uuid}.xml"));
-        if let Err(e) =
-            crate::subtitle::convert_srt_to_dcp_xml(srt_path, &dcst_path, subtitle_lang, fps)
-        {
-            tracing::error!("Subtitle conversion failed: {e}");
-            return -1;
-        }
+        let is_xml = subtitle_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"));
+        // Preserve authored SMPTE XML, including its placement and styling. SRT
+        // remains a centered-bottom conversion because it carries no placement.
+        let dcst_path = if is_xml {
+            subtitle_path.clone()
+        } else {
+            let path = config
+                .output_dir
+                .join(format!("subtitle_{subtitle_uuid}.xml"));
+            if let Err(e) =
+                crate::subtitle::convert_srt_to_dcp_xml(subtitle_path, &path, subtitle_lang, fps)
+            {
+                tracing::error!("Subtitle conversion failed: {e}");
+                return -1;
+            }
+            path
+        };
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
             input_path: dcst_path.clone(),
             output_mxf: subtitle_mxf_path.clone(),
@@ -304,8 +341,11 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             return -1;
         };
         subtitle_duration = track.duration;
-        // the DCST XML now lives inside the MXF; drop the loose copy
-        let _ = std::fs::remove_file(&dcst_path);
+        // The generated DCST now lives inside the MXF. Never remove a supplied
+        // subtitle XML file.
+        if !is_xml {
+            let _ = std::fs::remove_file(&dcst_path);
+        }
         has_subtitle = true;
         tracing::info!("Subtitle MXF: {subtitle_mxf_name}");
     }
@@ -578,6 +618,9 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     }
 
     tracing::info!("DCP created: {}", config.output_dir.display());
+    if let Some(path) = prepared_audio {
+        let _ = std::fs::remove_file(path);
+    }
     0
 }
 

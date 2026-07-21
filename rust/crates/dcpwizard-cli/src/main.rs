@@ -29,7 +29,16 @@ enum Commands {
         /// Audio WAV file
         #[arg(long)]
         audio: Option<String>,
-        /// SRT subtitle file to package as a SMPTE timed-text track (ST 428-7)
+        /// Six-channel WAV order: dcp (L,R,C,LFE,Ls,Rs) or lrc-ls-rs-lfe
+        #[arg(long, default_value = "dcp")]
+        audio_input_order: String,
+        /// HDR-to-DCI 3D LUT. Required for HDR source video unless generic tone mapping is enabled.
+        #[arg(long)]
+        hdr_to_dci_lut: Option<String>,
+        /// Allow generic FFmpeg HDR tone mapping. It is not a delivery transform.
+        #[arg(long)]
+        allow_generic_hdr_tonemap: bool,
+        /// SRT file to convert, or supplied SMPTE subtitle XML to package unchanged
         #[arg(long)]
         subtitle: Option<String>,
         /// Subtitle language code (e.g. "en", "fr")
@@ -63,6 +72,9 @@ enum Commands {
         /// Force 4K resolution
         #[arg(long)]
         fourk: bool,
+        /// Picture container: 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, or 4k-full
+        #[arg(long)]
+        container: Option<String>,
         /// Number of encoding threads (default: auto-detect CPU count)
         #[arg(short = 'j', long)]
         threads: Option<u32>,
@@ -895,6 +907,9 @@ fn run() {
             title,
             video,
             audio,
+            audio_input_order,
+            hdr_to_dci_lut,
+            allow_generic_hdr_tonemap,
             subtitle,
             subtitle_language,
             output,
@@ -905,6 +920,7 @@ fn run() {
             frame_rate,
             twok,
             fourk,
+            container,
             threads,
             video_bit_rate,
             reel_length,
@@ -920,6 +936,14 @@ fn run() {
                 dcpwizard_core::Standard::Interop
             } else {
                 dcpwizard_core::Standard::Smpte
+            };
+            let audio_input_order = match audio_input_order.as_str() {
+                "dcp" => dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51,
+                "lrc-ls-rs-lfe" => dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe,
+                value => {
+                    tracing::error!("Unknown audio input order: {value}");
+                    return;
+                }
             };
 
             // Resolve delivery profile and apply its presets as defaults; explicit
@@ -986,10 +1010,52 @@ fn run() {
                 let j2k_dir = output_dir.join("j2k");
                 let _ = std::fs::create_dir_all(&j2k_dir);
 
+                let mut encode_video_path = video_path.clone();
+                let hdr_type = dcpwizard_core::dolby_vision::detect_hdr_type(&video_path);
+                if hdr_type != postkit::dolby_vision::HdrType::Sdr {
+                    let converted = output_dir.join("hdr_to_dci_source.mov");
+                    if let Some(lut) = hdr_to_dci_lut.as_ref() {
+                        let lut = PathBuf::from(lut);
+                        if !lut.is_file() {
+                            tracing::error!("HDR-to-DCI LUT not found: {}", lut.display());
+                            return;
+                        }
+                        let opts = postkit::colour::ColourConvertOptions {
+                            input: video_path.clone(),
+                            output: converted.clone(),
+                            source_space: postkit::colour::ColourSpace::Rec2020,
+                            target_space: postkit::colour::ColourSpace::Xyz,
+                            lut_path: Some(lut),
+                        };
+                        if let Err(e) = postkit::colour::convert_colour(&opts) {
+                            tracing::error!("HDR-to-DCI LUT conversion failed: {e}");
+                            return;
+                        }
+                    } else if allow_generic_hdr_tonemap {
+                        tracing::warn!(
+                            "Using generic FFmpeg HDR tone mapping. It is not suitable as a default delivery transform."
+                        );
+                        if dcpwizard_core::dolby_vision::convert_hdr(
+                            &video_path,
+                            postkit::dolby_vision::HdrType::Sdr,
+                            &converted,
+                        ) != 0
+                        {
+                            return;
+                        }
+                    } else {
+                        tracing::error!(
+                            "HDR source requires --hdr-to-dci-lut. Use --allow-generic-hdr-tonemap only for an explicitly accepted generic transform."
+                        );
+                        return;
+                    }
+                    encode_video_path = converted;
+                }
+
                 tracing::info!("Detected video file input — using grok encoder");
 
                 // Probe video for frame rate and resolution
-                let video_info = dcpwizard_core::probe::probe_video(&video_path);
+                let video_info = dcpwizard_core::probe::probe_video(&encode_video_path);
                 let fps = frame_rate.unwrap_or_else(|| {
                     video_info
                         .as_ref()
@@ -1054,7 +1120,7 @@ fn run() {
                 });
 
                 let result = grok_encoder::encode_video_pipeline(
-                    &video_path,
+                    &encode_video_path,
                     &j2k_dir,
                     &params,
                     total_frames as u64,
@@ -1149,6 +1215,20 @@ fn run() {
                     .and_then(dcpwizard_core::ContentType::from_abbrev)
                     .unwrap_or_default();
 
+                let (container_width, container_height) = match container.as_deref() {
+                    Some("2k-scope") => (2048, 858),
+                    Some("2k-flat") => (1998, 1080),
+                    Some("2k-full") => (2048, 1080),
+                    Some("4k-scope") => (4096, 1716),
+                    Some("4k-flat") => (3996, 2160),
+                    Some("4k-full") => (4096, 2160),
+                    Some(value) => {
+                        tracing::error!("Unknown container: {value}");
+                        return;
+                    }
+                    None => (0, 0),
+                };
+
                 let config = dcpwizard_core::dcp::DcpConfig {
                     title,
                     standard: std_val,
@@ -1159,9 +1239,12 @@ fn run() {
                     frame_rate_den: 1,
                     resolution,
                     content_type: ct,
+                    container_width,
+                    container_height,
                     max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(j2k_dir.clone()),
                     audio_path: audio_path.clone(),
+                    audio_input_order,
                     subtitle_path: subtitle.clone().map(PathBuf::from),
                     subtitle_language: subtitle_language.clone(),
                     reel_length_minutes: reel_length.unwrap_or(0),
@@ -1207,9 +1290,34 @@ fn run() {
                     frame_rate_den: 1,
                     resolution,
                     content_type: ct,
+                    container_width: match container.as_deref() {
+                        Some("2k-scope") => 2048,
+                        Some("2k-flat") => 1998,
+                        Some("2k-full") => 2048,
+                        Some("4k-scope") => 4096,
+                        Some("4k-flat") => 3996,
+                        Some("4k-full") => 4096,
+                        Some(value) => {
+                            tracing::error!("Unknown container: {value}");
+                            return;
+                        }
+                        None => 0,
+                    },
+                    container_height: match container.as_deref() {
+                        Some("2k-scope") => 858,
+                        Some("2k-flat") | Some("2k-full") => 1080,
+                        Some("4k-scope") => 1716,
+                        Some("4k-flat") | Some("4k-full") => 2160,
+                        Some(value) => {
+                            tracing::error!("Unknown container: {value}");
+                            return;
+                        }
+                        None => 0,
+                    },
                     max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(video_path),
                     audio_path: audio.map(PathBuf::from),
+                    audio_input_order,
                     subtitle_path: subtitle.map(PathBuf::from),
                     subtitle_language,
                     reel_length_minutes: reel_length.unwrap_or(0),
@@ -1351,6 +1459,7 @@ fn run() {
                     frame_rate_den: 1,
                     j2k_dir: Some(j2k_dir.clone()),
                     audio_path: audio_path.clone(),
+                    audio_input_order: dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51,
                     ..Default::default()
                 };
                 let code = dcpwizard_core::dcp::create_dcp(&config);
