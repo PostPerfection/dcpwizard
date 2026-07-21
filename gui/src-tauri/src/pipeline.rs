@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
@@ -194,6 +194,61 @@ pub async fn list_jobs(app: AppHandle) -> Vec<JobInfo> {
         });
     }
     jobs
+}
+
+// ─── Version File (supplemental DCP) ───────────────────────────────────────
+
+// One reel replacement from the GUI. Empty strings mean "reference the OV".
+#[derive(Deserialize)]
+pub struct VfReplacementInput {
+    reel_number: u32,
+    picture: Option<String>,
+    sound: Option<String>,
+}
+
+#[tauri::command]
+pub async fn create_vf(
+    ov_dir: String,
+    output_dir: String,
+    title: Option<String>,
+    replacements: Vec<VfReplacementInput>,
+) -> Result<String, String> {
+    let path_opt = |s: Option<String>| s.filter(|p| !p.is_empty()).map(PathBuf::from);
+    let replacement_reels: Vec<dcpwizard_core::vf::ReplacementReel> = replacements
+        .into_iter()
+        .map(|r| dcpwizard_core::vf::ReplacementReel {
+            reel_number: r.reel_number,
+            picture: path_opt(r.picture),
+            sound: path_opt(r.sound),
+        })
+        .collect();
+
+    if !replacement_reels
+        .iter()
+        .any(|r| r.picture.is_some() || r.sound.is_some())
+    {
+        return Err("Add at least one replacement reel with a picture or sound".into());
+    }
+
+    let config = dcpwizard_core::vf::VfConfig {
+        ov_dir: PathBuf::from(&ov_dir),
+        vf_dir: PathBuf::from(&output_dir),
+        title: title.unwrap_or_default(),
+        replacement_reels,
+    };
+
+    // create_vf does blocking IO (mxf wrap, hashing), keep it off the async runtime.
+    let code = tokio::task::spawn_blocking(move || dcpwizard_core::vf::create_vf(&config))
+        .await
+        .map_err(|e| format!("VF task panicked: {e}"))?;
+
+    if code == 0 {
+        Ok(format!("Created Version File DCP at {output_dir}"))
+    } else {
+        Err(format!(
+            "VF creation failed (rc={code}); see log for details"
+        ))
+    }
 }
 
 // ─── Queue worker ──────────────────────────────────────────────────────────

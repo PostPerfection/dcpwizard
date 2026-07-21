@@ -757,6 +757,118 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
     : "✗ Failed\n\n" + (result.stderr || result.stdout);
 });
 
+// === Version File (Supplemental DCP) ===
+let vfNextId = 1;
+const vfReplacements = [{ id: vfNextId++, reel: 1, picture: "", sound: "" }];
+
+function renderVfReplacements() {
+  const list = document.getElementById("vf-repl-list");
+  if (!list) return;
+  list.innerHTML = vfReplacements.map(r => `
+    <div class="field-row vf-repl-row" data-id="${r.id}">
+      <div class="prop-field vf-reel-field">
+        <label>Reel</label>
+        <input type="number" class="vf-reel-num" min="1" value="${r.reel}">
+      </div>
+      <div class="prop-field">
+        <label>Picture (optional)</label>
+        <div class="input-with-btn">
+          <input type="text" class="vf-picture" value="${r.picture}" placeholder="J2K dir or .mxf…" readonly>
+          <button class="btn-sm vf-browse-picture" type="button">…</button>
+        </div>
+      </div>
+      <div class="prop-field">
+        <label>Sound (optional)</label>
+        <div class="input-with-btn">
+          <input type="text" class="vf-sound" value="${r.sound}" placeholder="WAV or .mxf…" readonly>
+          <button class="btn-sm vf-browse-sound" type="button">…</button>
+        </div>
+      </div>
+      <button class="btn-sm vf-remove" type="button" title="Remove reel" ${vfReplacements.length <= 1 ? "disabled" : ""}>✕</button>
+    </div>
+  `).join("");
+  checkVfReady();
+}
+
+function checkVfReady() {
+  const btn = document.getElementById("vf-create");
+  if (!btn) return;
+  const ok = document.getElementById("vf-ov")?.value &&
+    document.getElementById("vf-output")?.value &&
+    vfReplacements.some(r => r.picture || r.sound);
+  btn.disabled = !ok;
+}
+
+document.getElementById("vf-browse-ov")?.addEventListener("click", async () => {
+  const d = await open({ directory: true });
+  if (d) { document.getElementById("vf-ov").value = d; checkVfReady(); }
+});
+document.getElementById("vf-browse-output")?.addEventListener("click", async () => {
+  const d = await open({ directory: true });
+  if (d) { document.getElementById("vf-output").value = d; checkVfReady(); }
+});
+document.getElementById("vf-title")?.addEventListener("input", checkVfReady);
+
+document.getElementById("vf-add-repl")?.addEventListener("click", () => {
+  const maxReel = vfReplacements.reduce((m, r) => Math.max(m, parseInt(r.reel) || 0), 0);
+  vfReplacements.push({ id: vfNextId++, reel: maxReel + 1, picture: "", sound: "" });
+  renderVfReplacements();
+});
+
+// Per-row picker / remove via delegation (rows are re-rendered).
+document.getElementById("vf-repl-list")?.addEventListener("click", async (e) => {
+  const row = e.target.closest(".vf-repl-row");
+  if (!row) return;
+  const rec = vfReplacements.find(r => r.id === parseInt(row.dataset.id));
+  if (!rec) return;
+  if (e.target.classList.contains("vf-browse-picture")) {
+    const d = await open({ directory: true });
+    if (d) { rec.picture = d; renderVfReplacements(); }
+  } else if (e.target.classList.contains("vf-browse-sound")) {
+    const f = await open({ directory: false, filters: [{ name: "Audio/MXF", extensions: ["wav", "mxf"] }, { name: "All", extensions: ["*"] }] });
+    if (f) { rec.sound = f; renderVfReplacements(); }
+  } else if (e.target.classList.contains("vf-remove")) {
+    if (vfReplacements.length <= 1) return;
+    vfReplacements.splice(vfReplacements.findIndex(r => r.id === rec.id), 1);
+    renderVfReplacements();
+  }
+});
+// Reel number edits shouldn't re-render (would drop focus).
+document.getElementById("vf-repl-list")?.addEventListener("input", (e) => {
+  if (!e.target.classList.contains("vf-reel-num")) return;
+  const row = e.target.closest(".vf-repl-row");
+  const rec = vfReplacements.find(r => r.id === parseInt(row.dataset.id));
+  if (rec) rec.reel = e.target.value;
+});
+
+document.getElementById("vf-create")?.addEventListener("click", async () => {
+  const ov = document.getElementById("vf-ov")?.value;
+  const output = document.getElementById("vf-output")?.value;
+  const title = document.getElementById("vf-title")?.value?.trim();
+  if (!ov || !output) { tauriMessage("Select the OV and output directories"); return; }
+
+  const replacements = vfReplacements
+    .map(r => ({ reel_number: parseInt(r.reel) || 0, picture: r.picture || null, sound: r.sound || null }))
+    .filter(r => r.picture || r.sound);
+  if (replacements.length === 0) { tauriMessage("Add at least one reel with a picture or sound"); return; }
+
+  const box = document.getElementById("vf-results");
+  box.classList.add("visible");
+  box.textContent = "Creating Version File DCP…";
+  setStatus("Creating Version File…");
+  try {
+    const msg = await invoke("create_vf", { ovDir: ov, outputDir: output, title: title || null, replacements });
+    box.textContent = "✓ " + msg;
+    setStatus("Version File created");
+    addRecentProject(output, title || "VF");
+  } catch (e) {
+    box.textContent = "✗ " + e;
+    setStatus("Version File failed: " + e);
+  }
+});
+
+renderVfReplacements();
+
 // === Jobs ===
 let jobsPollInterval = null;
 

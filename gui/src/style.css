@@ -980,6 +980,19 @@ body {
   flex: 1;
 }
 
+/* Version File replacement rows */
+.vf-repl-row {
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.vf-repl-row .vf-reel-field {
+  flex: 0 0 80px;
+}
+.vf-repl-row .vf-remove {
+  flex: 0 0 auto;
+  margin-bottom: 4px;
+}
+
 /* Context menu */
 .context-menu {
   position: fixed;

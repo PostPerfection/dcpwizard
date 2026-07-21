@@ -41,6 +41,9 @@
         <button class="sidebar-btn" data-view="tools" title="Tools">
           <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
         </button>
+        <button class="sidebar-btn" data-view="vf" title="Version File (Supplemental DCP)">
+          <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        </button>
         <button class="sidebar-btn" data-view="jobs" title="Jobs">
           <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4v2zm0 5h18V9H4v2zm0 5h18v-2H4v2zm0 5h18v-2H4v2z"/></svg>
         </button>
@@ -620,6 +623,41 @@
               <div id="convert-results" class="results-box"></div>
             </section>
           </div>
+        </div>
+
+        <!-- VERSION FILE VIEW -->
+        <div class="view" id="view-vf">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Version File (Supplemental DCP)</h2>
+            </div>
+            <p class="field-hint">Create a supplemental DCP that references an Original Version and ships only the replaced reels. Picture is a J2K frames directory (or an .mxf); sound is a WAV (or an .mxf).</p>
+            <div class="prop-field">
+              <label>Original Version (OV) Directory</label>
+              <div class="input-with-btn">
+                <input id="vf-ov" type="text" placeholder="Select OV DCP folder…" readonly>
+                <button id="vf-browse-ov" class="btn-sm">…</button>
+              </div>
+            </div>
+            <div class="prop-field">
+              <label>Output Directory</label>
+              <div class="input-with-btn">
+                <input id="vf-output" type="text" placeholder="Select output folder…" readonly>
+                <button id="vf-browse-output" class="btn-sm">…</button>
+              </div>
+            </div>
+            <div class="prop-field">
+              <label>Title (optional)</label>
+              <input id="vf-title" type="text" placeholder="Defaults to <OV title>_VF">
+            </div>
+            <div class="panel-header">
+              <h2>Replacement Reels</h2>
+              <button id="vf-add-repl" class="btn-sm">+ Reel</button>
+            </div>
+            <div id="vf-repl-list" class="vf-repl-list"></div>
+            <button id="vf-create" class="btn-primary" disabled>Create Version File</button>
+            <div id="vf-results" class="results-box"></div>
+          </section>
         </div>
 
         <!-- JOBS VIEW -->

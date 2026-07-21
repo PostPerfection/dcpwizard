@@ -79,6 +79,7 @@ pub fn run() {
             pipeline::pause_job,
             pipeline::resume_job,
             pipeline::list_jobs,
+            pipeline::create_vf,
             timeline::list_cpls,
             timeline::get_timeline,
         ])
