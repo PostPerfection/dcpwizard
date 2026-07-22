@@ -27,6 +27,42 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
   the VF. Verified end-to-end: `dcpdoctor validate --ov` resolves cross-refs,
   alone gives the supplemental warning (not cross_ref_broken).
 
+## DoM tracker gaps (2026-07-22)
+
+Feature requests from the DCP-o-matic Mantis tracker (dom#N =
+https://dcpomatic.com/bugs/view.php?id=N) that dcpwizard lacks. Shared DSP/parsers
+belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface is here.
+
+- KDM distribution: screen/cinema database with search by cert serial (dom#776,
+  dom#2707), KDM email sending (dom#2515, dom#2516, dom#3076), KDM history log
+  (dom#1014), certificate download from manufacturers (dom#2705, dom#2706), FLMx
+  cinema data import (dom#239), validity templates (dom#2424). We only generate
+  KDMs from cert files on disk.
+- DCP combiner: merge several DCPs into one volume with merged ASSETMAP/PKL
+  (dom#2019, dom#2026, dom#2027, dom#2420). Trailer concat is the closest we have.
+- Disk writer: format drives ext2/3 for cinema delivery, check an existing drive's
+  format, set volume name (dom#2095, dom#2112). copy_drive.rs only does a verified
+  copy to a mounted target.
+- Distributed encoding across machines (dom#155, dom#1635, dom#2605). Job queue is
+  single-machine.
+- Package surgery: OV assembled from existing DCPs (dom#1675), subtitle-only VF
+  from cpl/pkl/assetmap (dom#1062), decrypt a DCP keeping structure (dom#2845,
+  ties into "Encrypted DCP derivatives" below), edit a DCP in place (dom#1127).
+- Creation: black frames + silence padding at head/tail (dom#1016, dom#1608,
+  dom#2574), background colour other than black (dom#1042), custom containers
+  (dom#159), reel split by chapter markers (dom#2964), sign-language video track
+  (dom#1602), DCI HDR addendum DCPs (dom#2374, dom#2799), APV codec (dom#3159).
+- Audio: loudness adjustment to a target, not just measurement (dom#1382), upmix
+  (dom#921, dom#1080), crossfades (dom#374), mid-side decode (dom#3020),
+  filename-based channel auto-routing (dom#2134).
+- Subtitles: editor (dom#828, dom#2071), auto line-wrap (dom#1626), RTL (dom#860),
+  vertical alignment (dom#1729, dom#2796), 3D Z position (dom#1359), more input
+  formats: ASS styling (dom#1462), PAC (dom#1719), MKS (dom#3131), FCPXML
+  (dom#2909), XML+PNG bitmap (dom#1376); font subsetting (dom#1023) and de-dup
+  across reels (dom#2533).
+- Encode QoL: pause/resume across restarts (dom#344), scheduled encoding
+  (dom#2359), runtime prediction (dom#502), shutdown on completion (dom#1394).
+
 ## Planned features
 
 - multi-CPL timelines (multi_cpl.rs create_multi_cpl) still unbuilt.
