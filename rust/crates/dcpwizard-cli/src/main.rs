@@ -1056,6 +1056,19 @@ fn run() {
 
                 // Probe video for frame rate and resolution
                 let video_info = dcpwizard_core::probe::probe_video(&encode_video_path);
+                match dcpwizard_core::probe::video_has_alpha(&encode_video_path) {
+                    Ok(true) => {
+                        tracing::error!(
+                            "Input video has alpha. Composite it over an opaque background before creating a DCP."
+                        );
+                        std::process::exit(1);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::error!("Cannot determine whether the input has alpha: {error}");
+                        std::process::exit(1);
+                    }
+                }
                 let (source_fps, source_needs_audio_pull_up) = video_info
                     .as_ref()
                     .map(|v| dcpwizard_core::hfr::source_rate_to_dcp(v.fps_num, v.fps_den))

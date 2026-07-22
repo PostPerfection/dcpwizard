@@ -39,9 +39,6 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
 - Input video range: expose an explicit full-range or legal-range override, or
   verify the decoded range before conversion. The current ffmpeg raw-RGB path
   leaves users no way to correct wrong or absent source metadata.
-- Alpha input: reject transparent video with a clear compositing requirement,
-  or add an explicit opaque background composite before RGB DCP encoding. DCP
-  picture essence has no alpha channel.
 - DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
   DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
   the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is
@@ -114,6 +111,9 @@ Done in the earlier pass:
 - 23.976 source delivery: `create` maps 24000/1001 to the 24 fps DCP edit rate
   and applies a 1000/1001 audio pull-up to supplied or demuxed audio before PCM
   wrapping.
+- Alpha input: `create` rejects alpha-bearing pixel formats before RGB encoding
+  and tells the user to composite an opaque background. DCP picture essence has
+  no alpha channel.
 - Subtitle packaging is real: `create --subtitle` converts SRT to ST 428-7 DCST XML
   and wraps supplied SMPTE XML unchanged, preserving authored placement and styling.
   3D subtitle depth is unsupported.
