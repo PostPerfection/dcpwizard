@@ -60,19 +60,19 @@ pub fn plan_reel_ranges(total_frames: u64, fps: u32, reel_length_minutes: u32) -
 }
 
 /// PCM WAV layout needed to slice the essence sample-accurately.
-struct WavInfo {
-    sample_rate: u32,
-    block_align: u32,
+pub(crate) struct WavInfo {
+    pub(crate) sample_rate: u32,
+    pub(crate) block_align: u32,
     /// bytes copied verbatim before the data payload (RIFF + fmt + any pre-data chunks + "data"+size)
-    header: Vec<u8>,
+    pub(crate) header: Vec<u8>,
     /// offset of the 4-byte data chunk size field within `header`
-    data_size_field_pos: usize,
+    pub(crate) data_size_field_pos: usize,
     /// byte offset of the data payload in the source file
-    data_offset: u64,
-    data_size: u64,
+    pub(crate) data_offset: u64,
+    pub(crate) data_size: u64,
 }
 
-fn parse_wav(path: &Path) -> Result<WavInfo, String> {
+pub(crate) fn parse_wav(path: &Path) -> Result<WavInfo, String> {
     let mut f =
         std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     let mut head = vec![0u8; 4096];

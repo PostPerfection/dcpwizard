@@ -96,6 +96,13 @@ enum Commands {
         /// Sound channel index (0-based) carrying the Visually Impaired (VI-N) track
         #[arg(long)]
         vi_channel: Option<u32>,
+        /// Pad the head with black frames + silence. Duration with a unit:
+        /// frames (48f) or seconds (2s). Shifts subtitles by the same offset.
+        #[arg(long)]
+        pad_head: Option<String>,
+        /// Pad the tail with black frames + silence. Same syntax as --pad-head.
+        #[arg(long)]
+        pad_tail: Option<String>,
     },
     /// Rebuild ASSETMAP and PKL to cover every asset file present (metadata-only
     /// repackaging; no re-wrap or re-encode). For re-ingesting exported OV/VF
@@ -948,6 +955,8 @@ fn run() {
             atmos,
             hi_channel,
             vi_channel,
+            pad_head,
+            pad_tail,
         } => {
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
@@ -1319,6 +1328,8 @@ fn run() {
                     hi_channel,
                     vi_channel,
                     stereo_3d: right_eye_dir.is_some(),
+                    pad_head: pad_head.clone(),
+                    pad_tail: pad_tail.clone(),
                 };
                 let code = dcpwizard_core::dcp::create_dcp(&config);
 
@@ -1394,6 +1405,8 @@ fn run() {
                     atmos_path: atmos.map(PathBuf::from),
                     hi_channel,
                     vi_channel,
+                    pad_head,
+                    pad_tail,
                 };
                 dcpwizard_core::dcp::create_dcp(&config)
             }

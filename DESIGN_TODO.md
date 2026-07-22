@@ -48,8 +48,7 @@ belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface 
 - Package surgery: OV assembled from existing DCPs (dom#1675), subtitle-only VF
   from cpl/pkl/assetmap (dom#1062), decrypt a DCP keeping structure (dom#2845,
   ties into "Encrypted DCP derivatives" below), edit a DCP in place (dom#1127).
-- Creation: black frames + silence padding at head/tail (dom#1016, dom#1608,
-  dom#2574), background colour other than black (dom#1042), custom containers
+- Creation: background colour other than black (dom#1042), custom containers
   (dom#159), reel split by chapter markers (dom#2964), sign-language video track
   (dom#1602), DCI HDR addendum DCPs (dom#2374, dom#2799), APV codec (dom#3159).
 - Audio: loudness adjustment to a target, not just measurement (dom#1382), upmix
@@ -139,6 +138,24 @@ Done in the earlier pass:
   per-reel file list (mxf_wrap::wrap_mxf_files) and audio/subtitle from temp files.
   Verified end-to-end: 2-reel DCP with audio and per-reel subtitles passes dcpdoctor
   with 0 errors and no reel-coherence note; encrypted variant too.
+- Head/tail padding is real: `create --pad-head <dur> --pad-tail <dur>` (pad.rs).
+  Duration takes an explicit unit, frames (`48f`) or seconds (`2s`); a bare number
+  or a fractional-frame seconds value is rejected loud. One black frame is encoded
+  with the grok pipeline at the content's pixel dimensions and its codestream is
+  repeated for every padded frame via the explicit-file-list wrap
+  (mxf_wrap::wrap_mxf_files), so padding costs one encode. Audio is extended with
+  digital silence sample-accurately at frame edges (pad::pad_wav_with_silence reuses
+  reel::parse_wav). Head padding shifts the program: supplied SRT cues slide by the
+  head offset (subtitle::srt_to_shifted_dcst); FFOC/LFOC stay correct because
+  markers derive from the padded picture_duration. Verified end-to-end: a head+tail
+  padded DCP with audio has picture frames = head + content + tail and sound
+  matching, and passes dcpdoctor with 0 errors; a separate case proves SRT cues
+  shift by the head duration. CLI + core only; the GUI create panel goes through the
+  job queue (structural, still unwired). Rejected loud this pass, each a broken DCP
+  otherwise: padding with `--reel-length`, with 3D (`--right-eye`), with Atmos
+  (`--atmos`, the aux track cannot be re-timed soundly), and head padding with a
+  supplied SMPTE subtitle XML (authored timing is not rewritten; supply SRT or pad
+  only the tail).
 - HFR validation is real and wired (hfr.rs): legal SMPTE rates 24/25/30/48/50/60/
   96/100/120 (Interop 24/25/30/48); 4K capped at 30 fps (48+ needs 2K, per the DCI
   HFR addendum / SMPTE ST 428-11:2013). `create`/pipeline reject illegal fps/resolution

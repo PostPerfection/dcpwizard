@@ -31,6 +31,7 @@ pub mod mca;
 pub mod multi_cpl;
 pub mod mxf_wrap;
 pub mod otioz_import;
+pub mod pad;
 pub mod pkl;
 pub mod preview;
 pub mod probe;

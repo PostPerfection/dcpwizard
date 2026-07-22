@@ -197,6 +197,28 @@ pub fn parse_srt_frames(path: &Path, fps: u32) -> Result<Vec<SubCue>, String> {
         .collect())
 }
 
+/// Convert an SRT file to a DCST XML, shifting every cue later by `head_frames`.
+/// Head padding moves the program start, so supplied SRT cues must slide by the
+/// same offset to stay aligned with the picture. `head_frames == 0` is a plain
+/// conversion.
+pub fn srt_to_shifted_dcst(
+    srt: &Path,
+    head_frames: u64,
+    lang: &str,
+    fps: u32,
+    out: &Path,
+) -> Result<(), String> {
+    let cues: Vec<SubCue> = parse_srt_frames(srt, fps)?
+        .into_iter()
+        .map(|c| SubCue {
+            start_frame: c.start_frame + head_frames,
+            end_frame: c.end_frame + head_frames,
+            text: c.text,
+        })
+        .collect();
+    write_dcst_frames(&cues, lang, fps, out)
+}
+
 /// Write a reel's DCST from frame-based cues (already rebased to reel-local 0).
 pub fn write_dcst_frames(cues: &[SubCue], lang: &str, fps: u32, out: &Path) -> Result<(), String> {
     let xml = render_dcst_frames(cues, lang, 42, "FFFFFFFF", fps, DEFAULT_VPOSITION);

@@ -45,6 +45,13 @@ pub struct DcpConfig {
     pub hi_channel: Option<u32>,
     /// Sound channel index carrying the Visually Impaired (VI-N) narration track.
     pub vi_channel: Option<u32>,
+    /// Black-frame + silence padding prepended at the head of the program. A
+    /// duration with a unit: frames (`48f`) or seconds (`2s`). Head padding
+    /// shifts the program, so supplied SRT subtitles are re-timed by this offset.
+    pub pad_head: Option<String>,
+    /// Black-frame + silence padding appended at the tail of the program. Same
+    /// syntax as `pad_head`.
+    pub pad_tail: Option<String>,
 }
 
 /// Dolby Atmos IAB bitstream data-essence UL, as used in real Atmos DCP AuxData.
@@ -141,6 +148,62 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
 
     let stereoscopic = config.right_eye_dir.is_some();
 
+    // ── Head/tail padding: parse durations and reject unsound combinations ──
+    let head_frames = match config.pad_head.as_deref() {
+        Some(spec) => match crate::pad::parse_pad_frames(spec, fps) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::error!("--pad-head: {e}");
+                return -1;
+            }
+        },
+        None => 0,
+    };
+    let tail_frames = match config.pad_tail.as_deref() {
+        Some(spec) => match crate::pad::parse_pad_frames(spec, fps) {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::error!("--pad-tail: {e}");
+                return -1;
+            }
+        },
+        None => 0,
+    };
+    let padding = head_frames + tail_frames > 0;
+    if padding {
+        if config.reel_length_minutes > 0 {
+            tracing::error!(
+                "head/tail padding is not supported with reel splitting (--reel-length)"
+            );
+            return -1;
+        }
+        if stereoscopic {
+            tracing::error!("head/tail padding is not supported with stereoscopic 3D");
+            return -1;
+        }
+        if config.atmos_path.is_some() {
+            tracing::error!(
+                "head/tail padding is not supported with Atmos: the auxiliary track cannot be re-timed soundly this pass"
+            );
+            return -1;
+        }
+        // supplied SMPTE XML carries authored timing we will not rewrite; only SRT
+        // (which we regenerate) can be shifted for head padding.
+        let supplied_xml = config
+            .subtitle_path
+            .as_ref()
+            .filter(|p| p.exists())
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
+        if head_frames > 0 && supplied_xml {
+            tracing::error!(
+                "head padding cannot re-time supplied SMPTE subtitle XML; supply SRT to shift, or pad only the tail"
+            );
+            return -1;
+        }
+    }
+
     let prepared_audio = match config.audio_path.as_ref().filter(|path| path.exists()) {
         Some(path) => {
             let output = config
@@ -198,8 +261,8 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
 
     {
         let left_frames = sorted_j2k_frames(j2k_dir);
-        picture_duration = left_frames.len() as u64;
-        if picture_duration == 0 {
+        let content_count = left_frames.len() as u64;
+        if content_count == 0 {
             tracing::error!("J2K input directory contains no codestreams");
             return -1;
         }
@@ -211,7 +274,47 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 key_id: k.key_id,
             });
 
-        if stereoscopic {
+        if padding {
+            // encode one black frame at the content's pixel dimensions, then repeat
+            // its codestream for every padded frame (frame-wrapped MXF reuses it)
+            let (bw, bh) = match crate::pad::read_j2k_dimensions(&left_frames[0]) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return -1;
+                }
+            };
+            let black = config
+                .output_dir
+                .join(format!(".dcpwizard_black_{picture_uuid}.j2c"));
+            if let Err(e) = crate::pad::generate_black_frame(bw, bh, fps, &black) {
+                tracing::error!("{e}");
+                return -1;
+            }
+            let mut files =
+                Vec::with_capacity(head_frames as usize + left_frames.len() + tail_frames as usize);
+            files.extend(std::iter::repeat_n(black.clone(), head_frames as usize));
+            files.extend(left_frames.iter().cloned());
+            files.extend(std::iter::repeat_n(black.clone(), tail_frames as usize));
+            picture_duration = files.len() as u64;
+            let wrapped = crate::mxf_wrap::wrap_mxf_files(
+                files,
+                &picture_mxf_path,
+                crate::mxf_wrap::MxfType::J2kPicture,
+                fps,
+                encryption,
+                None,
+            );
+            let _ = std::fs::remove_file(&black);
+            if wrapped.is_none() {
+                tracing::error!("Failed to wrap padded picture MXF");
+                return -1;
+            }
+            tracing::info!(
+                "Picture MXF: {picture_mxf_name} ({picture_duration} frames: {head_frames} head + {content_count} content + {tail_frames} tail)"
+            );
+        } else if stereoscopic {
+            picture_duration = content_count;
             // left eye is j2k_dir, right eye its own dir; both must match frame counts
             let right_dir = config.right_eye_dir.as_ref().unwrap();
             let right_frames = sorted_j2k_frames(right_dir);
@@ -240,6 +343,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 "Stereoscopic picture MXF: {picture_mxf_name} ({picture_duration} frame pairs)"
             );
         } else {
+            picture_duration = content_count;
             let wrap_config = crate::mxf_wrap::MxfWrapConfig {
                 input_path: j2k_dir.clone(),
                 output_mxf: picture_mxf_path.clone(),
@@ -302,8 +406,37 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 sample_rate,
             });
         }
+        // when padding, extend the PCM with silence so the sound stays aligned
+        // with the padded picture (sample-accurate at frame edges)
+        let mut padded_audio: Option<PathBuf> = None;
+        let wrap_source = if padding {
+            let sample_rate = crate::mxf_wrap::wav_sample_rate(audio_path).unwrap_or(48000);
+            if !sample_rate.is_multiple_of(fps) {
+                tracing::error!(
+                    "audio {sample_rate} Hz is not an integer number of samples per {fps} fps frame; cannot pad sample-accurately"
+                );
+                return -1;
+            }
+            let spf = (sample_rate / fps) as u64;
+            let out = config
+                .output_dir
+                .join(format!(".dcpwizard_padded_{sound_uuid}.wav"));
+            if let Err(e) = crate::pad::pad_wav_with_silence(
+                audio_path,
+                head_frames * spf,
+                tail_frames * spf,
+                &out,
+            ) {
+                tracing::error!("audio padding failed: {e}");
+                return -1;
+            }
+            padded_audio = Some(out.clone());
+            out
+        } else {
+            audio_path.clone()
+        };
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-            input_path: audio_path.clone(),
+            input_path: wrap_source,
             output_mxf: sound_mxf_path.clone(),
             mxf_type: crate::mxf_wrap::MxfType::PcmAudio,
             frame_rate: fps,
@@ -315,7 +448,11 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 }),
             mca_config,
         };
-        if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
+        let wrap_code = crate::mxf_wrap::wrap_mxf(&wrap_config);
+        if let Some(tmp) = padded_audio {
+            let _ = std::fs::remove_file(tmp);
+        }
+        if wrap_code != 0 {
             tracing::error!("Failed to wrap sound MXF");
             return -1;
         }
@@ -350,12 +487,13 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             let path = config
                 .output_dir
                 .join(format!("subtitle_{subtitle_uuid}.xml"));
-            if let Err(e) = crate::subtitle::convert_srt_to_dcp_xml(
+            // head padding shifts the program, so slide SRT cues by head_frames
+            if let Err(e) = crate::subtitle::srt_to_shifted_dcst(
                 subtitle_path,
-                &path,
+                head_frames,
                 subtitle_lang,
                 fps,
-                0.0,
+                &path,
             ) {
                 tracing::error!("Subtitle conversion failed: {e}");
                 return -1;
