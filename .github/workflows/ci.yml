@@ -21,9 +21,6 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
-    # windows: grok source build not wired up and the build needs grok-ffi, so
-    # allow it to fail rather than block the run.
-    continue-on-error: ${{ matrix.os == 'windows-2022' }}
 
     steps:
       - name: Enable long paths (Windows)
@@ -69,7 +66,6 @@ jobs:
       # build grok (jpeg 2000 codec) from source once per tag, cached.
       # provides libgrokj2k on the pkg-config + loader paths and grk_compress on PATH.
       - name: Cache grok
-        if: runner.os != 'Windows'
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/grok-install
@@ -93,6 +89,31 @@ jobs:
           echo "LD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
           echo "DYLD_LIBRARY_PATH=$prefix/lib:$prefix/lib64:$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
           echo "$prefix/bin" >> "$GITHUB_PATH"
+
+      # windows: msvc build mirroring grok's own ci (x64 generator, no libcurl);
+      # pkgconfiglite provides pkg-config for grokj2k-sys and the runner's LLVM
+      # provides libclang for bindgen.
+      - name: Setup grok (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GROK_TAG: v20.3.6
+        run: |
+          choco install -y --no-progress pkgconfiglite
+          prefix="$(cygpath -m "$GITHUB_WORKSPACE")/grok-install"
+          if [ ! -f "$prefix/bin/grokj2k.dll" ]; then
+            git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$GROK_TAG" \
+              https://github.com/GrokImageCompression/grok.git "$RUNNER_TEMP/grok-src"
+            cmake -S "$RUNNER_TEMP/grok-src" -B "$RUNNER_TEMP/grok-build" \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \
+              -DCMAKE_GENERATOR_PLATFORM=x64 -DGRK_ENABLE_LIBCURL=OFF \
+              -DGRK_BUILD_PKGCONFIG_FILES=ON
+            cmake --build "$RUNNER_TEMP/grok-build" --config Release --parallel 4
+            cmake --install "$RUNNER_TEMP/grok-build" --config Release
+          fi
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+          echo "$(cygpath -w "$prefix")\\bin" >> "$GITHUB_PATH"
 
       - name: Build
         working-directory: rust
