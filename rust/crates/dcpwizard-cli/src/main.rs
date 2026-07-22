@@ -1056,12 +1056,12 @@ fn run() {
 
                 // Probe video for frame rate and resolution
                 let video_info = dcpwizard_core::probe::probe_video(&encode_video_path);
-                let fps = frame_rate.unwrap_or_else(|| {
-                    video_info
-                        .as_ref()
-                        .map(|v| v.fps_num / v.fps_den.max(1))
-                        .unwrap_or(24)
-                });
+                let (source_fps, source_needs_audio_pull_up) = video_info
+                    .as_ref()
+                    .map(|v| dcpwizard_core::hfr::source_rate_to_dcp(v.fps_num, v.fps_den))
+                    .unwrap_or((24, false));
+                let fps = frame_rate.unwrap_or(source_fps);
+                let needs_audio_pull_up = source_needs_audio_pull_up && fps == 24;
                 let (mut width, mut height, total_frames) = video_info
                     .as_ref()
                     .map(|v| (v.width, v.height, v.total_frames))
@@ -1204,6 +1204,40 @@ fn run() {
                         }
                     }
                 };
+                let audio_path = if needs_audio_pull_up {
+                    audio_path.map(|input| {
+                        let output = output_dir.join("audio_pullup.wav");
+                        let result = std::process::Command::new("ffmpeg")
+                            .arg("-y")
+                            .arg("-i")
+                            .arg(&input)
+                            .arg("-af")
+                            .arg("asetrate=48048,aresample=48000")
+                            .arg("-c:a")
+                            .arg("pcm_s24le")
+                            .arg(&output)
+                            .output();
+                        match result {
+                            Ok(result) if result.status.success() => {
+                                tracing::info!("Applied 23.976-to-24 audio pull-up");
+                                output
+                            }
+                            Ok(result) => {
+                                tracing::error!(
+                                    "23.976-to-24 audio pull-up failed: {}",
+                                    String::from_utf8_lossy(&result.stderr)
+                                );
+                                std::process::exit(1);
+                            }
+                            Err(error) => {
+                                tracing::error!("failed to run ffmpeg for audio pull-up: {error}");
+                                std::process::exit(1);
+                            }
+                        }
+                    })
+                } else {
+                    audio_path
+                };
 
                 let resolution = if fourk {
                     dcpwizard_core::Resolution::FourK
@@ -1263,7 +1297,10 @@ fn run() {
                     let _ = std::fs::remove_dir_all(d);
                 }
                 if let Some(ref wav) = audio_path
-                    && wav.file_name().and_then(|f| f.to_str()) == Some("audio_demux.wav")
+                    && matches!(
+                        wav.file_name().and_then(|f| f.to_str()),
+                        Some("audio_demux.wav" | "audio_pullup.wav")
+                    )
                 {
                     let _ = std::fs::remove_file(wav);
                 }

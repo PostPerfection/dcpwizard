@@ -30,9 +30,6 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
 ## Planned features
 
 - multi-CPL timelines (multi_cpl.rs create_multi_cpl) still unbuilt.
-- 23.976 source delivery: `create` reduces 24000/1001 to integer 23 and rejects
-  it. Support the explicit 23.976-to-24 DCP conversion and apply the matching
-  audio pull-up, including separately supplied WAV audio.
 - Encrypted DCP derivatives: accept an external KDM plus recipient certificate
   and private key, decrypt the source, then permit supported transcode and
   burn-in workflows. Keep key material out of logs and temporary output.
@@ -114,6 +111,9 @@ Done in the earlier pass:
   HFR addendum / SMPTE ST 428-11:2013). `create`/pipeline reject illegal fps/resolution
   combos loudly before encoding; the edit rate threads through CPL and MXF (verified
   a 48fps 2K DCP validates). GUI frame-rate menus offer exactly the legal set.
+- 23.976 source delivery: `create` maps 24000/1001 to the 24 fps DCP edit rate
+  and applies a 1000/1001 audio pull-up to supplied or demuxed audio before PCM
+  wrapping.
 - Subtitle packaging is real: `create --subtitle` converts SRT to ST 428-7 DCST XML
   and wraps supplied SMPTE XML unchanged, preserving authored placement and styling.
   3D subtitle depth is unsupported.

@@ -53,6 +53,15 @@ impl FrameRate {
 /// only add 48/50/60 and 96/100/120 for 2K. 4K exhibition tops out at 30 fps.
 const HFR_RATES_2K_ONLY: [u32; 6] = [48, 50, 60, 96, 100, 120];
 
+/// Convert a probed source rate into the integer DCP edit rate. A 24000/1001
+/// source is deliberately played at 24 fps and requires matching audio pull-up.
+pub fn source_rate_to_dcp(fps_num: u32, fps_den: u32) -> (u32, bool) {
+    if fps_num == 24_000 && fps_den == 1_001 {
+        return (24, true);
+    }
+    (fps_num / fps_den.max(1), false)
+}
+
 /// Check whether a frame rate is valid for the given DCP standard, ignoring the
 /// resolution constraint. Use [`validate_fps_resolution`] to also reject an
 /// illegal fps/resolution combination.
@@ -161,6 +170,12 @@ mod tests {
     fn illegal_rate_rejected_at_any_resolution() {
         assert!(validate_fps_resolution(23, false, true).is_err());
         assert!(validate_fps_resolution(120, false, false).is_err());
+    }
+
+    #[test]
+    fn ntsc_film_maps_to_24_with_audio_pull_up() {
+        assert_eq!(source_rate_to_dcp(24_000, 1_001), (24, true));
+        assert_eq!(source_rate_to_dcp(24, 1), (24, false));
     }
 
     #[test]
