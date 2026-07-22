@@ -38,6 +38,18 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
 
     let files = collect_files(dcp_dir);
     let total = files.len();
+
+    // Fail early if the DCP won't fit on the destination (DoM bug 3150).
+    let required: u64 = files
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .sum();
+    if let Err(e) = crate::free_space::check_destination_space(&dest, required) {
+        tracing::error!("{e}");
+        return -1;
+    }
+
     tracing::info!(
         "Copying {total} files from {} to {}",
         dcp_dir.display(),

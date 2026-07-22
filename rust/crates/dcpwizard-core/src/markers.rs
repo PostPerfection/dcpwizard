@@ -70,13 +70,14 @@ impl MarkerEntry {
 }
 
 /// Generate default markers for a composition of the given frame count.
-/// Places FFOC at frame 0 and LFOC at the last frame.
+/// FFOC is 1 and LFOC is the last frame, matching libdcp's Bv2.1 verifier
+/// (INCORRECT_FFOC fires unless FFOC == 1).
 pub fn default_markers(total_frames: u64) -> Vec<MarkerEntry> {
     if total_frames == 0 {
         return Vec::new();
     }
     vec![
-        MarkerEntry::new(Marker::Ffoc, 0),
+        MarkerEntry::new(Marker::Ffoc, 1),
         MarkerEntry::new(Marker::Lfoc, total_frames.saturating_sub(1)),
     ]
 }
@@ -92,4 +93,24 @@ pub fn markers_to_xml(markers: &[MarkerEntry]) -> String {
     }
     xml.push_str("</MarkerList>");
     xml
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffoc_is_one_lfoc_is_last_frame() {
+        let markers = default_markers(100);
+        let ffoc = markers.iter().find(|m| m.marker == Marker::Ffoc).unwrap();
+        let lfoc = markers.iter().find(|m| m.marker == Marker::Lfoc).unwrap();
+        // libdcp INCORRECT_FFOC fires unless FFOC == 1
+        assert_eq!(ffoc.frame, 1);
+        assert_eq!(lfoc.frame, 99);
+    }
+
+    #[test]
+    fn no_markers_for_empty_composition() {
+        assert!(default_markers(0).is_empty());
+    }
 }

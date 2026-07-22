@@ -366,6 +366,15 @@ enum Commands {
         #[arg(long, default_value = "8.0")]
         vposition: f64,
     },
+    /// Extract timed text from a DCP or subtitle asset to SRT or plain text
+    SubtitleExtract {
+        /// Input DCP directory, or a subtitle asset (XML or timed-text MXF)
+        #[arg(short, long)]
+        input: String,
+        /// Output file; .srt keeps timing, .txt is text only
+        #[arg(short, long)]
+        output: String,
+    },
     /// Burn subtitles into video
     #[command(alias = "burn-in")]
     Burnin {
@@ -1839,6 +1848,25 @@ fn run() {
                 }
                 Err(e) => {
                     tracing::error!("Subtitle conversion failed: {e}");
+                    1
+                }
+            }
+        }
+
+        Commands::SubtitleExtract { input, output } => {
+            let input_path = PathBuf::from(&input);
+            let output_path = PathBuf::from(&output);
+            if !input_path.exists() {
+                tracing::error!("Input not found: {input}");
+                std::process::exit(1);
+            }
+            match dcpwizard_core::subtitle_extract::extract(&input_path, &output_path) {
+                Ok(()) => {
+                    tracing::info!("Extracted subtitles -> {output}");
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("Subtitle extraction failed: {e}");
                     1
                 }
             }

@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- **`subtitle-extract` subcommand** — export timed text from a DCP (or a bare subtitle asset) back to `.srt` (timing preserved) or `.txt` (text only), format chosen by output extension. Reads MXF-wrapped ST 428-7 resources via asdcplib and loose SMPTE/Interop XML, resolves subtitle assets through the CPL/ASSETMAP, and concatenates reels with their timeline offsets applied. GUI extraction panel added
+- **Destination free-space check (DoM 3150)** — `create` and `copy` now fail early with a clear message when the required bytes (essence for create, source total for copy) exceed the free space on the destination filesystem, instead of running out mid-write. Cross-platform via `statvfs` (Unix) and `GetDiskFreeSpaceExW` (Windows)
 - **CompositionMetadataAsset (Bv2.1)** — SMPTE CPLs now carry a ST 429-16 `CompositionMetadataAsset` in the first reel with `MainSoundConfiguration` (e.g. `51/L,R,C,LFE,Ls,Rs` with `-` padding for the silent fill channels), `MainSoundSampleRate`, `MainPictureStoredArea`/`ActiveArea`, `FullContentTitleText` and the Bv2.1 `ExtensionMetadata` marker. The sound configuration is derived from the packaged channel count, so validators no longer flag "0 channels but sound assets have N". Interop CPLs are unchanged. Verified: the asset validates against the ST 429-16 XSD and the whole CPL against ST 429-7 via xmllint
 - **`ingest-package` subcommand** — metadata-only repackaging: scans a directory, reads each MXF's embedded asset UUID (asdcplib), and regenerates ASSETMAP/PKL/VOLINDEX covering every asset file present, reusing hashes from the old PKL where available. Fixes exported OV/VF folders (e.g. a Sony server's VF export) whose ASSETMAP/PKL omit hardlinked assets referenced by the CPL. Essence passes through untouched; the old ASSETMAP/PKL are replaced. Both SMPTE and Interop naming
 - **Configurable subtitle position** — `subtitle-convert --vposition <percent>` (default 8) sets the bottom line's distance from the bottom of the screen
@@ -38,6 +40,7 @@
 - **Subtitle vertical position** — SMPTE and Interop subtitle generators anchored the block at the top (Vposition 85 with Valign="bottom") so subtitles rendered near the top of the screen. The bottom line now sits at 8% from the bottom with lines stacked upward (a two-line cue renders at 15% and 8%)
 - **GUI "Show in Files"** — uses the tauri opener plugin (`revealItemInDir`); the shell `open` call only accepted URLs
 - **Copy-to-drive verify** — flushes to the device and drops the page cache before reading back, so verification is real
+- **FFOC marker value** — default markers now emit FFOC = 1 (was 0). libdcp's Bv2.1 verifier raises `INCORRECT_FFOC` unless FFOC == 1; LFOC stays at the last frame
 
 ## [1.1.0] — 2026-05-28
 

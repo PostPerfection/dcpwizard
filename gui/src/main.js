@@ -1311,6 +1311,50 @@ document.getElementById("srt-convert")?.addEventListener("click", async () => {
   }
 });
 
+// === Subtitle Extraction ===
+document.getElementById("subextract-browse-dir")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) {
+    document.getElementById("subextract-input").value = path;
+    document.getElementById("subextract-start").disabled = false;
+  }
+});
+document.getElementById("subextract-browse-file")?.addEventListener("click", async () => {
+  const path = await open({ filters: [{ name: "Subtitle", extensions: ["xml", "mxf"] }] });
+  if (path) {
+    document.getElementById("subextract-input").value = path;
+    document.getElementById("subextract-start").disabled = false;
+  }
+});
+document.getElementById("subextract-browse-output")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) document.getElementById("subextract-output").value = path;
+});
+document.getElementById("subextract-start")?.addEventListener("click", async () => {
+  const input = document.getElementById("subextract-input").value;
+  const format = document.getElementById("subextract-format").value;
+  let outDir = document.getElementById("subextract-output").value;
+  if (!input) return;
+  // default the output beside the input when none is chosen
+  if (!outDir) outDir = input.replace(/[\\/][^\\/]*$/, "") || input;
+
+  const resultsEl = document.getElementById("subextract-results");
+  resultsEl.textContent = "Extracting…";
+  resultsEl.classList.add("visible");
+
+  try {
+    const output = outDir + "/subtitles." + format;
+    const args = ["subtitle-extract", "-i", input, "-o", output];
+    const cmd = Command.sidecar("dcpwizard", args);
+    const result = await cmd.execute();
+    resultsEl.textContent = result.code === 0
+      ? `✓ Extracted to ${output}\n${result.stdout}`
+      : `✗ Error:\n${result.stderr || result.stdout}`;
+  } catch (e) {
+    resultsEl.textContent = `✗ Failed: ${e}`;
+  }
+});
+
 // === Subtitle Burn-in ===
 document.getElementById("burnin-browse-video")?.addEventListener("click", async () => {
   const path = await open({ filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "mxf"] }] });

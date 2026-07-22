@@ -99,6 +99,23 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         return -1;
     }
 
+    // Fail early if the essence won't fit: the wrapped MXFs are ~the size of the
+    // J2K frames plus audio/atmos, so check that against the output filesystem.
+    let mut required = crate::free_space::path_size(j2k_dir);
+    if let Some(dir) = config.right_eye_dir.as_ref() {
+        required += crate::free_space::path_size(dir);
+    }
+    for extra in [config.audio_path.as_ref(), config.atmos_path.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        required += crate::free_space::path_size(extra);
+    }
+    if let Err(e) = crate::free_space::check_destination_space(&config.output_dir, required) {
+        tracing::error!("{e}");
+        return -1;
+    }
+
     // Fail before doing any work if we'd have nowhere safe to put the keys.
     if config.encrypt && config.key_out.is_none() {
         tracing::error!(

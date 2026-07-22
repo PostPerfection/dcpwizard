@@ -48,6 +48,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 ### Subtitles & Captions
 - **SRT → SMPTE / Interop subtitle XML** conversion, anchored near the bottom with configurable `--vposition` (percent from the bottom, default 8%)
 - **Subtitle packaging** into a DCP timed-text track (ST 428-7 DCST wrapped as an MXF, registered in the CPL) via `create --subtitle`
+- **Subtitle extraction** from a DCP or subtitle asset back to `.srt` (timed) or `.txt` (text only) via `subtitle-extract`; reads MXF-wrapped ST 428-7 and loose SMPTE/Interop XML, concatenating reels with their timeline offsets
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Subtitle burn-in**, permanently render into video frames (for festivals)
 
@@ -81,7 +82,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Frame-accurate preview** with display colourspace selection
 
 ### Delivery & Automation
-- **Copy to drive** with post-copy hash verification (USB/CRU)
+- **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU)
 - **Watch folder** mode, automated DCP creation on file arrival
 - **Job queue** with progress tracking and cancellation
 - **REST API** for headless/batch operation
@@ -186,6 +187,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Built-in mpv preview player with timeline scrubber (click-to-seek, drag-to-scrub, timecode display)
 - Multi-CPL composition tabs, switch, add, remove compositions
 - SRT → SMPTE subtitle conversion panel
+- Subtitle extraction panel (DCP/asset → SRT or text)
 - Subtitle burn-in panel
 - Target resolution conversion panel (2K/4K scope/flat/full)
 - GPU encoding toggle (grok acceleration)
@@ -338,6 +340,9 @@ dcpwizard completion fish > ~/.config/fish/completions/dcpwizard.fish
 
 # Convert SRT subtitles to SMPTE DCP XML
 dcpwizard subtitle-convert --input subs.srt --output subs.xml --language en
+
+# Extract timed text from a DCP back to SRT (or .txt for text only)
+dcpwizard subtitle-extract --input ./my_dcp --output subs.srt
 
 # Burn subtitles into video
 dcpwizard burn-in --input movie.mov --subtitles subs.srt --output movie_burned.mov

@@ -572,6 +572,37 @@
             </section>
 
             <section class="panel">
+              <h2>Subtitle Extraction</h2>
+              <p class="field-hint">Export timed text from a DCP (or a subtitle asset) to SRT or plain text.</p>
+              <div class="prop-field">
+                <label>Input DCP Folder or Subtitle Asset</label>
+                <div class="input-with-btn">
+                  <input id="subextract-input" type="text" placeholder="Select DCP folder or subtitle file…" readonly>
+                  <button id="subextract-browse-dir" class="btn-sm">Folder</button>
+                  <button id="subextract-browse-file" class="btn-sm">File</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="prop-field">
+                  <label>Format</label>
+                  <select id="subextract-format">
+                    <option value="srt">SRT (timed)</option>
+                    <option value="txt">Text only</option>
+                  </select>
+                </div>
+                <div class="prop-field">
+                  <label>Output Folder</label>
+                  <div class="input-with-btn">
+                    <input id="subextract-output" type="text" placeholder="Output folder…" readonly>
+                    <button id="subextract-browse-output" class="btn-sm">…</button>
+                  </div>
+                </div>
+              </div>
+              <button id="subextract-start" class="btn-primary" disabled>Extract</button>
+              <div id="subextract-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
               <h2>Subtitle Burn-in</h2>
               <p class="field-hint">Burn subtitles into the picture track (hard-subs).</p>
               <div class="prop-field">
