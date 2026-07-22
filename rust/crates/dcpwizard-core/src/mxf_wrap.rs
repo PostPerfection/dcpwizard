@@ -189,7 +189,8 @@ pub fn prepare_51_audio(
         wav.extend(std::iter::repeat_n(0, sample_bytes * 10));
     }
     let data_size = (wav.len() - 44) as u32;
-    wav[4..8].copy_from_slice(&(wav.len() as u32 - 8).to_le_bytes());
+    let riff_size = wav.len() as u32 - 8;
+    wav[4..8].copy_from_slice(&riff_size.to_le_bytes());
     wav[40..44].copy_from_slice(&data_size.to_le_bytes());
     std::fs::write(output, wav).map_err(|e| format!("cannot write {}: {e}", output.display()))?;
     Ok(true)
