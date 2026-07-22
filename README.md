@@ -434,12 +434,12 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | High Bitrate (500 Mbps) | ✅ | ✅ |
 | DPX/TIFF/PNG/QuickTime input | ✅ | ✅ |
 | Scale/Crop/Letterbox | ✅ | ✅ |
-| J2K Transcoder | ❌ | ✅ |
+| J2K Transcoder | ✅ | ✅ |
 | Audio (PCM 5.1) | ✅ | ✅ |
 | Immersive audio (Dolby Atmos) | ✅ | ✅ |
 | MCA channel labeling (2.0/5.1/7.1 + HI/VI) | ✅ | ✅ |
 | SRT→SMPTE subtitles | ✅ | ✅ |
-| Subtitle packaging into DCP | ❌ | ✅ |
+| Subtitle packaging into DCP | ✅ | ✅ |
 | Subtitle burn-in | ✅ | ✅ |
 | Integrated QC | ✅ (dcpdoctor) | ✅ (Fraunhofer) |
 | KDM (SMPTE + Interop) | ✅ | ✅ |

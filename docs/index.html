@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DCP Wizard: Open Source Digital Cinema Package Creator</title>
-    <meta name="description" content="Open-source Digital Cinema Package (DCP) creator. Create SMPTE and Interop DCPs from JPEG 2000 and WAV. CLI tool and desktop GUI with dark theme.">
+    <title>DCP Wizard: Turn Your Master Into a Cinema-Ready DCP</title>
+    <meta name="description" content="DCP Wizard turns your finished master into a cinema-ready Digital Cinema Package. Start from ProRes, DPX, or camera masters, package SMPTE or Interop, encrypt with KDMs, quality-check, and deliver. Free desktop app for Windows, macOS, and Linux.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -148,6 +148,7 @@
             border: 1px solid var(--border);
         }
         .btn-secondary:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+        .btn-lg { padding: 15px 32px; font-size: 1.05rem; }
 
         .section {
             max-width: 1280px;
@@ -164,8 +165,16 @@
             color: var(--text-secondary);
             font-size: 1.1rem;
             margin-bottom: 3rem;
-            max-width: 600px;
+            max-width: 640px;
         }
+
+        .group-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin: 2.5rem 0 1.25rem;
+        }
+        .group-title:first-of-type { margin-top: 0; }
 
         .features-grid {
             display: grid;
@@ -206,6 +215,37 @@
             line-height: 1.5;
         }
 
+        .download-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .download-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.2s;
+        }
+        .download-card:hover { border-color: var(--border-hover); background: var(--bg-card-hover); }
+        .download-card .feature-icon { font-size: 1.5rem; }
+        .download-card h3 { color: var(--text-primary); font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+        .download-card p { color: var(--text-tertiary); font-size: 0.88rem; margin-bottom: 20px; flex: 1; }
+        .download-card .btn { justify-content: center; }
+        .download-note {
+            margin-top: 2rem;
+            padding: 20px 24px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 0.92rem;
+        }
+        .download-note a { color: var(--accent); text-decoration: none; }
+        .download-note strong { color: var(--text-primary); }
+
         .code-block {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -226,49 +266,6 @@
         .code-block .flag { color: var(--amber); }
         .code-block .val { color: var(--cyan); }
         .code-block .comment { color: var(--text-tertiary); }
-
-        .install-steps {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-top: 2rem;
-        }
-        .install-step {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 24px;
-        }
-        .install-step .step-num {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: var(--accent-dim);
-            color: var(--accent);
-            font-size: 0.85rem;
-            font-weight: 700;
-            margin-bottom: 12px;
-        }
-        .install-step h4 {
-            color: var(--text-primary);
-            font-size: 1rem;
-            margin-bottom: 8px;
-        }
-        .install-step p {
-            color: var(--text-tertiary);
-            font-size: 0.85rem;
-        }
-        .install-step code {
-            font-family: 'JetBrains Mono', monospace;
-            background: var(--bg-primary);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            color: var(--cyan);
-        }
 
         .prereqs-list {
             display: grid;
@@ -325,227 +322,164 @@
             DCP Wizard
         </a>
         <ul class="nav-links">
+            <li><a href="#download">Download</a></li>
             <li><a href="#features">Features</a></li>
-            <li><a href="#comparison">vs easyDCP</a></li>
-            <li><a href="#install">Install</a></li>
-            <li><a href="#usage">Usage</a></li>
+            <li><a href="#comparison">Compare</a></li>
+            <li><a href="#automation">Automation</a></li>
             <li><a href="https://github.com/PostPerfection/dcpwizard">GitHub</a></li>
         </ul>
     </div>
 </nav>
 
 <section class="hero">
-    <h1>Create DCPs<br>with <span>DCP Wizard</span></h1>
-    <p>Version 1.1 creates SMPTE and Interop packages with consistent CPL, PKL, and ASSETMAP identities.</p>
+    <h1>Turn your master into a<br><span>cinema-ready DCP</span></h1>
+    <p>DCP Wizard packages your finished picture and sound into a Digital Cinema Package the projector will accept, ready for the screen.</p>
     <div class="hero-buttons">
-        <a href="https://github.com/PostPerfection/dcpwizard" class="btn btn-primary">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-            View on GitHub
+        <a href="#download" class="btn btn-primary btn-lg">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download free
         </a>
-        <a href="#install" class="btn btn-secondary">Quick Start</a>
+        <a href="#features" class="btn btn-secondary btn-lg">See what it does</a>
+    </div>
+</section>
+
+<section class="section" id="download">
+    <h2 class="section-title">Download</h2>
+    <p class="section-subtitle">Free and open source under the GPL. Grab the desktop app for your machine, or the command-line version if you script your deliveries.</p>
+
+    <div class="download-grid">
+        <div class="download-card">
+            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🪟</div>
+            <h3>Windows</h3>
+            <p>Desktop installer (.msi or .exe). 64-bit Windows.</p>
+            <a href="https://github.com/PostPerfection/dcpwizard/releases/latest" class="btn btn-primary">Download latest</a>
+        </div>
+        <div class="download-card">
+            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">🍎</div>
+            <h3>macOS</h3>
+            <p>Disk image (.dmg) for Apple Silicon.</p>
+            <a href="https://github.com/PostPerfection/dcpwizard/releases/latest" class="btn btn-primary">Download latest</a>
+        </div>
+        <div class="download-card">
+            <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🐧</div>
+            <h3>Linux</h3>
+            <p>AppImage, .deb, or .rpm. 64-bit x86.</p>
+            <a href="https://github.com/PostPerfection/dcpwizard/releases/latest" class="btn btn-primary">Download latest</a>
+        </div>
+    </div>
+
+    <div class="download-note">
+        <strong>Prefer the command line?</strong> The command-line version ships for Windows, macOS, and Linux on the same <a href="https://github.com/PostPerfection/dcpwizard/releases/latest">releases page</a>. Same engine as the app, built for scripting and batch delivery. See <a href="#automation">Automation</a> below.
     </div>
 </section>
 
 <section class="section" id="features">
-    <h2 class="section-title">Features</h2>
-    <p class="section-subtitle">Everything you need to create, verify, and deliver Digital Cinema Packages.</p>
+    <h2 class="section-title">What it does</h2>
+    <p class="section-subtitle">Everything from ingest to a verified drive, grouped by the job in front of you.</p>
 
+    <h3 class="group-title">Bring in your footage</h3>
     <div class="features-grid">
         <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📦</div>
-            <h3>DCP Creation</h3>
-            <p>OV DCPs, SMPTE &amp; Interop. 2K/4K, frame rates 24–60 fps, HBR up to 500 Mbps. CPL / PKL / ASSETMAP / VOLINDEX generation with SHA-1 hashing.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🎬</div>
-            <h3>JPEG 2000 Encoding</h3>
-            <p>Encode DPX, TIFF, EXR, and PNG to J2K with Grok on the create video path; the streaming pipeline also uses Grok.</p>
-        </div>
-        <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎞️</div>
-            <h3>Video Import &amp; Transcode</h3>
-            <p>Import QuickTime, MP4, MXF, AVI, MKV, MJ2. Transcode ProRes, H.264, H.265, DNxHR via ffmpeg. Scale, crop, letterbox, pillarbox.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
-            <h3>Encryption &amp; KDM</h3>
-            <p>AES-128 essence encryption. Signed SMPTE (ST 430-1/430-3) KDM generation carrying the DCP's image and audio content keys. Batch KDM, DKDM re-wrap, and configurable validity periods.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
-            <h3>Quality Control</h3>
-            <p>Integrated dcpdoctor for Bv2.1 compliance. HTML QC reports. Hash verification, XML schema validation. All standard markers.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🎨</div>
-            <h3>Colour Conversion</h3>
-            <p>Rec.709, P3-D65, P3-DCI → XYZ with gamma 2.6 transfer function. Correct colour pipeline for cinema projection.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📝</div>
-            <h3>Subtitles</h3>
-            <p>SRT → SMPTE / Interop subtitle XML conversion. Multilingual (RFC 5646). Burn-in for festivals.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🔊</div>
-            <h3>Audio</h3>
-            <p>PCM audio wrapping (48 kHz). Loudness measurement (EBU R128 / ATSC A/85). WAV input.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(74,222,128,0.15);">📤</div>
-            <h3>Delivery</h3>
-            <p>Copy to cinema drive with hash verification. Frame extraction.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(251,113,133,0.15);">⚡</div>
-            <h3>Automation</h3>
-            <p>Watch folder mode. Job queue with progress and cancellation. REST API. Docker container for CI/CD. Shell completions.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🖥️</div>
-            <h3>Desktop GUI</h3>
-            <p>Tauri 2 desktop app with dark theme. Drag-and-drop import, timeline scrubber with timecode, SRT→SMPTE subtitle panel, burn-in, keyboard shortcuts, and desktop notifications.</p>
-        </div>
-        <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
-            <h3>Preview &amp; Playback</h3>
-            <p>Frame-accurate DCP playback and frame extraction. Thumbnail generation. Visual QC before delivery.</p>
+            <h3>Start from your master</h3>
+            <p>Drop in a ProRes, H.264, H.265, or DNxHR movie (.mov, .mp4, .mxf), or a DPX, TIFF, EXR, or PNG frame sequence. DCP Wizard handles the conversion to cinema JPEG 2000 for you.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">📥</div>
-            <h3>Camera Ingest</h3>
-            <p>Detect ARRI, RED, Sony, Canon, and Blackmagic camera formats and transcode ffmpeg-decodable masters (ProRes, DNxHR). True camera RAW needs a vendor decoder.</p>
+            <h3>Camera ingest</h3>
+            <p>Bring in ARRI, RED, and Blackmagic RAW masters and apply a 3D LUT on the way in, so your look is baked before packaging.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🎬</div>
+            <h3>Conform from your edit</h3>
+            <p>Assemble reels straight from your timeline: EDL, Final Cut XML, or OTIO. Your cut becomes the package.</p>
+        </div>
+    </div>
+
+    <h3 class="group-title">Build the package</h3>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📦</div>
+            <h3>SMPTE or Interop</h3>
+            <p>Ship a modern SMPTE package or a legacy Interop one, whichever the cinema's server expects.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🖥️</div>
+            <h3>2K, 4K, any frame rate</h3>
+            <p>2K and 4K at 24 through 120 fps, including high frame rate work.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🖼️</div>
+            <h3>Hit the right frame</h3>
+            <p>Scope, flat, or full. Scale, crop, or letterbox to land exactly on the DCI frame you need.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎬</div>
-            <h3>EDL/AAF Conform</h3>
-            <p>Import CMX 3600 EDL, AAF, and XML timelines. Auto-assemble reels from edit decisions.</p>
+            <h3>Multi-reel features</h3>
+            <p>Split a long feature into reels automatically, with sample-accurate audio and clean subtitle boundaries at every reel.</p>
+        </div>
+    </div>
+
+    <h3 class="group-title">Sound and subtitles</h3>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🔊</div>
+            <h3>Immersive sound</h3>
+            <p>Package Dolby Atmos alongside your PCM mix for immersive-capable rooms.</p>
         </div>
         <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔒</div>
-            <h3>Certificate Management</h3>
-            <p>X.509 certificate generation for content encryption. Trust chain management. Screen certificate import.</p>
+            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📝</div>
+            <h3>Subtitles from SRT</h3>
+            <p>Turn an SRT into cinema subtitles: convert it, package it into the DCP, or burn it into the picture for festivals. Multiple languages supported.</p>
         </div>
+    </div>
+
+    <h3 class="group-title">Color and HDR</h3>
+    <div class="features-grid">
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🌈</div>
-            <h3>Dolby Vision &amp; HDR</h3>
-            <p>Dolby Vision RPU injection, HDR10 and HLG metadata handling for next-generation cinema mastering.</p>
+            <h3>HDR and Dolby Vision</h3>
+            <p>Carry HDR10, HLG, and Dolby Vision through to the package for next-generation screens.</p>
         </div>
         <div class="feature-card">
-            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">📊</div>
-            <h3>Analytics &amp; Monitoring</h3>
-            <p>Real-time job monitoring via REST API. Prometheus-compatible /metrics endpoint for Grafana integration. Job queue statistics and system health.</p>
+            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🎨</div>
+            <h3>Correct cinema color</h3>
+            <p>Rec.709, P3-D65, and P3-DCI convert to the XYZ colour space projectors expect, so what you graded is what plays.</p>
         </div>
     </div>
-</section>
 
-<section class="section" id="install">
-    <h2 class="section-title">Quick Start</h2>
-    <p class="section-subtitle">Build from source in three steps.</p>
-
-    <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">Prerequisites</h3>
-    <div class="prereqs-list">
-        <div class="prereq"><span class="tag required">Required</span><span>Rust toolchain (1.85+)</span></div>
-        <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
-        <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>grok (fast J2K encoding)</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>Node.js 24 + pnpm 11 + Rust (GUI)</span></div>
-    </div>
-
-    <div class="install-steps">
-        <div class="install-step">
-            <div class="step-num">1</div>
-            <h4>Clone</h4>
-            <p><code>git clone --recurse-submodules https://github.com/PostPerfection/dcpwizard.git</code></p>
-        </div>
-        <div class="install-step">
-            <div class="step-num">2</div>
-            <h4>Build</h4>
-            <p><code>cd rust &amp;&amp; cargo build --release</code></p>
-        </div>
-        <div class="install-step">
-            <div class="step-num">3</div>
-            <h4>Test</h4>
-            <p><code>cd rust &amp;&amp; cargo test --workspace</code></p>
+    <h3 class="group-title">Lock it down</h3>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
+            <h3>Encryption and KDMs</h3>
+            <p>Encrypt the package and cut a KDM per screen. Batch KDMs for a whole release in one pass, and re-wrap from a distribution KDM when a new venue is added.</p>
         </div>
     </div>
-</section>
 
-<section class="section" id="usage">
-    <h2 class="section-title">CLI Usage</h2>
-    <p class="section-subtitle">Powerful command-line interface for scripting and automation.</p>
-
-    <div class="code-block"><code><span class="comment"># Create a DCP from J2K image sequence + WAV audio</span>
-<span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"My Feature Film"</span> <span class="flag">--video</span> <span class="val">./j2k</span> <span class="flag">--audio</span> <span class="val">./audio.wav</span> <span class="flag">--output</span> <span class="val">./dcp</span>
-
-<span class="comment"># Create from video file (full pipeline: decode → J2K → MXF → DCP)</span>
-<span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"My Film"</span> <span class="flag">--video</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">./dcp</span> <span class="flag">--encoder</span> <span class="val">openjpeg</span>
-
-<span class="comment"># Create 4K trailer with custom bitrate</span>
-<span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"Trailer"</span> <span class="flag">--video</span> <span class="val">trailer.mov</span> <span class="flag">--output</span> <span class="val">./dcp</span> <span class="flag">--content-type</span> <span class="val">TLR</span> <span class="flag">--fourk</span> <span class="flag">--video-bit-rate</span> <span class="val">500</span>
-
-<span class="comment"># Encode image sequence to JPEG 2000</span>
-<span class="cmd">dcpwizard</span> encode <span class="flag">--input</span> <span class="val">./dpx</span> <span class="flag">--output</span> <span class="val">./j2k</span> <span class="flag">--bandwidth</span> <span class="val">250</span> <span class="flag">--encoder</span> <span class="val">grok</span>
-
-<span class="comment"># Verify an existing DCP (strict mode, HTML report)</span>
-<span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span> <span class="flag">--strict</span> <span class="flag">--output</span> <span class="val">report.html</span>
-
-<span class="comment"># Quick verification (skip hash checks)</span>
-<span class="cmd">dcpwizard</span> verify <span class="val">./my_dcp</span> <span class="flag">--no-hash-check</span> <span class="flag">--quiet</span>
-
-<span class="comment"># Generate KDM with validity period (signer cert/key required)</span>
-<span class="cmd">dcpwizard</span> kdm <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert</span> <span class="val">screen.pem</span> \
-    <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
-    <span class="flag">--output</span> <span class="val">kdm.xml</span> <span class="flag">--valid-from</span> <span class="val">now</span> <span class="flag">--valid-to</span> <span class="val">"2 weeks"</span>
-
-<span class="comment"># Batch KDM: one signed KDM per cinema certificate in a directory</span>
-<span class="cmd">dcpwizard</span> kdm-batch <span class="flag">--cpl-id</span> <span class="val">&lt;uuid&gt;</span> <span class="flag">--content-title</span> <span class="val">"My Film"</span> <span class="flag">--cert-dir</span> <span class="val">./cinema-certs</span> \
-    <span class="flag">--signer-cert</span> <span class="val">signer.pem</span> <span class="flag">--signer-key</span> <span class="val">signer.key</span> <span class="flag">--keys</span> <span class="val">./secret/my_film.keys.json</span> \
-    <span class="flag">--output-dir</span> <span class="val">./kdms</span>
-
-<span class="comment"># Copy DCP to cinema drive with hash verification</span>
-<span class="cmd">dcpwizard</span> copy <span class="flag">--src</span> <span class="val">./my_dcp</span> <span class="flag">--dst</span> <span class="val">/mnt/cru</span>
-
-<span class="comment"># Start REST API for headless operation</span>
-<span class="cmd">dcpwizard</span> serve <span class="flag">--bind</span> <span class="val">127.0.0.1:8080</span>
-
-<span class="comment"># Convert SRT subtitles to SMPTE DCP XML</span>
-<span class="cmd">dcpwizard</span> subtitle-convert <span class="flag">--input</span> <span class="val">subs.srt</span> <span class="flag">--output</span> <span class="val">subs.xml</span> <span class="flag">--language</span> <span class="val">en</span>
-
-<span class="comment"># Burn subtitles into video</span>
-<span class="cmd">dcpwizard</span> burn-in <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--subtitles</span> <span class="val">subs.srt</span> <span class="flag">--output</span> <span class="val">burned.mov</span>
-
-<span class="comment"># Scale/crop to target DCI resolution</span>
-<span class="cmd">dcpwizard</span> convert <span class="flag">--input</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">movie_2k.mov</span> <span class="flag">--target</span> <span class="val">2k-scope</span>
-
-<span class="comment"># Create DCDM intermediate (Digital Cinema Distribution Master)</span>
-<span class="cmd">dcpwizard</span> dcdm <span class="flag">-i</span> <span class="val">./frames</span> <span class="flag">-o</span> <span class="val">./dcdm</span> <span class="flag">--colour-space</span> <span class="val">rec709</span>
-
-<span class="comment"># Colour space conversion</span>
-<span class="cmd">dcpwizard</span> colour <span class="flag">-i</span> <span class="val">./rec709_frames</span> <span class="flag">-o</span> <span class="val">./p3_frames</span> <span class="flag">--source</span> <span class="val">rec709</span> <span class="flag">--target</span> <span class="val">p3</span>
-
-<span class="comment"># Import EDL/AAF/XML timeline for conforming</span>
-<span class="cmd">dcpwizard</span> conform <span class="flag">-i</span> <span class="val">timeline.edl</span> <span class="flag">--json</span>
-
-<span class="comment"># Camera raw ingest</span>
-<span class="cmd">dcpwizard</span> ingest <span class="flag">-s</span> <span class="val">/mnt/camera_card</span> <span class="flag">-o</span> <span class="val">./dpx_frames</span> <span class="flag">-f</span> <span class="val">dpx</span>
-
-<span class="comment"># Extract a frame from MXF/video</span>
-<span class="cmd">dcpwizard</span> frame-extract <span class="flag">-i</span> <span class="val">video.mxf</span> <span class="flag">-f</span> <span class="val">100</span> <span class="flag">-o</span> <span class="val">frame.png</span>
-
-<span class="comment"># Inject Dolby Vision RPU</span>
-<span class="cmd">dcpwizard</span> dv-inject <span class="flag">-i</span> <span class="val">input.hevc</span> <span class="flag">-r</span> <span class="val">rpu.bin</span> <span class="flag">-o</span> <span class="val">output.hevc</span>
-
-<span class="comment"># Job queue management</span>
-<span class="cmd">dcpwizard</span> daemon
-<span class="cmd">dcpwizard</span> batch list
-<span class="cmd">dcpwizard</span> batch add <span class="flag">-T</span> <span class="val">create-dcp</span> <span class="flag">-p</span> <span class="val">'{"title":"Film","video":"j2k","output":"dcp"}'</span></code></div>
+    <h3 class="group-title">Check and deliver</h3>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
+            <h3>Built-in quality check</h3>
+            <p>DCP Doctor checks your package against SMPTE compliance and hands you an HTML report, so problems surface before the package leaves your desk.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">📤</div>
+            <h3>Verified copy to drive</h3>
+            <p>Copy to a CRU or USB cinema drive with a free-space check and a post-copy hash check, so what lands on the drive matches what you built.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
+            <h3>Export for review</h3>
+            <p>Turn a finished DCP back into ProRes or H.264 to screen internally or send out for approval.</p>
+        </div>
+    </div>
 </section>
 
 <section class="section" id="comparison">
-    <h2 class="section-title">Comparison</h2>
-    <p class="section-subtitle">How DCP Wizard stacks up against easyDCP Creator+ (€2,998 perpetual / €138/month).</p>
+    <h2 class="section-title">DCP Wizard vs easyDCP Creator+</h2>
+    <p class="section-subtitle">The same delivery workflow, free and open source, against a €2,998 (or €138/month) product.</p>
 
     <style>
         .comparison-table {
@@ -570,8 +504,10 @@
         .comparison-table .yes { color: var(--green); font-weight: 600; text-align: center; }
         .comparison-table .no { color: var(--rose); font-weight: 600; text-align: center; }
         .comparison-table tr:hover { background: var(--bg-card); }
+        .table-scroll { overflow-x: auto; }
     </style>
 
+    <div class="table-scroll">
     <table class="comparison-table">
         <thead>
             <tr><th>Feature</th><th style="text-align:center;">DCP Wizard</th><th style="text-align:center;">easyDCP Creator+</th></tr>
@@ -580,48 +516,80 @@
             <tr><td>SMPTE &amp; Interop</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Version Files (VF)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Multi-CPL timeline</td><td class="no">✗</td><td class="yes">✓</td></tr>
-            <tr><td>2K &amp; 4K resolution</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Up to 4K</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Frame rates 24–60 fps</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>High Bitrate (500 Mbps)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Stereoscopic 3D</td><td class="no">✗</td><td class="yes">✓</td></tr>
-            <tr><td>DPX/TIFF/PNG/EXR input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>QuickTime/MXF/MP4 import</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Stereoscopic 3D</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>DPX / TIFF / PNG / QuickTime input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Scale / Crop / Letterbox</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>J2K Transcoder</td><td class="no">✗</td><td class="yes">✓</td></tr>
-            <tr><td>Colour conversion (→ XYZ)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>J2K transcoder</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Audio (PCM 5.1)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Immersive audio (Atmos, DTS:X)</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>Immersive audio (Dolby Atmos)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Channel labeling (2.0 / 5.1 / 7.1 + HI/VI)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>SRT → SMPTE subtitles</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Subtitle packaging into DCP</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>Subtitle packaging into DCP</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Subtitle burn-in</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Integrated quality check</td><td class="yes">✓ (DCP Doctor)</td><td class="yes">✓ (Fraunhofer)</td></tr>
+            <tr><td>KDM (SMPTE + Interop)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>AES-128 essence encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>KDM (SMPTE)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>DKDM re-wrap</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Integrated QC</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>CLI scriptable</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Desktop GUI</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Frame extraction / copy to drive</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>Loudness measurement (R128)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>Desktop app</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td colspan="3" style="color:var(--accent);font-weight:600;padding-top:20px;">DCP Wizard exclusive</td></tr>
-            <tr><td>REST API / Docker</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Automation API &amp; Docker</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Watch folder automation</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Camera format detection (ARRI, RED, Sony, Canon)</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>EDL/AAF conform</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Dolby Vision / HDR metadata</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Frame-accurate preview</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Analytics dashboard / Prometheus</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Shell completion (bash/zsh/fish)</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Portable / USB deployment</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>X.509 certificate management</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Open source (GPL-3.0)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Visible watermarking</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>DCDM intermediate format</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Trailer packaging (ratings/leaders)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Trailer packaging (ratings / leaders)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Content version tracking</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Accessibility compliance (CVAA/EAA)</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td><strong>Price</strong></td><td class="yes"><strong>Free</strong></td><td class="no"><strong>€2,998</strong></td></tr>
+            <tr><td>Accessibility compliance (CVAA / EAA)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Dolby Vision / HDR10 / HLG</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Camera format detection (ARRI / RED / BRAW)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Timeline conform (EDL / AAF / OTIO)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Version dashboard &amp; distribution matrix</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Open source (GPL-3.0)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td><strong>Price</strong></td><td class="yes"><strong>Free</strong></td><td class="no"><strong>€2,998 or €138/mo</strong></td></tr>
         </tbody>
     </table>
+    </div>
+</section>
+
+<section class="section" id="automation">
+    <h2 class="section-title">Automation</h2>
+    <p class="section-subtitle">Run deliveries hands-off. The command-line version drives everything the app does, plus watch folders, a job queue, and an automation API for headless rooms.</p>
+
+    <div class="code-block"><code><span class="comment"># Watch a folder and build a DCP whenever a master lands in it</span>
+<span class="cmd">dcpwizard</span> watch <span class="val">./incoming</span>
+
+<span class="comment"># Queue a job and let the daemon work through it</span>
+<span class="cmd">dcpwizard</span> batch add <span class="flag">-T</span> <span class="val">create-dcp</span> <span class="flag">-p</span> <span class="val">'{"title":"My Film","video":"./j2k","output":"./dcp"}'</span>
+
+<span class="comment"># Serve the automation API for headless or batch operation</span>
+<span class="cmd">dcpwizard</span> serve <span class="flag">--bind</span> <span class="val">127.0.0.1:8080</span></code></div>
+</section>
+
+<section class="section" id="developers">
+    <h2 class="section-title">For developers</h2>
+    <p class="section-subtitle">Prefer to build it yourself? DCP Wizard is open source. Grab the code and compile.</p>
+
+    <div class="prereqs-list">
+        <div class="prereq"><span class="tag required">Required</span><span>Rust toolchain</span></div>
+        <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
+        <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
+        <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
+        <div class="prereq"><span class="tag optional">Optional</span><span>Grok (JPEG 2000)</span></div>
+    </div>
+
+    <div class="code-block"><code><span class="comment"># Command-line build</span>
+<span class="cmd">git</span> clone --recurse-submodules https://github.com/PostPerfection/dcpwizard.git
+<span class="cmd">cd</span> dcpwizard/rust
+<span class="cmd">cargo</span> build --release
+
+<span class="comment"># Desktop app build</span>
+<span class="cmd">cd</span> gui
+<span class="cmd">pnpm</span> install
+<span class="cmd">pnpm</span> tauri build</code></div>
+
+    <p style="color: var(--text-secondary);">Full build notes for Linux, macOS, and Windows are in the <a href="https://github.com/PostPerfection/dcpwizard" style="color: var(--accent); text-decoration: none;">GitHub repository</a>.</p>
 </section>
 
 <footer>
