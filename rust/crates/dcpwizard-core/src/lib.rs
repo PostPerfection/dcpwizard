@@ -2,6 +2,7 @@ pub mod accessibility;
 pub mod assetmap;
 pub mod burnin;
 pub mod certificate;
+pub mod combine;
 pub mod conform;
 pub mod copy_drive;
 pub mod cpl;

@@ -26,6 +26,26 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
   CPL/PKL/ASSETMAP; an `<OriginalPackagingList>` marker makes dcpdoctor detect
   the VF. Verified end-to-end: `dcpdoctor validate --ov` resolves cross-refs,
   alone gives the supplemental warning (not cross_ref_broken).
+- DCP combiner is real and wired (CLI `combine <dcp-dir>... --output <dir>`,
+  CORE/combine.rs). Merges complete DCPs into one volume: copies every asset
+  byte-identical, writes one merged ASSETMAP/VOLINDEX and (default) one merged
+  PKL; `--separate-pkls` keeps each input PKL (dom#2019). CPLs are never
+  rewritten (cross-refs are by uuid, so only ASSETMAP <Path> changes), so
+  signatures/hashes and KDMs stay valid on encrypted inputs. `--sort` orders CPL
+  entries alphabetically by content title (dom#2026); `--annotation` sets the
+  merged PKL/ASSETMAP AnnotationText, else it is derived from the CPL titles
+  (dom#2027). Dedupe on shared id + identical hash; same id + different hash is a
+  loud error; root filename collisions rename on disk (ASSETMAP <Path> only).
+  Interop loose subtitle assets (XML + font + PNG) relocate into a per-CPL
+  subdirectory with only the ASSETMAP <Path> updated, keeping the subtitle XML's
+  relative font refs intact and the CPL byte-identical (dom#2420). Verified
+  end-to-end: two small SMPTE DCPs combine and `dcpdoctor validate` gives 0
+  errors with both CPLs present and every merged-PKL hash matching; plus dedupe,
+  id-clash rejection, separate-PKLs, sort+annotation, an interop volume
+  validating clean, and interop loose-subtitle relocation (CORE/tests/combine.rs).
+  postkit dedup TODO: the postkit AssetMap/PackingList writers have no
+  AnnotationText field, so combine.rs injects the element after `<Id>` via a
+  local helper; add the field to postkit and drop the injection.
 
 ## DoM tracker gaps (2026-07-22)
 
@@ -38,8 +58,6 @@ belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface 
   (dom#1014), certificate download from manufacturers (dom#2705, dom#2706), FLMx
   cinema data import (dom#239), validity templates (dom#2424). We only generate
   KDMs from cert files on disk.
-- DCP combiner: merge several DCPs into one volume with merged ASSETMAP/PKL
-  (dom#2019, dom#2026, dom#2027, dom#2420). Trailer concat is the closest we have.
 - Disk writer: format drives ext2/3 for cinema delivery, check an existing drive's
   format, set volume name (dom#2095, dom#2112). copy_drive.rs only does a verified
   copy to a mounted target.

@@ -111,6 +111,26 @@ enum Commands {
         /// DCP package directory to repackage in place
         dir: String,
     },
+    /// Combine several complete DCPs into one delivery volume with a merged
+    /// ASSETMAP/VOLINDEX (and, by default, a single merged PKL). CPLs and essence
+    /// are copied byte-identical, so signatures/hashes stay valid.
+    Combine {
+        /// Input DCP directories (two or more)
+        #[arg(required = true, num_args = 1..)]
+        inputs: Vec<String>,
+        /// Output volume directory
+        #[arg(short, long)]
+        output: String,
+        /// Keep each input's PKL as its own file instead of one merged PKL
+        #[arg(long)]
+        separate_pkls: bool,
+        /// Order CPL entries alphabetically by content title
+        #[arg(long)]
+        sort: bool,
+        /// AnnotationText for the merged PKL/ASSETMAP (default: derived from titles)
+        #[arg(long)]
+        annotation: Option<String>,
+    },
     /// Create a supplemental Version File (VF) DCP against an Original Version
     CreateVf {
         /// Original Version (OV) DCP directory
@@ -2676,6 +2696,27 @@ fn run() {
             let code = dcpwizard_core::ingest_package::ingest_package(&PathBuf::from(&dir));
             if code == 0 {
                 println!("Repackaged {dir} (regenerated ASSETMAP and PKL)");
+            }
+            code
+        }
+
+        Commands::Combine {
+            inputs,
+            output,
+            separate_pkls,
+            sort,
+            annotation,
+        } => {
+            let config = dcpwizard_core::combine::CombineConfig {
+                inputs: inputs.iter().map(PathBuf::from).collect(),
+                output_dir: PathBuf::from(&output),
+                separate_pkls,
+                sort,
+                annotation,
+            };
+            let code = dcpwizard_core::combine::combine(&config);
+            if code == 0 {
+                println!("Combined into {output}");
             }
             code
         }

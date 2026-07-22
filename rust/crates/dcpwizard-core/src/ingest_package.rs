@@ -237,7 +237,7 @@ fn find_cpls(dir: &Path) -> Vec<PathBuf> {
     cpls
 }
 
-fn is_cpl_path(path: &Path) -> bool {
+pub(crate) fn is_cpl_path(path: &Path) -> bool {
     if !path.is_file() || !has_ext(path, "xml") {
         return false;
     }
@@ -246,7 +246,7 @@ fn is_cpl_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn detect_standard(cpls: &[PathBuf]) -> crate::Standard {
+pub(crate) fn detect_standard(cpls: &[PathBuf]) -> crate::Standard {
     for path in cpls {
         if let Ok(c) = std::fs::read_to_string(path)
             && c.contains("digicine.com")
@@ -278,7 +278,7 @@ fn read_cpl_id(path: &Path) -> Option<String> {
 }
 
 /// Every bare UUID following a `urn:uuid:` prefix in `text`, in order.
-fn uuids_in(text: &str) -> Vec<String> {
+pub(crate) fn uuids_in(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (pos, _) in text.match_indices("urn:uuid:") {
         let rest = &text[pos + "urn:uuid:".len()..];
@@ -379,7 +379,7 @@ fn is_packaging_file(name: &str) -> bool {
 }
 
 /// First `<tag>...</tag>` value inside `text` (single-line or spanning).
-fn tag(text: &str, tag: &str) -> Option<String> {
+pub(crate) fn tag(text: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}");
     let start = text.find(&open)?;
     let after = &text[start + open.len()..];
@@ -401,13 +401,13 @@ fn guess_type(path: &Path) -> String {
     }
 }
 
-fn has_ext(path: &Path, ext: &str) -> bool {
+pub(crate) fn has_ext(path: &Path, ext: &str) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default()
