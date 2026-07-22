@@ -25,6 +25,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Reel splitting** via `create --reel-length <minutes>` (multi-reel CPL, sample-accurate audio and per-reel subtitle boundaries)
 - **High Bitrate (HBR)**, up to 500 Mbps for demanding content
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
+- **Multi-version packages** via `create --versions <file>`: one package with several CPLs sharing the same picture/sound essence, differing by subtitle and/or audio track (multiple language versions over one master)
 - **Bv2.1 CompositionMetadataAsset** (ST 429-16) in the first reel of SMPTE CPLs, with `MainSoundConfiguration` derived from the packaged channel count
 - **Re-ingest packaging** via `ingest-package <dir>`: rebuild ASSETMAP and PKL to cover every asset file present (for exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets), no re-wrap
 - **SHA-1 hashing** for integrity verification
@@ -237,6 +238,16 @@ dcpwizard create --title "My Feature" --video ./j2k --audio ./audio.wav \
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
     --subtitle subs.srt --subtitle-language en
 
+# Multi-version package: one master, several CPLs differing by subtitle/audio.
+# The base flags define the shared picture/sound; each versions.json entry is a CPL.
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
+    --output ./dcp --versions versions.json
+# versions.json:
+#   [
+#     { "title": "My Film (EN)", "subtitle": "en.srt", "subtitle_language": "en" },
+#     { "title": "My Film (FR)", "subtitle": "fr.srt", "subtitle_language": "fr" }
+#   ]
+
 # Stereoscopic 3D: main input is the left eye, --right-eye is the right eye
 # (both encoded at the same settings, wrapped into one ST 429-10 picture MXF)
 dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
@@ -426,7 +437,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 |---------|-----------|------------------|
 | SMPTE & Interop | ✅ | ✅ |
 | Version Files (VF) | ✅ | ✅ |
-| Multi-CPL timeline | ❌ | ✅ |
+| Multi-CPL timeline | ✅ (`create --versions`) | ✅ |
 | CLI scriptable | ✅ | ✅ |
 | Up to 4K | ✅ | ✅ |
 | Stereoscopic 3D | ✅ | ✅ |

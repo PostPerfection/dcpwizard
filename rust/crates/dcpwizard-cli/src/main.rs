@@ -39,8 +39,11 @@ enum Commands {
         #[arg(long)]
         allow_generic_hdr_tonemap: bool,
         /// SRT file to convert, or supplied SMPTE subtitle XML to package unchanged
-        #[arg(long)]
+        #[arg(long, conflicts_with = "versions")]
         subtitle: Option<String>,
+        /// Multi-version manifest (JSON array): one CPL per entry over shared essence
+        #[arg(long)]
+        versions: Option<String>,
         /// Subtitle language code (e.g. "en", "fr")
         #[arg(long, default_value = "en")]
         subtitle_language: String,
@@ -957,6 +960,7 @@ fn run() {
             hdr_to_dci_lut,
             allow_generic_hdr_tonemap,
             subtitle,
+            versions,
             subtitle_language,
             output,
             standard,
@@ -992,6 +996,19 @@ fn run() {
                     tracing::error!("Unknown audio input order: {value}");
                     return;
                 }
+            };
+
+            // parse the multi-version manifest up front so a bad manifest fails
+            // before any encoding
+            let versions_specs = match versions.as_deref() {
+                Some(path) => match dcpwizard_core::versions::load_versions(&PathBuf::from(path)) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
+                    }
+                },
+                None => None,
             };
 
             // Resolve delivery profile and apply its presets as defaults; explicit
@@ -1351,7 +1368,10 @@ fn run() {
                     pad_head: pad_head.clone(),
                     pad_tail: pad_tail.clone(),
                 };
-                let code = dcpwizard_core::dcp::create_dcp(&config);
+                let code = match versions_specs.as_ref() {
+                    Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
+                    None => dcpwizard_core::dcp::create_dcp(&config),
+                };
 
                 // Clean up intermediate files
                 let _ = std::fs::remove_dir_all(&j2k_dir);
@@ -1428,7 +1448,10 @@ fn run() {
                     pad_head,
                     pad_tail,
                 };
-                dcpwizard_core::dcp::create_dcp(&config)
+                match versions_specs.as_ref() {
+                    Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
+                    None => dcpwizard_core::dcp::create_dcp(&config),
+                }
             }
         }
 

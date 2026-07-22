@@ -112,7 +112,7 @@ pub(crate) fn parse_wav(path: &Path) -> Result<WavInfo, String> {
 /// Write a reel's WAV as `[start_sample, start_sample + sample_count)` sliced from
 /// `src`, padding with silence if the source runs short so the reel's audio is
 /// exactly `sample_count` samples (matching the reel's frame count).
-fn write_reel_wav(
+pub(crate) fn write_reel_wav(
     src: &Path,
     info: &WavInfo,
     start_sample: u64,
@@ -158,7 +158,7 @@ fn write_reel_wav(
 }
 
 /// Sorted J2K codestreams in `dir` (same order postkit's dir wrap would use).
-fn collect_frames(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn collect_frames(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -432,7 +432,7 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
 /// Cues whose start falls in `[range.start, range.end)`, rebased to a reel-local
 /// timeline (frame 0 = reel start) and clamped to the reel's end. A cue starting
 /// in this reel that overruns into the next is truncated at the reel boundary.
-fn rebase_cues_for_reel(
+pub(crate) fn rebase_cues_for_reel(
     cues: &[crate::subtitle::SubCue],
     range: ReelRange,
 ) -> Vec<crate::subtitle::SubCue> {
@@ -450,7 +450,7 @@ fn rebase_cues_for_reel(
         .collect()
 }
 
-fn mxf_enc(k: &crate::encrypt::GeneratedKey) -> postkit::mxf_wrap::MxfEncryption {
+pub(crate) fn mxf_enc(k: &crate::encrypt::GeneratedKey) -> postkit::mxf_wrap::MxfEncryption {
     postkit::mxf_wrap::MxfEncryption {
         content_key: k.key,
         key_id: k.key_id,
@@ -474,7 +474,7 @@ fn mint_key(
     }
 }
 
-fn register_asset(
+pub(crate) fn register_asset(
     pkl: &mut Vec<crate::pkl::PklEntry>,
     am: &mut Vec<crate::assetmap::AssetMapEntry>,
     id: &str,
