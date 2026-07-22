@@ -149,7 +149,13 @@ pub fn prepare_51_audio(
     if channels != 6 {
         return Ok(false);
     }
-    if format != 1 {
+    // ffmpeg writes >2ch pcm as WAVE_FORMAT_EXTENSIBLE (0xFFFE); the real
+    // format code is the first two bytes of the SubFormat guid
+    let is_pcm = format == 1
+        || (format == 0xFFFE
+            && fmt.len() >= 26
+            && u16::from_le_bytes(fmt[24..26].try_into().unwrap()) == 1);
+    if !is_pcm {
         return Err(format!("{} must use PCM WAV samples", input.display()));
     }
     let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
@@ -232,7 +238,13 @@ pub fn build_mca_config(
     if let Some(idx) = vi_channel {
         push(McaTagSymbol::Vi, idx);
     }
-    postkit::mca::soundfield_to_mca_config(&sf)
+    let mut config = postkit::mca::soundfield_to_mca_config(&sf)?;
+    // asdcplib requires a label per physical channel; the silent fill channels
+    // after the labeled ones get '-' placeholders
+    for _ in (sf.channels.len() as u32)..channel_count {
+        config.push_str(",-");
+    }
+    Some(config)
 }
 
 /// Wrap essence into an MXF and return the track file (real embedded asset id,
@@ -435,6 +447,42 @@ mod tests {
     }
 
     #[test]
+    fn accepts_wave_format_extensible_pcm() {
+        // ffmpeg emits 6ch pcm as WAVE_FORMAT_EXTENSIBLE, not plain format 1
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.wav");
+        let output = dir.path().join("dcp.wav");
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&78u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&40u32.to_le_bytes());
+        wav.extend_from_slice(&0xFFFEu16.to_le_bytes()); // extensible
+        wav.extend_from_slice(&6u16.to_le_bytes());
+        wav.extend_from_slice(&48_000u32.to_le_bytes());
+        wav.extend_from_slice(&864_000u32.to_le_bytes());
+        wav.extend_from_slice(&18u16.to_le_bytes());
+        wav.extend_from_slice(&24u16.to_le_bytes());
+        wav.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+        wav.extend_from_slice(&24u16.to_le_bytes()); // valid bits
+        wav.extend_from_slice(&0x3Fu32.to_le_bytes()); // channel mask
+        // KSDATAFORMAT_SUBTYPE_PCM guid; the leading u16 is the format code
+        wav.extend_from_slice(&[
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38,
+            0x9b, 0x71,
+        ]);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&18u32.to_le_bytes());
+        for sample in 1u8..=18 {
+            wav.push(sample);
+        }
+        std::fs::write(&input, wav).unwrap();
+
+        assert!(prepare_51_audio(&input, &output, AudioInputOrder::Canonical51).unwrap());
+        assert_eq!(wav_channels(&output).unwrap(), 16);
+    }
+
+    #[test]
     fn pads_51_to_16_channels_with_canonical_mca_labels() {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("source.wav");
@@ -461,7 +509,7 @@ mod tests {
         assert_eq!(wav_channels(&output).unwrap(), 16);
         assert_eq!(
             build_mca_config(16, None, None).as_deref(),
-            Some("51(L,R,C,LFE,Ls,Rs)")
+            Some("51(L,R,C,LFE,Ls,Rs),-,-,-,-,-,-,-,-,-,-")
         );
     }
 
