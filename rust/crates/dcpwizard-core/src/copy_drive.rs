@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Evict a file's pages from the page cache so a following read hits the device.
 /// Without this the read-back below just returns the bytes we cached on write and
 /// verifies nothing about what actually landed on the drive.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn drop_page_cache(file: &File) {
     use std::os::unix::io::AsRawFd;
     unsafe {
@@ -14,7 +14,8 @@ fn drop_page_cache(file: &File) {
     }
 }
 
-#[cfg(not(unix))]
+// macos has no posix_fadvise; the read-back there may be served from cache
+#[cfg(not(target_os = "linux"))]
 fn drop_page_cache(_file: &File) {}
 
 /// Copy a DCP to a target drive with SHA-1 hash verification.

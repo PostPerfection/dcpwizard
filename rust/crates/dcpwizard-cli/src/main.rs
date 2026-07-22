@@ -1300,7 +1300,6 @@ fn run() {
                     hi_channel,
                     vi_channel,
                     stereo_3d: right_eye_dir.is_some(),
-                    ..Default::default()
                 };
                 let code = dcpwizard_core::dcp::create_dcp(&config);
 
@@ -1376,7 +1375,6 @@ fn run() {
                     atmos_path: atmos.map(PathBuf::from),
                     hi_channel,
                     vi_channel,
-                    ..Default::default()
                 };
                 dcpwizard_core::dcp::create_dcp(&config)
             }
