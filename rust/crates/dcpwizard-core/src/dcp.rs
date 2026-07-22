@@ -246,6 +246,8 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     let mut has_sound = false;
     let sound_duration = picture_duration; // match picture duration
     let mut sound_key = None;
+    // sound layout for the SMPTE CompositionMetadataAsset (ST 429-16)
+    let mut main_sound = None;
 
     if let Some(audio_path) = prepared_audio.as_ref().or(config.audio_path.as_ref())
         && audio_path.exists()
@@ -263,15 +265,26 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         };
         // derive ST 429-12 MCA labels from the probed channel count plus any
         // HI/VI accessibility channel flags
-        let mca_config = match crate::mxf_wrap::wav_channels(audio_path) {
-            Ok(ch) => {
-                crate::mxf_wrap::build_mca_config(ch as u32, config.hi_channel, config.vi_channel)
-            }
+        let channels = match crate::mxf_wrap::wav_channels(audio_path) {
+            Ok(ch) => ch as u32,
             Err(e) => {
                 tracing::error!("{e}");
                 return -1;
             }
         };
+        let mca_config =
+            crate::mxf_wrap::build_mca_config(channels, config.hi_channel, config.vi_channel);
+        // MainSoundConfiguration for the CPL metadata asset, from the same channel
+        // count as the MCA labels (silent fill channels become '-').
+        if let Some(configuration) =
+            crate::cpl::main_sound_configuration(channels, config.hi_channel, config.vi_channel)
+        {
+            let sample_rate = crate::mxf_wrap::wav_sample_rate(audio_path).unwrap_or(48000);
+            main_sound = Some(crate::cpl::MainSound {
+                configuration,
+                sample_rate,
+            });
+        }
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
             input_path: audio_path.clone(),
             output_mxf: sound_mxf_path.clone(),
@@ -320,9 +333,13 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             let path = config
                 .output_dir
                 .join(format!("subtitle_{subtitle_uuid}.xml"));
-            if let Err(e) =
-                crate::subtitle::convert_srt_to_dcp_xml(subtitle_path, &path, subtitle_lang, fps)
-            {
+            if let Err(e) = crate::subtitle::convert_srt_to_dcp_xml(
+                subtitle_path,
+                &path,
+                subtitle_lang,
+                fps,
+                0.0,
+            ) {
                 tracing::error!("Subtitle conversion failed: {e}");
                 return -1;
             }
@@ -452,6 +469,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         content_kind: config.content_type.as_cpl_kind().into(),
         reels: vec![reel],
         standard: config.standard,
+        main_sound,
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {

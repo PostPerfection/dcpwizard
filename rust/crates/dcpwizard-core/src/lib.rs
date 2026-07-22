@@ -20,6 +20,7 @@ pub mod hfr;
 pub mod import;
 pub mod info;
 pub mod ingest;
+pub mod ingest_package;
 pub mod j2k_transcode;
 pub mod job_queue;
 pub mod kdm;

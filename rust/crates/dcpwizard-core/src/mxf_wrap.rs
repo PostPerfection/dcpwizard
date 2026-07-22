@@ -109,6 +109,11 @@ pub fn wav_channels(path: &std::path::Path) -> Result<u16, String> {
     wav_fmt(path).map(|(ch, _)| ch)
 }
 
+/// Probe a WAV's sample rate for the CompositionMetadataAsset MainSoundSampleRate.
+pub fn wav_sample_rate(path: &std::path::Path) -> Result<u32, String> {
+    wav_fmt(path).map(|(_, sr)| sr)
+}
+
 /// Expand a six-channel WAV to DCP's 16-channel PCM layout. The first six
 /// channels are canonical DCP 5.1 and channels 7 through 16 are silent.
 /// Returns false when the source is not 5.1 and was left untouched.

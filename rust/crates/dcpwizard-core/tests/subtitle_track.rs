@@ -24,7 +24,7 @@ fn srt_wraps_into_a_registered_timed_text_track() {
 
     // 1. SRT -> ST 428-7 DCST XML at 24 fps.
     let dcst = dir.path().join("sub.xml");
-    convert_srt_to_dcp_xml(&srt, &dcst, "de", 24).expect("srt->dcst");
+    convert_srt_to_dcp_xml(&srt, &dcst, "de", 24, 8.0).expect("srt->dcst");
     let xml = std::fs::read_to_string(&dcst).unwrap();
     // frame-based timecodes, not the illegal dot-millisecond form
     assert!(

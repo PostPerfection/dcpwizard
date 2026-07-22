@@ -21,6 +21,21 @@ pub struct SubtitleConfig {
     pub font_color: String,
     /// Edit rate for the SMPTE timecode / EditRate (frames per second).
     pub fps: u32,
+    /// Bottom-line Vposition as a percentage from the bottom of the screen
+    /// (Valign="bottom"). Zero falls back to the default 8%.
+    pub vposition: f64,
+}
+
+/// Default bottom-line position: 8% up from the bottom of the screen.
+const DEFAULT_VPOSITION: f64 = 8.0;
+/// Vertical gap between stacked subtitle lines, in percent of screen height.
+const LINE_SPACING: f64 = 7.0;
+
+/// Vposition (percent from the bottom, Valign="bottom") for line `j` of a cue
+/// with `line_count` lines: the last line sits at `base`, earlier lines stack
+/// upward at LINE_SPACING each.
+fn line_vposition(base: f64, line_count: usize, j: usize) -> f64 {
+    base + (line_count - 1 - j) as f64 * LINE_SPACING
 }
 
 /// Import subtitles from SRT format and convert to TTML/XML for DCP packaging.
@@ -59,12 +74,19 @@ pub fn import_subtitles(config: &SubtitleConfig) -> i32 {
         &config.font_color
     };
     let fps = if config.fps == 0 { 24 } else { config.fps };
+    let vposition = if config.vposition <= 0.0 {
+        DEFAULT_VPOSITION
+    } else {
+        config.vposition
+    };
 
     let xml = match config.format {
         SubtitleFormat::SmpteXml | SubtitleFormat::Srt => {
-            generate_smpte_ttml(&entries, lang, font_size, font_color, fps)
+            generate_smpte_ttml(&entries, lang, font_size, font_color, fps, vposition)
         }
-        SubtitleFormat::InteropXml => generate_interop_xml(&entries, lang, font_size, font_color),
+        SubtitleFormat::InteropXml => {
+            generate_interop_xml(&entries, lang, font_size, font_color, vposition)
+        }
     };
 
     match std::fs::write(&config.output_file, xml) {
@@ -177,7 +199,7 @@ pub fn parse_srt_frames(path: &Path, fps: u32) -> Result<Vec<SubCue>, String> {
 
 /// Write a reel's DCST from frame-based cues (already rebased to reel-local 0).
 pub fn write_dcst_frames(cues: &[SubCue], lang: &str, fps: u32, out: &Path) -> Result<(), String> {
-    let xml = render_dcst_frames(cues, lang, 42, "FFFFFFFF", fps);
+    let xml = render_dcst_frames(cues, lang, 42, "FFFFFFFF", fps, DEFAULT_VPOSITION);
     std::fs::write(out, xml).map_err(|e| e.to_string())
 }
 
@@ -196,6 +218,7 @@ fn generate_smpte_ttml(
     font_size: u32,
     font_color: &str,
     fps: u32,
+    vposition: f64,
 ) -> String {
     let fps64 = fps.max(1) as u64;
     let cues: Vec<SubCue> = entries
@@ -206,7 +229,7 @@ fn generate_smpte_ttml(
             text: e.text.clone(),
         })
         .collect();
-    render_dcst_frames(&cues, lang, font_size, font_color, fps)
+    render_dcst_frames(&cues, lang, font_size, font_color, fps, vposition)
 }
 
 /// Shared ST 428-7 DCST renderer working from frame-based cues. Both the
@@ -217,6 +240,7 @@ fn render_dcst_frames(
     font_size: u32,
     font_color: &str,
     fps: u32,
+    vposition: f64,
 ) -> String {
     let sub_id = uuid::Uuid::new_v4();
     // ~1/12 s fade, expressed in frames like the rest of the timecodes
@@ -247,8 +271,9 @@ fn render_dcst_frames(
             frames_to_dcst(cue.start_frame, fps),
             frames_to_dcst(cue.end_frame, fps),
         ));
-        for (j, line) in cue.text.split('\n').enumerate() {
-            let vpos = 85.0 - (j as f64 * 7.0);
+        let lines: Vec<&str> = cue.text.split('\n').collect();
+        for (j, line) in lines.iter().enumerate() {
+            let vpos = line_vposition(vposition, lines.len(), j);
             xml.push_str(&format!(
                 "        <dcst:Text Vposition=\"{vpos:.1}\" Valign=\"bottom\" Halign=\"center\">{}</dcst:Text>\n",
                 postkit::packaging::escape_xml(line)
@@ -268,6 +293,7 @@ fn generate_interop_xml(
     lang: &str,
     font_size: u32,
     font_color: &str,
+    vposition: f64,
 ) -> String {
     let sub_id = uuid::Uuid::new_v4();
     let mut xml = String::new();
@@ -288,8 +314,9 @@ fn generate_interop_xml(
             ms_to_interop(entry.start_ms),
             ms_to_interop(entry.end_ms),
         ));
-        for (j, line) in entry.text.split('\n').enumerate() {
-            let vpos = 85.0 - (j as f64 * 7.0);
+        let lines: Vec<&str> = entry.text.split('\n').collect();
+        for (j, line) in lines.iter().enumerate() {
+            let vpos = line_vposition(vposition, lines.len(), j);
             xml.push_str(&format!(
                 "      <Text Vposition=\"{vpos:.1}\" VAlign=\"bottom\" HAlign=\"center\">{}</Text>\n",
                 postkit::packaging::escape_xml(line)
@@ -303,12 +330,14 @@ fn generate_interop_xml(
     xml
 }
 
-/// High-level convenience: convert an SRT file to DCP SMPTE XML.
+/// High-level convenience: convert an SRT file to DCP SMPTE XML. `vposition` is
+/// the bottom-line percentage from the bottom of the screen (0 uses the default).
 pub fn convert_srt_to_dcp_xml(
     input: &Path,
     output: &Path,
     language: &str,
     fps: u32,
+    vposition: f64,
 ) -> Result<(), String> {
     let config = SubtitleConfig {
         input_file: input.to_path_buf(),
@@ -318,11 +347,66 @@ pub fn convert_srt_to_dcp_xml(
         font_size: 42,
         font_color: "FFFFFFFF".to_string(),
         fps,
+        vposition,
     };
     let code = import_subtitles(&config);
     if code == 0 {
         Ok(())
     } else {
         Err("Subtitle conversion failed".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_line_cue_anchors_at_bottom() {
+        let entries = [SrtEntry {
+            start_ms: 1000,
+            end_ms: 4000,
+            text: "line one\nline two".to_string(),
+        }];
+        let xml = generate_smpte_ttml(&entries, "en", 42, "FFFFFFFF", 24, DEFAULT_VPOSITION);
+        // last line at 8%, the line above it at 15%, both anchored to the bottom
+        assert!(
+            xml.contains("Vposition=\"15.0\" Valign=\"bottom\""),
+            "top line at 15%: {xml}"
+        );
+        assert!(
+            xml.contains("Vposition=\"8.0\" Valign=\"bottom\""),
+            "bottom line at 8%: {xml}"
+        );
+        assert!(
+            !xml.contains("Vposition=\"85.0\""),
+            "old top-anchored value gone"
+        );
+    }
+
+    #[test]
+    fn interop_two_line_cue_anchors_at_bottom() {
+        let entries = [SrtEntry {
+            start_ms: 1000,
+            end_ms: 4000,
+            text: "line one\nline two".to_string(),
+        }];
+        let xml = generate_interop_xml(&entries, "en", 42, "FFFFFFFF", DEFAULT_VPOSITION);
+        assert!(
+            xml.contains("Vposition=\"15.0\" VAlign=\"bottom\""),
+            "{xml}"
+        );
+        assert!(xml.contains("Vposition=\"8.0\" VAlign=\"bottom\""), "{xml}");
+    }
+
+    #[test]
+    fn custom_vposition_shifts_the_block() {
+        let entries = [SrtEntry {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "solo".to_string(),
+        }];
+        let xml = generate_smpte_ttml(&entries, "en", 42, "FFFFFFFF", 24, 12.0);
+        assert!(xml.contains("Vposition=\"12.0\""), "{xml}");
     }
 }

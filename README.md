@@ -6,7 +6,7 @@
 
 Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
 
-Version 1.1 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
+Version 1.1 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder. 
 
 ## Overview
 
@@ -25,6 +25,8 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Reel splitting** via `create --reel-length <minutes>` (multi-reel CPL, sample-accurate audio and per-reel subtitle boundaries)
 - **High Bitrate (HBR)**, up to 500 Mbps for demanding content
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
+- **Bv2.1 CompositionMetadataAsset** (ST 429-16) in the first reel of SMPTE CPLs, with `MainSoundConfiguration` derived from the packaged channel count
+- **Re-ingest packaging** via `ingest-package <dir>`: rebuild ASSETMAP and PKL to cover every asset file present (for exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets), no re-wrap
 - **SHA-1 hashing** for integrity verification
 
 ### Encoding & Transcoding
@@ -44,7 +46,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Certificate inspection**, display subject, issuer, validity, thumbprint, CA status
 
 ### Subtitles & Captions
-- **SRT → SMPTE / Interop subtitle XML** conversion
+- **SRT → SMPTE / Interop subtitle XML** conversion, anchored near the bottom with configurable `--vposition` (percent from the bottom, default 8%)
 - **Subtitle packaging** into a DCP timed-text track (ST 428-7 DCST wrapped as an MXF, registered in the CPL) via `create --subtitle`
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Subtitle burn-in**, permanently render into video frames (for festivals)

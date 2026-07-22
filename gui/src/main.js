@@ -1291,6 +1291,7 @@ document.getElementById("srt-convert")?.addEventListener("click", async () => {
   const output = document.getElementById("srt-output").value;
   const lang = document.getElementById("srt-language").value || "en";
   const fps = document.getElementById("srt-framerate").value || "24";
+  const vposition = document.getElementById("srt-vposition").value || "8";
   if (!input) return;
 
   const resultsEl = document.getElementById("srt-results");
@@ -1298,7 +1299,7 @@ document.getElementById("srt-convert")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["subtitle-convert", "-i", input, "-l", lang, "--fps", fps];
+    const args = ["subtitle-convert", "-i", input, "-l", lang, "--fps", fps, "--vposition", vposition];
     if (output) args.push("-o", output);
     const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
@@ -1390,6 +1391,33 @@ document.getElementById("convert-start")?.addEventListener("click", async () => 
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
       ? `✓ Conversion complete\n${result.stdout}`
+      : `✗ Error:\n${result.stderr || result.stdout}`;
+  } catch (e) {
+    resultsEl.textContent = `✗ Failed: ${e}`;
+  }
+});
+
+// === Re-ingest Package (rebuild ASSETMAP/PKL) ===
+document.getElementById("ingest-browse-dir")?.addEventListener("click", async () => {
+  const path = await open({ directory: true });
+  if (path) {
+    document.getElementById("ingest-dir").value = path;
+    document.getElementById("ingest-start").disabled = false;
+  }
+});
+document.getElementById("ingest-start")?.addEventListener("click", async () => {
+  const dir = document.getElementById("ingest-dir").value;
+  if (!dir) return;
+
+  const resultsEl = document.getElementById("ingest-results");
+  resultsEl.textContent = "Rebuilding ASSETMAP and PKL…";
+  resultsEl.classList.add("visible");
+
+  try {
+    const cmd = Command.sidecar("dcpwizard", ["ingest-package", dir]);
+    const result = await cmd.execute();
+    resultsEl.textContent = result.code === 0
+      ? `✓ Repackaged\n${result.stdout}`
       : `✗ Error:\n${result.stderr || result.stdout}`;
   } catch (e) {
     resultsEl.textContent = `✗ Failed: ${e}`;

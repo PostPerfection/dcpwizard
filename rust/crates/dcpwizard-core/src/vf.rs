@@ -188,6 +188,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         rating: String::new(),
         reels: cpl_reels,
         standard,
+        main_sound: None,
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
         tracing::error!("Failed to generate VF CPL");

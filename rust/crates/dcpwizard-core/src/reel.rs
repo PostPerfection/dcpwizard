@@ -404,7 +404,25 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         });
     }
 
-    let code = write_packaging(config, cpl_reels, pkl_entries, am_entries, key_infos);
+    // sound layout for the SMPTE CompositionMetadataAsset, from the packaged audio
+    let main_sound = wav.as_ref().and_then(|(path, info)| {
+        let ch = crate::mxf_wrap::wav_channels(path).ok()? as u32;
+        let configuration =
+            crate::cpl::main_sound_configuration(ch, config.hi_channel, config.vi_channel)?;
+        Some(crate::cpl::MainSound {
+            configuration,
+            sample_rate: info.sample_rate,
+        })
+    });
+
+    let code = write_packaging(
+        config,
+        cpl_reels,
+        pkl_entries,
+        am_entries,
+        key_infos,
+        main_sound,
+    );
     for t in temps {
         let _ = std::fs::remove_file(t);
     }
@@ -483,6 +501,7 @@ fn write_packaging(
     mut pkl_entries: Vec<crate::pkl::PklEntry>,
     mut am_entries: Vec<crate::assetmap::AssetMapEntry>,
     key_infos: Vec<crate::encrypt::ContentKey>,
+    main_sound: Option<crate::cpl::MainSound>,
 ) -> i32 {
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
@@ -493,6 +512,7 @@ fn write_packaging(
         content_kind: config.content_type.as_cpl_kind().into(),
         reels: cpl_reels,
         standard: config.standard,
+        main_sound,
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {

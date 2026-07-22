@@ -555,6 +555,10 @@
                     <option value="30">30 fps</option>
                   </select>
                 </div>
+                <div class="prop-field">
+                  <label>Bottom Position (% from bottom)</label>
+                  <input type="number" id="srt-vposition" value="8" min="0" max="100" step="0.5">
+                </div>
               </div>
               <div class="prop-field">
                 <label>Output File</label>
@@ -635,6 +639,20 @@
               </div>
               <button id="convert-start" class="btn-primary" disabled>Convert</button>
               <div id="convert-results" class="results-box"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Re-ingest Package (rebuild ASSETMAP/PKL)</h2>
+              <p class="field-hint">Regenerate a package's ASSETMAP and PKL to cover every asset file present, without re-wrapping. Fixes exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets. Replaces the existing files.</p>
+              <div class="prop-field">
+                <label>Package Directory</label>
+                <div class="input-with-btn">
+                  <input id="ingest-dir" type="text" placeholder="Select DCP folder…" readonly>
+                  <button id="ingest-browse-dir" class="btn-sm">…</button>
+                </div>
+              </div>
+              <button id="ingest-start" class="btn-primary" disabled>Rebuild ASSETMAP &amp; PKL</button>
+              <div id="ingest-results" class="results-box"></div>
             </section>
           </div>
         </div>

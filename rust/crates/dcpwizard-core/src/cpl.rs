@@ -9,6 +9,19 @@ pub struct CplConfig {
     pub rating: String,
     pub reels: Vec<CplReel>,
     pub standard: crate::Standard,
+    /// Packaged sound layout for the SMPTE CompositionMetadataAsset (ST 429-16).
+    /// None for a silent composition or Interop (no metadata asset is written).
+    pub main_sound: Option<MainSound>,
+}
+
+/// Sound layout for the SMPTE CompositionMetadataAsset (ST 429-16): the
+/// MainSoundConfiguration string plus the sample rate for MainSoundSampleRate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MainSound {
+    /// e.g. "51/L,R,C,LFE,Ls,Rs" with '-' padding for silent fill channels.
+    pub configuration: String,
+    /// 48000 or 96000.
+    pub sample_rate: u32,
 }
 
 /// A single reel in the CPL.
@@ -101,16 +114,34 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
         reels,
     };
 
+    // SMPTE Bv2.1 requires a CompositionMetadataAsset (ST 429-16) in the first
+    // reel; it carries MainSoundConfiguration so validators know the real channel
+    // layout. Interop has no such asset.
+    let metadata_block = if config.standard == crate::Standard::Smpte {
+        match (config.main_sound.as_ref(), config.reels.first()) {
+            (Some(ms), Some(first)) => Some(composition_metadata_block(config, first, ms)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // postkit's DcpCplReel only writes MainPicture/MainSound, so splice the extra
-    // per-reel assets (subtitle, aux data) and rewrite the picture element for
-    // stereoscopic reels. Reel order is preserved.
+    // per-reel assets (subtitle, aux data, metadata) and rewrite the picture
+    // element for stereoscopic reels. Reel order is preserved.
     let mut xml = cpl.to_xml();
-    let needs_splice = config
-        .reels
-        .iter()
-        .any(|r| r.subtitle_id.is_some() || r.aux_data.is_some() || r.stereoscopic);
+    let needs_splice = metadata_block.is_some()
+        || config
+            .reels
+            .iter()
+            .any(|r| r.subtitle_id.is_some() || r.aux_data.is_some() || r.stereoscopic);
     if needs_splice {
-        xml = splice_reel_extras(&xml, &config.reels, config.standard);
+        xml = splice_reel_extras(
+            &xml,
+            &config.reels,
+            config.standard,
+            metadata_block.as_deref(),
+        );
     }
 
     match std::fs::write(output_file, xml) {
@@ -129,13 +160,18 @@ const NS_STEREO_429_10: &str =
 const NS_AUX_DATA: &str = "http://www.dolby.com/schemas/2012/AD";
 
 /// Rewrite each reel's picture element and add the extra AssetList entries
-/// (subtitle, aux data) that postkit's writer does not emit. Walks the reel
-/// segments in order between `</AssetList>` markers.
-fn splice_reel_extras(xml: &str, reels: &[CplReel], standard: crate::Standard) -> String {
+/// (subtitle, aux data, first-reel metadata) that postkit's writer does not
+/// emit. Walks the reel segments in order between `</AssetList>` markers.
+fn splice_reel_extras(
+    xml: &str,
+    reels: &[CplReel],
+    standard: crate::Standard,
+    metadata_first_reel: Option<&str>,
+) -> String {
     const MARKER: &str = "      </AssetList>\n";
     let mut out = String::with_capacity(xml.len() + 512);
     let mut idx = 0;
-    for reel in reels {
+    for (i, reel) in reels.iter().enumerate() {
         let Some(pos) = xml[idx..].find(MARKER) else {
             break;
         };
@@ -151,11 +187,133 @@ fn splice_reel_extras(xml: &str, reels: &[CplReel], standard: crate::Standard) -
         if let Some(ref aux) = reel.aux_data {
             out.push_str(&aux_data_block(aux));
         }
+        if i == 0
+            && let Some(block) = metadata_first_reel
+        {
+            out.push_str(block);
+        }
         out.push_str(MARKER);
         idx = end + MARKER.len();
     }
     out.push_str(&xml[idx..]);
     out
+}
+
+/// ST 429-16 CompositionMetadataAsset namespace.
+const NS_CPL_META: &str = "http://www.smpte-ra.org/schemas/429-16/2014/CPL-Metadata";
+
+/// Build the ST 429-16 MainSoundConfiguration from the packaged sound MXF channel
+/// count plus optional HI/VI accessibility channels. Channels past the labeled
+/// soundfield are silent fill, written as '-'. Returns None for a layout with no
+/// canonical DCP label. `channel_count` is the wrapped MXF channel count (a 5.1
+/// source is padded to 16, so its config carries ten '-' placeholders).
+pub fn main_sound_configuration(
+    channel_count: u32,
+    hi_channel: Option<u32>,
+    vi_channel: Option<u32>,
+) -> Option<String> {
+    let extra = hi_channel.is_some() as u32 + vi_channel.is_some() as u32;
+    let main_count = channel_count.saturating_sub(extra);
+    // canonical DCP channel order per ISDCF / SMPTE RDD 52
+    let (group, labels): (&str, &[&str]) = match main_count {
+        2 => ("20", &["L", "R"]),
+        6 | 16 => ("51", &["L", "R", "C", "LFE", "Ls", "Rs"]),
+        8 => ("71", &["L", "R", "C", "LFE", "Lss", "Rss", "Lrs", "Rrs"]),
+        _ => return None,
+    };
+    let mut slots = vec!["-"; channel_count as usize];
+    for (i, l) in labels.iter().enumerate() {
+        if let Some(slot) = slots.get_mut(i) {
+            *slot = l;
+        }
+    }
+    if let Some(i) = hi_channel
+        && let Some(slot) = slots.get_mut(i as usize)
+    {
+        *slot = "HI";
+    }
+    if let Some(i) = vi_channel
+        && let Some(slot) = slots.get_mut(i as usize)
+    {
+        *slot = "VIN";
+    }
+    Some(format!("{group}/{}", slots.join(",")))
+}
+
+/// SMPTE Bv2.1 CompositionMetadataAsset for the first reel. Stored and active
+/// picture areas are the full container; sound layout and sample rate come from
+/// the packaged audio. Base-type children (Id/EditRate/IntrinsicDuration) sit in
+/// the CPL's default 429-7 namespace, the rest in the 429-16 meta namespace.
+fn composition_metadata_block(config: &CplConfig, reel: &CplReel, sound: &MainSound) -> String {
+    use postkit::packaging::escape_xml;
+    let id = uuid::Uuid::new_v4();
+    let mut b = String::new();
+    b.push_str(&format!(
+        "        <meta:CompositionMetadataAsset xmlns:meta=\"{NS_CPL_META}\">\n"
+    ));
+    b.push_str(&format!("          <Id>urn:uuid:{id}</Id>\n"));
+    b.push_str(&format!(
+        "          <EditRate>{} {}</EditRate>\n",
+        reel.picture_edit_rate_num, reel.picture_edit_rate_den
+    ));
+    b.push_str(&format!(
+        "          <IntrinsicDuration>{}</IntrinsicDuration>\n",
+        reel.picture_duration
+    ));
+    b.push_str(&format!(
+        "          <meta:FullContentTitleText>{}</meta:FullContentTitleText>\n",
+        escape_xml(&config.title)
+    ));
+    b.push_str(&format!(
+        "          <meta:MainSoundConfiguration>{}</meta:MainSoundConfiguration>\n",
+        sound.configuration
+    ));
+    b.push_str(&format!(
+        "          <meta:MainSoundSampleRate>{} 1</meta:MainSoundSampleRate>\n",
+        sound.sample_rate
+    ));
+    b.push_str("          <meta:MainPictureStoredArea>\n");
+    b.push_str(&format!(
+        "            <meta:Width>{}</meta:Width>\n",
+        reel.picture_width
+    ));
+    b.push_str(&format!(
+        "            <meta:Height>{}</meta:Height>\n",
+        reel.picture_height
+    ));
+    b.push_str("          </meta:MainPictureStoredArea>\n");
+    b.push_str("          <meta:MainPictureActiveArea>\n");
+    b.push_str(&format!(
+        "            <meta:Width>{}</meta:Width>\n",
+        reel.picture_width
+    ));
+    b.push_str(&format!(
+        "            <meta:Height>{}</meta:Height>\n",
+        reel.picture_height
+    ));
+    b.push_str("          </meta:MainPictureActiveArea>\n");
+    if let Some(ref lang) = reel.subtitle_language {
+        b.push_str(&format!(
+            "          <meta:MainSubtitleLanguageList>{}</meta:MainSubtitleLanguageList>\n",
+            escape_xml(lang)
+        ));
+    }
+    // Bv2.1 marker, matching the ISDCF SMPTE-Bv21 test content
+    b.push_str("          <meta:ExtensionMetadataList>\n");
+    b.push_str(
+        "            <meta:ExtensionMetadata scope=\"http://www.smpte-ra.org/schemas/429-16/2013/Ext-Meta#scope\">\n",
+    );
+    b.push_str("              <meta:Name>SMPTE</meta:Name>\n");
+    b.push_str("              <meta:PropertyList>\n");
+    b.push_str("                <meta:Property>\n");
+    b.push_str("                  <meta:Name>Version</meta:Name>\n");
+    b.push_str("                  <meta:Value>Bv2.1</meta:Value>\n");
+    b.push_str("                </meta:Property>\n");
+    b.push_str("              </meta:PropertyList>\n");
+    b.push_str("            </meta:ExtensionMetadata>\n");
+    b.push_str("          </meta:ExtensionMetadataList>\n");
+    b.push_str("        </meta:CompositionMetadataAsset>\n");
+    b
 }
 
 /// Replace a reel segment's `<MainPicture>…</MainPicture>` block with a ST 429-10
@@ -302,6 +460,102 @@ fn time_now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_sound_configuration_by_channel_count() {
+        assert_eq!(
+            main_sound_configuration(2, None, None).as_deref(),
+            Some("20/L,R")
+        );
+        assert_eq!(
+            main_sound_configuration(6, None, None).as_deref(),
+            Some("51/L,R,C,LFE,Ls,Rs")
+        );
+        assert_eq!(
+            main_sound_configuration(8, None, None).as_deref(),
+            Some("71/L,R,C,LFE,Lss,Rss,Lrs,Rrs")
+        );
+        // a 5.1 source padded to a 16-channel MXF carries ten '-' fills
+        assert_eq!(
+            main_sound_configuration(16, None, None).as_deref(),
+            Some("51/L,R,C,LFE,Ls,Rs,-,-,-,-,-,-,-,-,-,-")
+        );
+        // HI/VI take their own channel slots after the main layout
+        assert_eq!(
+            main_sound_configuration(8, Some(6), Some(7)).as_deref(),
+            Some("51/L,R,C,LFE,Ls,Rs,HI,VIN")
+        );
+    }
+
+    fn sound_reel() -> CplReel {
+        CplReel {
+            reel_id: "r1".into(),
+            picture_id: "pic1".into(),
+            picture_width: 2048,
+            picture_height: 858,
+            picture_edit_rate_num: 24,
+            picture_edit_rate_den: 1,
+            picture_duration: 240,
+            sound_id: Some("snd1".into()),
+            sound_edit_rate_num: 24,
+            sound_edit_rate_den: 1,
+            sound_duration: 240,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn smpte_cpl_writes_composition_metadata_asset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CPL.xml");
+        let config = CplConfig {
+            title: "Meta Test".into(),
+            content_kind: "feature".into(),
+            reels: vec![sound_reel()],
+            standard: crate::Standard::Smpte,
+            main_sound: Some(MainSound {
+                configuration: "51/L,R,C,LFE,Ls,Rs,-,-,-,-,-,-,-,-,-,-".into(),
+                sample_rate: 48000,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(generate_cpl(&config, "cpl1", &path), 0);
+        let xml = std::fs::read_to_string(&path).unwrap();
+        assert!(xml.contains(
+            "<meta:CompositionMetadataAsset xmlns:meta=\"http://www.smpte-ra.org/schemas/429-16/2014/CPL-Metadata\">"
+        ));
+        assert!(xml.contains(
+            "<meta:MainSoundConfiguration>51/L,R,C,LFE,Ls,Rs,-,-,-,-,-,-,-,-,-,-</meta:MainSoundConfiguration>"
+        ));
+        assert!(xml.contains("<meta:MainSoundSampleRate>48000 1</meta:MainSoundSampleRate>"));
+        assert!(xml.contains("<meta:FullContentTitleText>Meta Test</meta:FullContentTitleText>"));
+        assert!(xml.contains("<meta:Width>2048</meta:Width>"));
+        assert!(xml.contains("<meta:ExtensionMetadata"));
+        // it sits inside the first reel's AssetList
+        let meta_pos = xml.find("<meta:CompositionMetadataAsset").unwrap();
+        let close_pos = xml.find("</AssetList>").unwrap();
+        assert!(meta_pos < close_pos);
+    }
+
+    #[test]
+    fn interop_cpl_has_no_metadata_asset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CPL.xml");
+        let config = CplConfig {
+            title: "Interop".into(),
+            content_kind: "feature".into(),
+            reels: vec![sound_reel()],
+            standard: crate::Standard::Interop,
+            main_sound: Some(MainSound {
+                configuration: "51/L,R,C,LFE,Ls,Rs".into(),
+                sample_rate: 48000,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(generate_cpl(&config, "cpl1", &path), 0);
+        let xml = std::fs::read_to_string(&path).unwrap();
+        assert!(!xml.contains("CompositionMetadataAsset"));
+    }
 
     #[test]
     fn generate_cpl_uses_supplied_identity_and_standard() {

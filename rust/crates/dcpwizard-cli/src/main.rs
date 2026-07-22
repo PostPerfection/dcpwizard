@@ -97,6 +97,13 @@ enum Commands {
         #[arg(long)]
         vi_channel: Option<u32>,
     },
+    /// Rebuild ASSETMAP and PKL to cover every asset file present (metadata-only
+    /// repackaging; no re-wrap or re-encode). For re-ingesting exported OV/VF
+    /// folders whose ASSETMAP/PKL omit hardlinked assets.
+    IngestPackage {
+        /// DCP package directory to repackage in place
+        dir: String,
+    },
     /// Create a supplemental Version File (VF) DCP against an Original Version
     CreateVf {
         /// Original Version (OV) DCP directory
@@ -355,6 +362,9 @@ enum Commands {
         /// Frame rate for timecode conversion (24, 25, 30, 48)
         #[arg(long, default_value = "24")]
         fps: u32,
+        /// Bottom-line position as a percentage up from the bottom of the screen
+        #[arg(long, default_value = "8.0")]
+        vposition: f64,
     },
     /// Burn subtitles into video
     #[command(alias = "burn-in")]
@@ -1801,6 +1811,7 @@ fn run() {
             output,
             language,
             fps,
+            vposition,
         } => {
             let input_path = PathBuf::from(&input);
             let output_path = PathBuf::from(&output);
@@ -1813,14 +1824,16 @@ fn run() {
                 &output_path,
                 &language,
                 fps,
+                vposition,
             ) {
                 Ok(()) => {
                     tracing::info!(
-                        "Converted {} -> {} (lang={}, fps={})",
+                        "Converted {} -> {} (lang={}, fps={}, vposition={})",
                         input,
                         output,
                         language,
-                        fps
+                        fps,
+                        vposition
                     );
                     0
                 }
@@ -2616,6 +2629,14 @@ fn run() {
                     dcpwizard_core::dashboard::serve_dashboard(&opts)
                 }
             }
+        }
+
+        Commands::IngestPackage { dir } => {
+            let code = dcpwizard_core::ingest_package::ingest_package(&PathBuf::from(&dir));
+            if code == 0 {
+                println!("Repackaged {dir} (regenerated ASSETMAP and PKL)");
+            }
+            code
         }
 
         Commands::CreateVf {

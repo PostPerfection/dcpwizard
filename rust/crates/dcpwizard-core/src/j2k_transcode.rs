@@ -207,6 +207,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         rating: String::new(),
         reels: cpl_reels,
         standard,
+        main_sound: None,
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &out_cpl_path) != 0 {
         tracing::error!("Failed to generate CPL");
