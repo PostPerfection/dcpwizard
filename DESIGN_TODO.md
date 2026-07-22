@@ -30,6 +30,21 @@ Remaining gaps after the 2026-07 audit fixes. Paths: CORE = rust/crates/dcpwizar
 ## Planned features
 
 - multi-CPL timelines (multi_cpl.rs create_multi_cpl) still unbuilt.
+- 23.976 source delivery: `create` reduces 24000/1001 to integer 23 and rejects
+  it. Support the explicit 23.976-to-24 DCP conversion and apply the matching
+  audio pull-up, including separately supplied WAV audio.
+- Encrypted DCP derivatives: accept an external KDM plus recipient certificate
+  and private key, decrypt the source, then permit supported transcode and
+  burn-in workflows. Keep key material out of logs and temporary output.
+- Subtitle authoring controls: supplied SMPTE subtitle XML keeps its placement
+  and styling, but SRT always becomes centred bottom text. Add SRT placement
+  controls and closed-caption packaging. 3D subtitle depth remains separate.
+- Input video range: expose an explicit full-range or legal-range override, or
+  verify the decoded range before conversion. The current ffmpeg raw-RGB path
+  leaves users no way to correct wrong or absent source metadata.
+- Alpha input: reject transparent video with a clear compositing requirement,
+  or add an explicit opaque background composite before RGB DCP encoding. DCP
+  picture essence has no alpha channel.
 - DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
   DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
   the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is
