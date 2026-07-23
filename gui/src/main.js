@@ -743,6 +743,7 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
   const output = document.getElementById("kdm-output").value;
   const from = document.getElementById("kdm-from").value;
   const to = document.getElementById("kdm-to").value;
+  const template = document.getElementById("kdm-template")?.value.trim();
   const format = document.getElementById("kdm-format")?.value || "smpte";
   const resultsBox = document.getElementById("kdm-results");
   resultsBox.classList.add("visible");
@@ -750,6 +751,7 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
   const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert,
     "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output, "--format", format];
   if (keys) args.push("--keys", keys);
+  if (template) args.push("--template", template);
   if (from) args.push("-f", from);
   if (to) args.push("-t", to);
   const cmd = Command.sidecar("dcpwizard", args);

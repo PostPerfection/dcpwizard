@@ -23,9 +23,18 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **2K and 4K** resolution (2048×1080, 4096×2160)
 - **Frame rates** 24, 25, 30 fps (2K/4K); HFR 48, 50, 60, 96, 100, 120 fps (2K only)
 - **Reel splitting** via `create --reel-length <minutes>` (multi-reel CPL, sample-accurate audio and per-reel subtitle boundaries)
+- **Explicit reel splits** via `create --split-at <tc>[,<tc>...]` (HH:MM:SS or HH:MM:SS:FF) or `create --split-chapters` (source chapter marks via ffprobe)
+- **Custom picture container** via `create --container <2k-scope|...>` or `create --container-dims WxH` (even, within the 2K/4K bound)
+- **Head/tail padding** via `create --pad-head <dur> --pad-tail <dur>` (`48f`/`2s`), with `--pad-color <RRGGBB>` for a filled pad instead of black
+- **Input decode range** override via `create --input-range full|legal`, correcting wrong or absent source range flags
 - **High Bitrate (HBR)**, up to 500 Mbps for demanding content
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **Multi-version packages** via `create --versions <file>`: one package with several CPLs sharing the same picture/sound essence, differing by subtitle and/or audio track (multiple language versions over one master)
+- **Multi-composition packages** via `create-multi --compositions <manifest>`: one CPL per manifest entry, each with its own picture/sound/subtitle, over one shared PKL/ASSETMAP
+- **Assemble** a new OV from existing DCPs via `assemble --input <dcp>... --output --title` (reels in order, essence copied byte-identical by UUID)
+- **Edit** CPL metadata (title/annotation/content-kind/issuer) without re-wrapping essence via `edit --input`
+- **Decrypt** an encrypted DCP to cleartext via `decrypt --input --output` with `--kdm --recipient-key` or `--keys`
+- **Sign-language video** track via `create --sign-language-video <file> --sign-language-lang <rfc5646>` (ISDCF Doc 13, SLVS on sound channel 15)
 - **Bv2.1 CompositionMetadataAsset** (ST 429-16) in the first reel of SMPTE CPLs, with `MainSoundConfiguration` derived from the packaged channel count
 - **Re-ingest packaging** via `ingest-package <dir>`: rebuild ASSETMAP and PKL to cover every asset file present (for exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets), no re-wrap
 - **SHA-1 hashing** for integrity verification
@@ -82,6 +91,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Dolby Vision RPU injection** via dovi_tool
 - **HDR10 static metadata** injection (SMPTE ST 2086 + CTA 861.3)
 - **HDR format conversion**, HDR10 ↔ HLG ↔ SDR tone mapping
+- **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning. `create --hdr-dci` (DCI HDR Addendum, ST 2084 PQ) is validated but currently refused: the jp2k writer cannot yet stamp the ST 2084 UL, so it fails loud rather than mislabel the essence
 
 ### Camera Ingest
 - **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon); true RAW is detected and rejected, only ffmpeg-decodable masters (ProRes, DNxHR) transcode
@@ -247,6 +257,30 @@ dcpwizard create --title "My Film" --video ./j2k --output ./dcp --frame-rate 25
 dcpwizard create --title "My Feature" --video ./j2k --audio ./audio.wav \
     --output ./dcp --reel-length 20
 
+# Explicit reel splits at timecodes, or at the source's chapter marks
+dcpwizard create --title "My Feature" --video movie.mov --output ./dcp \
+    --split-at 00:20:00,00:41:30:12
+dcpwizard create --title "My Feature" --video movie.mov --output ./dcp --split-chapters
+
+# Custom container: a named DCI container or arbitrary even dimensions
+dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container 2k-flat
+dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container-dims 1920x1080
+
+# Head/tail padding with a coloured pad frame (48f or 2s; default black)
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp \
+    --pad-head 2s --pad-tail 48f --pad-color 000010
+
+# Force the source decode range (corrects wrong/absent range flags)
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp --input-range full
+
+# Sign-language video track (ISDCF Doc 13, carried on sound channel 15)
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp \
+    --sign-language-video signer.mov --sign-language-lang sgn-ase
+
+# HDR source with an HDR-to-DCI 3D LUT (LUT runs before J2K encode)
+dcpwizard create --title "My Film" --video hdr.mov --output ./dcp \
+    --hdr-to-dci-lut hdr_to_dci.cube
+
 # Create with a subtitle track (SRT -> ST 428-7 timed text, wrapped and registered)
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
     --subtitle subs.srt --subtitle-language en
@@ -298,6 +332,30 @@ dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 dcpwizard create-vf --ov ./dcp --output ./dcp_vf --replace-sound 1=./new_mix.wav
 # Validate the VF against its OV (resolves cross-references):
 dcpdoctor validate ./dcp_vf --ov ./dcp
+# Subtitle VF: add or replace a reel's subtitle (SRT or SMPTE XML). A subtitle-only
+# VF references the OV picture/sound by id and ships just the new subtitle MXF.
+dcpwizard create-vf --ov ./dcp --output ./dcp_vf \
+    --add-subtitle 1=./fr.srt --subtitle-language fr
+
+# Assemble a new OV composition from existing DCPs (reels in program order)
+dcpwizard assemble --input ./short_dcp --input ./feature_dcp \
+    --output ./assembled --title "Short + Feature"
+
+# Edit a DCP's CPL metadata in place (or into --output); refuses encrypted DCPs
+dcpwizard edit --input ./dcp --title "My Film (2024 Restoration)" --content-kind FTR
+
+# Multi-composition package: one CPL per manifest entry over a shared PKL/ASSETMAP
+dcpwizard create-multi --compositions comps.json --output ./dcp
+# comps.json:
+#   [
+#     { "title": "Ep 1", "j2k_dir": "./ep1/j2k", "audio": "./ep1/mix.wav" },
+#     { "title": "Ep 2", "j2k_dir": "./ep2/j2k", "audio": "./ep2/mix.wav" }
+#   ]
+
+# Decrypt an encrypted DCP to cleartext (keys from a KDM + recipient key, or KEYS.json)
+dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp \
+    --kdm kdm.xml --recipient-key recipient.key
+dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp --keys ./secret/my_film.keys.json
 
 # Encode images to JPEG 2000
 dcpwizard encode --input ./dpx --output ./j2k --bandwidth 250
@@ -383,6 +441,19 @@ dcpwizard completion fish > ~/.config/fish/completions/dcpwizard.fish
 
 # Convert SRT subtitles to SMPTE DCP XML
 dcpwizard subtitle-convert --input subs.srt --output subs.xml --language en
+
+# Subtitle track with placement, wrap, RTL and an embedded subset font.
+# --subtitle accepts .srt/.ass/.pac/.mks/.mkv/.fcpxml/Interop-PNG or SMPTE DCST XML.
+dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
+    --subtitle subs.ass --subtitle-language ar \
+    --subtitle-halign center --subtitle-valign bottom --subtitle-vposition 8 \
+    --subtitle-rtl auto --subtitle-wrap 42 --subtitle-font NotoSansArabic.ttf
+
+# Edit a standalone subtitle file (any parsable format), written back as SRT
+dcpwizard subtitle-edit --input subs.srt --list
+dcpwizard subtitle-edit --input subs.srt --shift-ms -500 --output shifted.srt
+dcpwizard subtitle-edit --input subs.srt --index 3 --text "Fixed line" \
+    --set-start-ms 12000 --set-end-ms 14000 --output subs.srt
 
 # Extract timed text from a DCP back to SRT (or .txt for text only)
 dcpwizard subtitle-extract --input ./my_dcp --output subs.srt
