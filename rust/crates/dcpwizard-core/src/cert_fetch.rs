@@ -150,6 +150,9 @@ pub fn fetch(
         }
         Vendor::Qube => {
             let qtype = qube_type.ok_or("qube requires --type (the device type, e.g. QXPD)")?;
+            validate_serial(qtype).map_err(|_| {
+                format!("invalid device type '{qtype}': use letters, digits and '-' only")
+            })?;
             let dir = qube_dir_url(qtype);
             let listing = curl(&dir, true)?;
             let entries: Vec<String> = String::from_utf8_lossy(&listing)

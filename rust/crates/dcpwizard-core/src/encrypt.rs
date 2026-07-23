@@ -75,8 +75,8 @@ impl KeyBundle {
     pub fn write(&self, path: &Path) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("cannot serialize keys: {e}"))?;
-        std::fs::write(path, json)
-            .map_err(|e| format!("cannot write keys file {}: {e}", path.display()))
+        // holds raw content keys: atomic_write's tempfile gives it mode 0600
+        crate::store::atomic_write(path, json.as_bytes())
     }
 
     pub fn read(path: &Path) -> Result<Self, String> {
