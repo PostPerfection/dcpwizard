@@ -95,7 +95,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning. `create --hdr-dci` authors a DCI HDR Addendum DCP: the picture MXF is stamped with TransferCharacteristic=ST 2084 (PQ) and ColorPrimaries=P3-D65. Needs a PQ source path (`--hdr-to-dci-lut` or `--hdr-already-pq`); not available with 3D or reel splitting
 
 ### Camera Ingest
-- **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Canon); true RAW is detected and rejected, only ffmpeg-decodable masters (ProRes, DNxHR) transcode. Sony X-OCN is a known gap (see note below)
+- **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Canon, Sony RAW / X-OCN); true RAW is detected and rejected loud, only ffmpeg-decodable masters (ProRes, DNxHR) transcode
 - **Media scanning**, auto-detect resolution, frame rate, codec, reel names
 - **Transcode to intermediate**, DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
 - **3D LUT application** during ingest via `ingest --lut <lut.cube>`
@@ -664,7 +664,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Accessibility compliance (CVAA/EAA) | ✅ | ❌ |
 | Dolby Vision / HDR10 / HLG | ✅ | ❌ |
 | Camera format detection (ARRI/RED/BRAW) | ✅ | ❌ |
-| Timeline conform (EDL/AAF/OTIO) | ✅ | ❌ |
+| Timeline conform (EDL/FCP7 XML) | ✅ | ❌ |
 | Version dashboard & distribution matrix | ✅ | ❌ |
 | Open source | ✅ (GPL-3.0) | ❌ |
 | **Price** | **Free** | **€2,998 or €138/mo** |

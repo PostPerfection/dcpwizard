@@ -104,9 +104,9 @@ enum Commands {
         /// Allow generic FFmpeg HDR tone mapping. It is not a delivery transform.
         #[arg(long)]
         allow_generic_hdr_tonemap: bool,
-        /// Author a DCI HDR Addendum DCP (ST 2084 PQ). Requires --hdr-to-dci-lut
-        /// or --hdr-already-pq. See the fail-loud note: the current jp2k writer
-        /// cannot set the picture TransferCharacteristic UL.
+        /// Author a DCI HDR Addendum DCP (ST 2084 PQ / P3-D65 stamped on the
+        /// picture MXF). Requires --hdr-to-dci-lut or --hdr-already-pq. Not
+        /// supported with 3D or reel splitting.
         #[arg(long)]
         hdr_dci: bool,
         /// Acknowledge the source is already ST 2084 PQ (DCI HDR), so --hdr-dci
