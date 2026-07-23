@@ -233,6 +233,7 @@ fn decrypt_dcp_inner(config: &DcpDecryptConfig) -> Result<usize, String> {
             subtitle_language: subtitle_lang,
             stereoscopic: false,
             aux_data: None,
+            ..Default::default()
         });
 
         shipped.push(ShippedAsset {
@@ -293,7 +294,7 @@ fn decrypt_dcp_inner(config: &DcpDecryptConfig) -> Result<usize, String> {
         });
     }
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         return Err("failed to generate PKL".into());
     }
 
@@ -317,7 +318,7 @@ fn decrypt_dcp_inner(config: &DcpDecryptConfig) -> Result<usize, String> {
             packing_list: false,
         });
     }
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard, None) != 0 {
         return Err("failed to generate ASSETMAP".into());
     }
 

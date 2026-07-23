@@ -14,6 +14,7 @@ pub fn generate_assetmap(
     entries: &[AssetMapEntry],
     output_dir: &Path,
     standard: crate::Standard,
+    annotation: Option<&str>,
 ) -> i32 {
     use postkit::packaging::{self, AssetMap, AssetMapAsset, volindex_xml};
 
@@ -37,6 +38,7 @@ pub fn generate_assetmap(
         issuer: "DCP Wizard".into(),
         creator: "DCP Wizard".into(),
         issue_date: chrono::Utc::now().to_rfc3339(),
+        annotation: annotation.map(String::from),
         assets,
     };
 
@@ -69,7 +71,7 @@ mod tests {
         }];
 
         assert_eq!(
-            generate_assetmap(&entries, dir.path(), crate::Standard::Interop),
+            generate_assetmap(&entries, dir.path(), crate::Standard::Interop, None),
             0
         );
         assert!(dir.path().join("ASSETMAP").exists());

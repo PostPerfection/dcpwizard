@@ -24,6 +24,10 @@ pub struct ReplacementReel {
     /// Subtitle to add or replace on this reel (SRT converted, SMPTE XML wrapped
     /// unchanged). Both --add-subtitle and --replace-subtitle land here.
     pub subtitle: Option<PathBuf>,
+    /// Closed caption to add or replace on this reel. Same input formats as
+    /// `subtitle`; emitted under the MainClosedCaption CPL role.
+    #[serde(default)]
+    pub ccap: Option<PathBuf>,
 }
 
 /// A new MXF that physically ships in the VF (registered in PKL + ASSETMAP).
@@ -71,11 +75,9 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     }
 
     // A VF that replaces nothing is just a copy: refuse it.
-    if !config
-        .replacement_reels
-        .iter()
-        .any(|r| r.picture.is_some() || r.sound.is_some() || r.subtitle.is_some())
-    {
+    if !config.replacement_reels.iter().any(|r| {
+        r.picture.is_some() || r.sound.is_some() || r.subtitle.is_some() || r.ccap.is_some()
+    }) {
         tracing::error!("no replacement essence supplied; nothing to replace");
         return -1;
     }
@@ -157,8 +159,29 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         // keep no subtitle here (the VF ships only what it replaces).
         let subtitle = match rep.and_then(|r| r.subtitle.as_ref()) {
             Some(input) => {
-                let Some(a) = prepare_subtitle(
+                let Some(a) = prepare_timed_text(
                     input,
+                    "subtitle",
+                    sub_lang,
+                    edit_num,
+                    entry.duration_frames,
+                    &config.vf_dir,
+                ) else {
+                    return -1;
+                };
+                let out = Some((a.id.clone(), a.duration));
+                new_assets.push(a);
+                out
+            }
+            None => None,
+        };
+
+        // Closed caption: same handling, emitted under the MainClosedCaption role.
+        let ccap = match rep.and_then(|r| r.ccap.as_ref()) {
+            Some(input) => {
+                let Some(a) = prepare_timed_text(
+                    input,
+                    "ccap",
                     sub_lang,
                     edit_num,
                     entry.duration_frames,
@@ -195,6 +218,12 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             subtitle_duration: subtitle.as_ref().map(|s| s.1).unwrap_or(0),
             subtitle_entry_point: 0,
             subtitle_language: subtitle.as_ref().map(|_| sub_lang.to_string()),
+            ccap_id: ccap.as_ref().map(|c| c.0.clone()),
+            ccap_edit_rate_num: if ccap.is_some() { edit_num } else { 0 },
+            ccap_edit_rate_den: if ccap.is_some() { edit_den } else { 0 },
+            ccap_duration: ccap.as_ref().map(|c| c.1).unwrap_or(0),
+            ccap_entry_point: 0,
+            ccap_language: ccap.as_ref().map(|_| sub_lang.to_string()),
             stereoscopic: false,
             aux_data: None,
         });
@@ -273,7 +302,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         });
     }
     let pkl_path = config.vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate VF PKL");
         return -1;
     }
@@ -298,7 +327,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             packing_list: false,
         });
     }
-    if crate::assetmap::generate_assetmap(&am_entries, &config.vf_dir, standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.vf_dir, standard, None) != 0 {
         tracing::error!("Failed to generate VF ASSETMAP");
         return -1;
     }
@@ -380,18 +409,20 @@ fn prepare_asset(
     })
 }
 
-/// Wrap a subtitle track into the VF: SRT is converted to ST 428-7 DCST first,
-/// supplied SMPTE XML is wrapped unchanged. Returns the wrapped track's real
-/// asset id, hash, size, and duration. `None` on failure (logged).
-fn prepare_subtitle(
+/// Wrap a timed-text track (subtitle or closed caption) into the VF: SRT is
+/// converted to ST 428-7 DCST first, supplied SMPTE XML is wrapped unchanged.
+/// `prefix` names the loose/wrapped files ("subtitle" or "ccap"). Returns the
+/// wrapped track's real asset id, hash, size, and duration. `None` on failure.
+fn prepare_timed_text(
     input: &Path,
+    prefix: &str,
     lang: &str,
     fps: u32,
     fallback_duration: u64,
     vf_dir: &Path,
 ) -> Option<NewAsset> {
     if !input.exists() {
-        tracing::error!("subtitle not found: {}", input.display());
+        tracing::error!("{prefix} not found: {}", input.display());
         return None;
     }
     let is_xml = input
@@ -404,16 +435,16 @@ fn prepare_subtitle(
     let dcst_path = if is_xml {
         input.to_path_buf()
     } else {
-        let tmp = vf_dir.join(format!("subtitle_{}.xml", uuid::Uuid::new_v4()));
+        let tmp = vf_dir.join(format!("{prefix}_{}.xml", uuid::Uuid::new_v4()));
         if let Err(e) = crate::subtitle::srt_to_shifted_dcst(input, 0, lang, fps, &tmp) {
-            tracing::error!("subtitle conversion failed: {e}");
+            tracing::error!("{prefix} conversion failed: {e}");
             return None;
         }
         temp_dcst = Some(tmp.clone());
         tmp
     };
 
-    let filename = format!("subtitle_{}.mxf", uuid::Uuid::new_v4());
+    let filename = format!("{prefix}_{}.mxf", uuid::Uuid::new_v4());
     let wrap_config = crate::mxf_wrap::MxfWrapConfig {
         input_path: dcst_path,
         output_mxf: vf_dir.join(&filename),
@@ -621,6 +652,7 @@ mod tests {
                 picture: None,
                 sound: Some(new_snd),
                 subtitle: None,
+                ccap: None,
             }],
         };
         assert_eq!(create_vf(&config), 0);
@@ -715,6 +747,7 @@ mod tests {
                 picture: None,
                 sound: Some(snd),
                 subtitle: None,
+                ccap: None,
             }],
         };
         assert_eq!(create_vf(&config), -1);

@@ -16,6 +16,7 @@ pub fn generate_pkl(
     entries: &[PklEntry],
     pkl_uuid: &str,
     standard: crate::Standard,
+    annotation: Option<&str>,
     output_file: &Path,
 ) -> i32 {
     use postkit::packaging::{self, PackingList, PklAsset};
@@ -41,6 +42,7 @@ pub fn generate_pkl(
         issuer: "DCP Wizard".into(),
         creator: "DCP Wizard".into(),
         issue_date: chrono::Utc::now().to_rfc3339(),
+        annotation: annotation.map(String::from),
         assets,
     };
 
@@ -63,7 +65,7 @@ mod tests {
         let path = dir.path().join("PKL_expected.xml");
 
         assert_eq!(
-            generate_pkl(&[], "expected", crate::Standard::Smpte, &path),
+            generate_pkl(&[], "expected", crate::Standard::Smpte, None, &path),
             0
         );
         let xml = std::fs::read_to_string(path).unwrap();

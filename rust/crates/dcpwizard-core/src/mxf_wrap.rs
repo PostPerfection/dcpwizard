@@ -20,9 +20,10 @@ pub enum AudioInputOrder {
     LrcLsRsLfe,
 }
 
-/// MXF essence type. DTS:X is intentionally absent: postkit has no confirmed
-/// DataEssenceCoding UL for it, so wrapping it as Atmos (the old behaviour) would
-/// emit the wrong essence UL. DTS:X stays unsupported until the UL is confirmed.
+/// MXF essence type. There is no separate DTS:X essence: no public DTS:X
+/// DataEssenceCoding UL exists. Since ST 429-18/-19 (2019) DTS:X is delivered as
+/// a standard IAB track (ST 2098-2, "DTS:X for IAB"), which is exactly the `Atmos`
+/// (IAB / ST 429-18) essence below. Deliver DTS:X auditoriums via `create --atmos`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MxfType {
     #[default]
@@ -333,6 +334,7 @@ pub fn wrap_mxf_files(
         encryption,
         mca_config,
         resource_ids: vec![],
+        hdr: None,
     };
 
     let result = postkit::mxf_wrap::mxf_wrap(&opts);
@@ -373,6 +375,7 @@ pub fn wrap_timed_text_resources(
         encryption: None,
         mca_config: None,
         resource_ids,
+        hdr: None,
     };
     let result = postkit::mxf_wrap::mxf_wrap(&opts);
     if result.success {
@@ -390,6 +393,136 @@ pub fn wrap_mxf(config: &MxfWrapConfig) -> i32 {
     } else {
         -1
     }
+}
+
+/// Wrap a DCI HDR Addendum picture MXF from an ordered J2K frame list, setting
+/// the Generic Picture Essence Descriptor's TransferCharacteristic = ST 2084 (PQ)
+/// and ColorPrimaries = P3-D65 through asdcplib's `open_write_hdr`. postkit's
+/// `mxf_wrap` has no HDR setter, so this replicates its AS-DCP JP2K wrap and adds
+/// the HDR ULs directly. Returns the track file or None on failure (logged).
+pub fn wrap_j2k_hdr_files(
+    input_files: Vec<PathBuf>,
+    output_mxf: &std::path::Path,
+    frame_rate: u32,
+    encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+) -> Option<postkit::mxf_wrap::MxfTrackFile> {
+    use asdcplib::jp2k::{COLOR_PRIMARIES_P3D65, HdrMetadata, TRANSFER_CHARACTERISTIC_ST2084};
+
+    if input_files.is_empty() {
+        tracing::error!("no essence files to wrap into {}", output_mxf.display());
+        return None;
+    }
+
+    let mut frames: Vec<Vec<u8>> = Vec::with_capacity(input_files.len());
+    for f in &input_files {
+        match std::fs::read(f) {
+            Ok(data) => frames.push(data),
+            Err(e) => {
+                tracing::error!("failed to read {}: {e}", f.display());
+                return None;
+            }
+        }
+    }
+
+    // validate every frame as a DCI JPEG 2000 codestream (matches postkit's wrap)
+    let mut header = None;
+    for (f, frame) in input_files.iter().zip(&frames) {
+        let Some(h) = postkit::j2k::parse_j2k_header(frame) else {
+            tracing::error!("invalid JPEG 2000 codestream: {}", f.display());
+            return None;
+        };
+        if let Err(error) = postkit::j2k::validate_dci_header(&h) {
+            tracing::error!("invalid DCI JPEG 2000 codestream: {error}: {}", f.display());
+            return None;
+        }
+        if header.is_none() {
+            header = Some(h);
+        }
+    }
+    let header = header.unwrap();
+
+    let asset_uuid = uuid::Uuid::new_v4();
+    let mut info = asdcplib::WriterInfo {
+        asset_uuid: *asset_uuid.as_bytes(),
+        context_id: *uuid::Uuid::new_v4().as_bytes(),
+        label_set: asdcplib::LabelSet::Smpte,
+        ..Default::default()
+    };
+
+    let mut enc_ctx = None;
+    let mut hmac_ctx = None;
+    if let Some(e) = &encryption {
+        info.encrypted_essence = true;
+        info.uses_hmac = true;
+        info.cryptographic_key_id = e.key_id;
+        let mut ec = asdcplib::crypto::AesEncContext::new();
+        if let Err(err) = ec.init_key(&e.content_key) {
+            tracing::error!("AES key init failed: {err}");
+            return None;
+        }
+        let mut hc = asdcplib::crypto::HmacContext::new();
+        if let Err(err) = hc.init_key(&e.content_key, info.label_set) {
+            tracing::error!("HMAC key init failed: {err}");
+            return None;
+        }
+        enc_ctx = Some(ec);
+        hmac_ctx = Some(hc);
+    }
+
+    let fps = if frame_rate == 0 { 24 } else { frame_rate };
+    let desc = asdcplib::jp2k::PictureDescriptor {
+        edit_rate: asdcplib::Rational::new(fps as i32, 1),
+        sample_rate: asdcplib::Rational::new(fps as i32, 1),
+        stored_width: header.width,
+        stored_height: header.height,
+        aspect_ratio: asdcplib::Rational::new(header.width as i32, header.height as i32),
+        container_duration: frames.len() as u32,
+        component_count: header.num_components,
+    };
+    let hdr = HdrMetadata {
+        transfer_characteristic: Some(TRANSFER_CHARACTERISTIC_ST2084),
+        color_primaries: Some(COLOR_PRIMARIES_P3D65),
+        ..Default::default()
+    };
+
+    let mut writer = asdcplib::jp2k::MxfWriter::new();
+    let output_str = output_mxf.to_string_lossy().to_string();
+    if let Err(e) = writer.open_write_hdr(&output_str, &info, &desc, &hdr, 16384) {
+        tracing::error!("JP2K HDR open_write failed: {e}");
+        return None;
+    }
+    for frame in &frames {
+        if let Err(e) = writer.write_frame(frame, enc_ctx.as_mut(), hmac_ctx.as_mut()) {
+            tracing::error!("JP2K HDR write_frame failed: {e}");
+            return None;
+        }
+    }
+    if let Err(e) = writer.finalize() {
+        tracing::error!("JP2K HDR finalize failed: {e}");
+        return None;
+    }
+
+    let data = std::fs::read(output_mxf).ok()?;
+    let hash = {
+        use sha1::Digest;
+        sha1::Sha1::digest(&data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    tracing::info!(
+        "Wrapped DCI HDR picture MXF (ST 2084 / P3-D65): {}",
+        output_mxf.display()
+    );
+    Some(postkit::mxf_wrap::MxfTrackFile {
+        uuid: asset_uuid.hyphenated().to_string(),
+        hash,
+        size: data.len() as u64,
+        duration: frames.len() as u64,
+        path: output_mxf.to_path_buf(),
+        success: true,
+        error: String::new(),
+    })
 }
 
 /// Wrap a stereoscopic (ST 429-10) picture MXF from equal-length left/right eye
@@ -582,6 +715,46 @@ mod tests {
         let wav = std::fs::read(output).unwrap();
         assert_eq!(&wav[44..50], &[1, 2, 3, 6, 4, 5]);
         assert!(wav[50..60].iter().all(|sample| *sample == 0));
+    }
+
+    // Wrap a real DCI J2K frame with --hdr-dci signaling, then read the picture
+    // essence descriptor back and assert the ST 2084 / P3-D65 ULs are present.
+    #[test]
+    fn hdr_dci_wrap_writes_st2084_and_p3d65_uls() {
+        use asdcplib::jp2k::{COLOR_PRIMARIES_P3D65, TRANSFER_CHARACTERISTIC_ST2084};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seed = dir.path().join("seed.j2c");
+        crate::pad::generate_black_frame(2048, 1080, 24, &seed).expect("encode DCI frame");
+        let frames: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let f = dir.path().join(format!("frame_{i:05}.j2c"));
+                std::fs::copy(&seed, &f).unwrap();
+                f
+            })
+            .collect();
+
+        let mxf = dir.path().join("hdr_picture.mxf");
+        let track = wrap_j2k_hdr_files(frames, &mxf, 24, None).expect("hdr wrap");
+        assert_eq!(track.duration, 3);
+        assert!(mxf.exists());
+
+        let mut reader = asdcplib::jp2k::MxfReader::new();
+        reader
+            .open_read(&mxf.to_string_lossy())
+            .expect("open hdr mxf");
+        let tc = reader.transfer_characteristic().expect("read transfer");
+        assert_eq!(
+            tc,
+            Some(TRANSFER_CHARACTERISTIC_ST2084),
+            "picture descriptor must carry the ST 2084 TransferCharacteristic UL"
+        );
+        let hdr = reader.hdr_metadata().expect("read hdr metadata");
+        assert_eq!(
+            hdr.color_primaries,
+            Some(COLOR_PRIMARIES_P3D65),
+            "picture descriptor must carry the P3-D65 ColorPrimaries UL"
+        );
     }
 
     #[test]

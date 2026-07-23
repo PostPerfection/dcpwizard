@@ -129,7 +129,7 @@ pub fn ingest_package(dir: &Path) -> i32 {
 
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
     let pkl_path = dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("failed to write PKL");
         return -1;
     }
@@ -146,7 +146,7 @@ pub fn ingest_package(dir: &Path) -> i32 {
             packing_list: false,
         });
     }
-    if crate::assetmap::generate_assetmap(&am_entries, dir, standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, dir, standard, None) != 0 {
         tracing::error!("failed to write ASSETMAP");
         return -1;
     }

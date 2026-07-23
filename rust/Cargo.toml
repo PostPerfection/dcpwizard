@@ -8,9 +8,9 @@ license = "GPL-3.0-or-later"
 version = "1.1.0"
 
 [workspace.dependencies]
-asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "66de9d0" }
+asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "6d7b8ca" }
 clap = { version = "4", features = ["derive"] }
-dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "6184356" }
+dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "171136e" }
 postkit = { path = "../extern/postkit", features = ["grok-ffi"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,3 +19,4 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+

@@ -200,6 +200,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
             subtitle_language: subtitle_lang,
             stereoscopic: false,
             aux_data: None,
+            ..Default::default()
         });
 
         shipped.push(ShippedAsset {
@@ -261,7 +262,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         });
     }
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         return -1;
     }
@@ -286,7 +287,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
             packing_list: false,
         });
     }
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard, None) != 0 {
         tracing::error!("Failed to generate ASSETMAP");
         return -1;
     }

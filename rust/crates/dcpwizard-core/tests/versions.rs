@@ -57,6 +57,7 @@ fn version(title: &str, subtitle: Option<PathBuf>, audio: Option<PathBuf>) -> Ve
         title: title.into(),
         subtitle,
         subtitle_language: None,
+        ccap: None,
         audio,
         kind: None,
     }

@@ -360,6 +360,29 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         &config.subtitle_language
     };
 
+    // closed captions: same timed-text machinery as the open subtitle, but each
+    // reel's track is emitted under the MainClosedCaption CPL role.
+    let ccap_plan = match config.ccap_path.as_ref().filter(|p| p.exists()) {
+        Some(path) => match crate::subtitle::plan_reel_subtitles(
+            path,
+            fps,
+            &crate::subtitle::SubtitleOptions::default(),
+            &config.output_dir,
+        ) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::error!("closed-caption parse failed: {e}");
+                return -1;
+            }
+        },
+        None => None,
+    };
+    let ccap_lang = if config.ccap_language.is_empty() {
+        "en"
+    } else {
+        &config.ccap_language
+    };
+
     let (pic_w, pic_h) = if config.container_width > 0 && config.container_height > 0 {
         (config.container_width, config.container_height)
     } else {
@@ -493,6 +516,45 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             }
         }
 
+        // ── closed caption ────────────────────────────────────────────
+        let mut ccap = None;
+        if let Some(plan) = &ccap_plan {
+            let rebased =
+                crate::subtitle::rebase_styled_for_reel(&plan.cues, range.start, range.end, fps);
+            if !rebased.is_empty() {
+                let ccap_uuid = uuid::Uuid::new_v4().to_string();
+                let dcst = config.output_dir.join(format!("ccap_{ccap_uuid}.xml"));
+                let (xml, resources) = crate::subtitle::render_reel_dcst(
+                    &rebased,
+                    ccap_lang,
+                    fps,
+                    &crate::subtitle::SubtitleOptions::default(),
+                    plan.font.as_ref(),
+                );
+                if let Err(e) = std::fs::write(&dcst, xml) {
+                    tracing::error!("closed-caption write failed for reel {}: {e}", i + 1);
+                    return -1;
+                }
+                let ccap_name = format!("ccap_{ccap_uuid}.mxf");
+                let ccap_path = config.output_dir.join(&ccap_name);
+                let wrapped =
+                    crate::mxf_wrap::wrap_timed_text_resources(&dcst, &resources, &ccap_path, fps);
+                temps.push(dcst);
+                let Some(track) = wrapped else {
+                    tracing::error!("Failed to wrap closed-caption MXF for reel {}", i + 1);
+                    return -1;
+                };
+                register_asset(
+                    &mut pkl_entries,
+                    &mut am_entries,
+                    &ccap_uuid,
+                    &ccap_name,
+                    &ccap_path,
+                );
+                ccap = Some((ccap_uuid, track.duration));
+            }
+        }
+
         if let Some(k) = picture_key {
             key_infos.push(k.info);
         }
@@ -522,6 +584,12 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             subtitle_duration: sub.as_ref().map(|(_, d)| *d).unwrap_or(0),
             subtitle_entry_point: 0,
             subtitle_language: sub.as_ref().map(|_| subtitle_lang.to_string()),
+            ccap_id: ccap.as_ref().map(|(id, _)| id.clone()),
+            ccap_edit_rate_num: fps,
+            ccap_edit_rate_den: 1,
+            ccap_duration: ccap.as_ref().map(|(_, d)| *d).unwrap_or(0),
+            ccap_entry_point: 0,
+            ccap_language: ccap.as_ref().map(|_| ccap_lang.to_string()),
             stereoscopic: false,
             aux_data: None,
         });
@@ -529,6 +597,11 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
 
     // the shared embedded font is now inside each reel's MXF
     if let Some(plan) = &subtitle_plan
+        && let Some((font_file, _)) = &plan.font
+    {
+        let _ = std::fs::remove_file(font_file);
+    }
+    if let Some(plan) = &ccap_plan
         && let Some((font_file, _)) = &plan.font
     {
         let _ = std::fs::remove_file(font_file);
@@ -661,7 +734,7 @@ fn write_packaging(
         },
     );
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         return -1;
     }
@@ -690,7 +763,9 @@ fn write_packaging(
             packing_list: true,
         },
     );
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard, None)
+        != 0
+    {
         tracing::error!("Failed to generate ASSETMAP");
         return -1;
     }

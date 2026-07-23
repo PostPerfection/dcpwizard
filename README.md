@@ -84,21 +84,22 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Integrated QC** via dcpdoctor (SMPTE Bv2.1 compliance checking)
 - **HTML QC report** generation
 - **DCP verification**, validate structure, hashes, XML schemas
-- **Markers**, FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC
+- **Markers**, FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC; the
+  default set is FFOC/LFOC, place any of the others with `--marker LABEL=timecode`
 
 ### HDR & Dolby Vision
 - **HDR detection**, auto-detect SDR, HDR10, HDR10+, Dolby Vision, HLG from source
 - **Dolby Vision RPU injection** via dovi_tool
 - **HDR10 static metadata** injection (SMPTE ST 2086 + CTA 861.3)
 - **HDR format conversion**, HDR10 ↔ HLG ↔ SDR tone mapping
-- **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning. `create --hdr-dci` (DCI HDR Addendum, ST 2084 PQ) is validated but currently refused: the jp2k writer cannot yet stamp the ST 2084 UL, so it fails loud rather than mislabel the essence
+- **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning. `create --hdr-dci` authors a DCI HDR Addendum DCP: the picture MXF is stamped with TransferCharacteristic=ST 2084 (PQ) and ColorPrimaries=P3-D65. Needs a PQ source path (`--hdr-to-dci-lut` or `--hdr-already-pq`); not available with 3D or reel splitting
 
 ### Camera Ingest
-- **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Sony, Canon); true RAW is detected and rejected, only ffmpeg-decodable masters (ProRes, DNxHR) transcode
+- **Camera format detection** (ARRIRAW, RED R3D, Blackmagic BRAW, Canon); true RAW is detected and rejected, only ffmpeg-decodable masters (ProRes, DNxHR) transcode. Sony X-OCN is a known gap (see note below)
 - **Media scanning**, auto-detect resolution, frame rate, codec, reel names
 - **Transcode to intermediate**, DPX, TIFF, EXR, ProRes 4444 (via ffmpeg)
-- **3D LUT application** during ingest
-- **Timeline conform**, assemble reels from EDL (CMX 3600), AAF, FCP XML, OTIO
+- **3D LUT application** during ingest via `ingest --lut <lut.cube>`
+- **Timeline conform** from EDL (CMX 3600) / FCP7 XML (xmeml): parse, or with `--media-dir --output` resolve every reel to media and build a finished multi-reel DCP (per-reel encode + wrap + CPL assembly). The reel/asset plan (`conform_plan.json`) and conform manifest are kept as artifacts
 
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
@@ -119,7 +120,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 ### Mastering & Compliance
 - **DCDM creation**, Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
 - **Visible watermarking**, burned-in text mark (distributor ID/serial) across image frames
-- **Trailer packaging**, ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders
+- **Trailer packaging**, ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders; the packaged mp4 is then encoded and wrapped into a real trailer DCP
 - **Content version tracker**, SQLite database of which version delivered where and when
 - **Accessibility compliance**, verify AD/HI/SL tracks against CVAA, EAA, AODA, Ofcom standards
 
@@ -302,8 +303,17 @@ dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
 
 # Dolby Atmos aux track (ST 429-18). Pass a bitstream file or a directory of
 # per-frame payloads. Real-essence conformance needs real Atmos material.
+# DTS:X: since ST 429-18/-19 it is delivered as a standard IAB track (ST 2098-2,
+# "DTS:X for IAB"), which is this same --atmos path. There is no separate DTS:X UL.
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
     --output ./dcp --atmos ./atmos.iab
+
+# Closed captions (ST 429-12): an accessibility track with a MainClosedCaption
+# CPL role, distinct from open --subtitle. Same input formats. Carried through
+# every CPL path: single-reel, reel splitting, versions (a `ccap` manifest field),
+# and VF (--add-ccap/--replace-ccap REEL=PATH).
+dcpwizard create --title "My Film" --video movie.mov \
+    --output ./dcp --ccap captions.srt --ccap-language en
 
 # Accessibility channels: label sound channel 6 as HI and 7 as VI-N
 dcpwizard create --title "My Film" --video ./j2k --audio ./8ch.wav \
@@ -369,8 +379,9 @@ dcpwizard export --input picture.mxf --output out.mp4 --format h264 --audio soun
 # Create DCDM (Digital Cinema Distribution Master)
 dcpwizard dcdm -i ./frames -o ./dcdm --colour-space rec709
 
-# Colour space conversion
+# Colour space conversion (rec709/p3/rec2020, or the DCDM transforms xyz and p3-d65)
 dcpwizard colour -i ./rec709_frames -o ./p3_frames --source rec709 --target p3
+dcpwizard colour -i ./rec709_frames -o ./p3d65_frames --source rec709 --target p3-d65
 
 # Verify an existing DCP
 dcpwizard verify ./my_dcp
@@ -399,6 +410,11 @@ dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
     --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --valid-from 2024-06-01T00:00:00+00:00 \
     --valid-to 2024-06-30T23:59:59+00:00
+
+# KDM with a custom AnnotationText (default: "<title> KDM for <recipient>")
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
+    --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
+    --output kdm.xml --annotation "My Film - Screen 1 - June run"
 
 # Interop (legacy) KDM. --format defaults to smpte; interop uses the digicine
 # ETM. Validate against real legacy gear before production use.
@@ -466,11 +482,15 @@ dcpwizard convert --input movie.mov --output movie_2k_scope.mov --target 2k-scop
 # Targets: 2k-scope (2048×858), 2k-flat (1998×1080), 2k-full (2048×1080),
 #          4k-scope (4096×1716), 4k-flat (3996×2160), 4k-full (4096×2160)
 
-# Import EDL/AAF/XML timeline for conforming
+# Conform an EDL/FCP7-XML timeline. Parse-only, or with --media-dir/--output
+# resolve reels to media and build a finished multi-reel DCP (conform_plan.json
+# and the conform manifest are kept as artifacts).
 dcpwizard conform -i timeline.edl --json
+dcpwizard conform -i timeline.edl --media-dir ./reels --output ./conform_out
 
-# Camera raw ingest
+# Camera raw ingest (--lut applies a 3D LUT during transcode)
 dcpwizard ingest -s /mnt/camera_card -o ./dpx_frames -f dpx --colour-space ACES
+dcpwizard ingest -s /mnt/camera_card -o ./dpx_frames --lut show.cube
 
 # Extract a single frame from MXF/video
 dcpwizard frame-extract -i video.mxf -f 100 -o frame100.png
@@ -527,11 +547,13 @@ dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" --cinema Odeon \
 # Every successful kdm/kdm-batch appends a metadata record (never key material).
 dcpwizard kdm-history --title "My Film" --since 2026-07
 
-# Download a projector/server recipient cert by vendor + serial. Verified public
-# endpoints: dolby/doremi and qube (anonymous FTP). Other vendors error with a
-# note to obtain the cert from the vendor. Requires the `curl` binary.
+# Download a projector/server recipient cert by vendor + serial. Anonymous
+# endpoints: dolby/doremi and qube. christie/gdc/barco need a vendor account
+# (--user/--password; the password is never logged). Requires the `curl` binary.
 dcpwizard cert-fetch --vendor dolby --serial 218281828 -o screen.pem
 dcpwizard cert-fetch --vendor qube --type QXPD --serial 54 -o screen.pem
+dcpwizard cert-fetch --vendor christie --serial 218281 --user me --password '***' -o screen.pem
+dcpwizard cert-fetch --vendor barco --serial 1234567890 --user me --password '***' -o screen.pem
 
 # Package a trailer (ratings card + countdown leader + content)
 dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
@@ -540,6 +562,8 @@ dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
 # Generate DCP markers for a composition
 dcpwizard markers --frames 172800        # FFOC/LFOC list
 dcpwizard markers --frames 172800 --xml  # XML MarkerList
+# place any of the ten markers (frame number or HH:MM:SS:FF; validated <= length)
+dcpwizard markers --frames 172800 --marker FFEC=01:59:00:00 --marker LFEC=02:00:00:00 --xml
 
 # Check accessibility compliance
 dcpwizard accessibility ./my_dcp --standard cvaa   # cvaa|eaa|aoda|ofcom

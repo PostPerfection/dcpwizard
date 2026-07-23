@@ -160,6 +160,7 @@ pub fn generate_kdm(
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output: PathBuf,
     format: KdmFormat,
+    annotation: Option<String>,
     history: Option<PathBuf>,
 ) -> i32 {
     let (valid_from, valid_to) = match resolve_validity(&valid_from, &valid_to) {
@@ -172,6 +173,7 @@ pub fn generate_kdm(
     let config = postkit::certificate::KdmConfig {
         cpl_id,
         content_title,
+        annotation,
         recipient_cert_file: recipient_cert,
         signer_cert_file: signer_cert,
         signer_key_file: signer_key,
@@ -224,6 +226,7 @@ pub fn generate_kdm_batch(
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output_dir: PathBuf,
     format: KdmFormat,
+    annotation: Option<String>,
     history: Option<PathBuf>,
 ) -> i32 {
     if let Err(e) = std::fs::create_dir_all(&output_dir) {
@@ -251,6 +254,7 @@ pub fn generate_kdm_batch(
             content_keys.clone(),
             output.clone(),
             format,
+            annotation.clone(),
             history.clone(),
         );
         if code == 0 {
@@ -357,6 +361,7 @@ mod tests {
             out.path().to_path_buf(),
             KdmFormat::Smpte,
             None,
+            None,
         );
         assert_ne!(code, 0);
     }
@@ -435,6 +440,7 @@ mod tests {
             dir.path().join("out"),
             KdmFormat::Smpte,
             None,
+            None,
         );
         assert_ne!(code, 0);
     }
@@ -507,6 +513,7 @@ mod tests {
             content_keys,
             out.clone(),
             KdmFormat::Smpte,
+            None,
             Some(history.clone()),
         );
         assert_eq!(code, 0, "batch must succeed for every recipient");
@@ -567,6 +574,36 @@ mod tests {
         }
     }
 
+    // --annotation override lands as the KDM's AnnotationText (escaped).
+    #[test]
+    fn annotation_override_lands_in_kdm_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signer_cert, signer_key, chain, recipients) = batch_fixtures(dir.path(), 1);
+        let recipient = certs_in_dir(&recipients).unwrap()[0].clone();
+        let out = dir.path().join("annotated.kdm.xml");
+        let code = generate_kdm(
+            "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9".into(),
+            "Feature".into(),
+            PathBuf::from(recipient),
+            signer_cert,
+            signer_key,
+            chain,
+            "now".into(),
+            "7 days".into(),
+            Vec::new(),
+            out.clone(),
+            KdmFormat::Smpte,
+            Some("Release KDM <v2> & final".into()),
+            None,
+        );
+        assert_eq!(code, 0, "annotated KDM must generate");
+        let xml = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            xml.contains("<AnnotationText>Release KDM &lt;v2&gt; &amp; final</AnnotationText>"),
+            "the --annotation override must appear, escaped, in the KDM"
+        );
+    }
+
     // Interop KDM: digicine namespace, signed, xmlsec1-verifiable. The 134-byte
     // (vs SMPTE 138) key block is inside the RSA-encrypted CipherData and is
     // asserted in postkit's own interop_kdm_key_block_is_134_bytes test.
@@ -596,6 +633,7 @@ mod tests {
             content_keys,
             out.clone(),
             KdmFormat::Interop,
+            None,
             None,
         );
         assert_eq!(code, 0, "interop KDM generation must succeed");

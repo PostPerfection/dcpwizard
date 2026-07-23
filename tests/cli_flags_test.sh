@@ -170,8 +170,9 @@ reject "create --container-dims with --container" \
 reject "create --sign-language-video without --sign-language-lang" \
        create --title x --video "$C" --output "$C" --sign-language-video "$C"
 
-# --hdr-dci is refused at runtime: the jp2k writer cannot set the ST 2084
-# TransferCharacteristic, so a compliant DCI HDR DCP is not authored.
+# --hdr-dci authors a DCI HDR DCP (ST 2084 / P3-D65 on the picture MXF). It still
+# validates the flag combo up front: without --hdr-to-dci-lut or --hdr-already-pq
+# it fails loud because the source is not on a PQ path.
 refuse() {
   local label="$1"; local needle="$2"; shift 2
   local out
@@ -183,8 +184,6 @@ refuse() {
     FAILURES=$((FAILURES + 1))
   fi
 }
-refuse "create --hdr-dci refused" "cannot be authored" \
-       create --title x --video "$C" --output "$C" --hdr-dci --hdr-already-pq
 refuse "create --hdr-dci needs PQ path" "needs the source path to PQ" \
        create --title x --video "$C" --output "$C" --hdr-dci
 

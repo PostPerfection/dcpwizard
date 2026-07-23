@@ -552,6 +552,7 @@ pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -
                 .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
             let wrapped = if is_xml {
                 crate::versions::wrap_subtitle_xml(
+                    "subtitle",
                     sub,
                     config,
                     fps,
@@ -568,6 +569,7 @@ pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -
                     }
                 };
                 crate::versions::wrap_subtitle_cues(
+                    "subtitle",
                     &cues,
                     &sub_lang,
                     config,
@@ -621,6 +623,7 @@ pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -
             subtitle_language: (subtitle_duration > 0).then(|| sub_lang.clone()),
             stereoscopic: false,
             aux_data: None,
+            ..Default::default()
         };
         let cpl_uuid = uuid::Uuid::new_v4().to_string();
         let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
@@ -659,7 +662,7 @@ pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -
     // ── one PKL, one ASSETMAP over every asset ──
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         cleanup(&temps);
         return -1;
@@ -676,7 +679,9 @@ pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -
             packing_list: true,
         },
     );
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard, None)
+        != 0
+    {
         tracing::error!("Failed to generate ASSETMAP");
         cleanup(&temps);
         return -1;

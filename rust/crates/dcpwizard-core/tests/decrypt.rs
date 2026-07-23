@@ -156,6 +156,7 @@ fn make_kdm(
         out.to_path_buf(),
         dcpwizard_core::kdm::KdmFormat::Smpte,
         None,
+        None,
     );
     assert_eq!(code, 0, "KDM generation must succeed");
 }

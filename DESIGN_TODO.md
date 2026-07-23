@@ -2,67 +2,124 @@
 
 Open todos. Paths: CORE = rust/crates/dcpwizard-core/src, CLI = rust/crates/dcpwizard-cli/src/main.rs, PK = extern/postkit (postkit submodule; bump the pin when postkit changes).
 
+## Done 2026-07-23 (app-side batch)
+
+- Credentialed vendor cert download (dom#2705/2706): christie/gdc/barco added to
+  cert-fetch with `--user`/`--password`. Path builders (christie 12-digit zero-pad
+  + F-IMB->IMB-S2 fallback, gdc /SHA256, barco 10-char + first7-xxx dir) are
+  unit-tested; credentials go to curl via a stdin config (`-K -`), never argv or
+  logs. Anonymous dolby/qube paths unchanged. No config-file storage exists for
+  cert-fetch, so creds are CLI-only.
+- Closed-caption (CCAP) packaging: `create --ccap <file>` wraps ST 428-10/429-12
+  timed text with a MainClosedCaption CPL role (CORE/cpl.rs splice + CORE/dcp.rs
+  single-reel path + PKL/ASSETMAP). Same input formats as subtitle. The multi-reel
+  (reel.rs) / vf / versions CPL paths carry CCAP too as of batch 8b (below).
+- Markers: `markers --marker LABEL=timecode` (repeatable) places any of the ten
+  defined markers, validating the label and the offset (frame or HH:MM:SS:FF)
+  against the composition length. Default set stays FFOC/LFOC.
+- ingest `--lut`: threads a 3D LUT through postkit ingest (apply_lut/lut_path,
+  applied via ffmpeg lut3d). Was hardcoded false.
+- Trailer: `trailer` now encodes the packaged mp4 to J2K and builds a real trailer
+  DCP (ContentKind=trailer) in `<output>/dcp` via the grok encode + create_dcp path.
+- Job queue: create jobs report coarse stage progress (dcp::ProgressSink) instead
+  of 0->100; cancel now affects running jobs (per-job AtomicBool checked in the job
+  loop + between create_dcp stages, worker runs on its own thread); `serve` proxies
+  every job route to the shared daemon queue over IPC (one queue) and returns 503
+  when the daemon is down. Note: the queue's create path wraps pre-encoded J2K and
+  never runs postkit::pipeline, so progress is stage-based, not per-frame.
+- DTS:X: the mxf_wrap essence-type comment and the docs now point DTS:X at the IAB
+  (`--atmos`, ST 429-18) path. There is no separate DTS:X CLI surface to fail loud
+  on (the DtsX variant was already removed), so this is a doc/comment pointer only.
+- conform: `conform --media-dir <dir> --output <dir>` resolves every EDL/xmeml reel
+  to media, fails loud on unresolved reels, and writes a reel/asset plan
+  (conform_plan.json) + the postkit conform manifest. Per-reel encode + MXF wrap +
+  multi-reel CPL assembly into a finished DCP was completed in batch 8b (below).
+
+## Done 2026-07-23 (app-side batch 8b)
+
+- DCI HDR Addendum (dom#2374/2799): `create --hdr-dci` now authors an HDR DCP.
+  The picture MXF is wrapped through asdcplib `jp2k::open_write_hdr`
+  (CORE/mxf_wrap.rs `wrap_j2k_hdr_files`), setting TransferCharacteristic=ST 2084
+  (PQ) + ColorPrimaries=P3-D65 on the essence descriptor. `--hdr-dci` still
+  validates the flag combo (needs --hdr-to-dci-lut or --hdr-already-pq) and the
+  raised per-codestream cap up front. Not supported with 3D or reel splitting
+  (fails loud). Roundtrip test reads the descriptor back and asserts both ULs.
+- KDM `--annotation`: CLI flag -> postkit `KdmConfig.annotation` (CORE/kdm.rs,
+  CLI Kdm). None keeps the derived "<title> KDM for <recipient>" text. Test
+  asserts the override lands, escaped, in the KDM XML.
+- Colour `--target p3-d65`: routes through postkit `DcdmTarget::P3D65` alongside
+  the xyz branch (CLI `parse_dcdm_target`). Unit test covers the mapping.
+- combine.rs: dropped the local `inject_annotation` string-splice; the merged
+  PKL/ASSETMAP now carry AnnotationText via the postkit packaging fields
+  (`generate_pkl`/`generate_assetmap` gained an `annotation` arg). Output stays
+  byte-identical (combine tests pass).
+- CCAP in multi-reel / vf / versions: reel.rs, vf.rs and versions.rs now carry
+  and emit MainClosedCaption tracks wherever they handle MainSubtitle (VF gains
+  `--add-ccap`/`--replace-ccap`; versions manifest gains a `ccap` field). Tests
+  mirror the subtitle-path tests.
+- conform full assembly: `conform --media-dir --output` now drives the resolved
+  reel plan to a finished multi-reel DCP (per-reel grok encode + MXF wrap via
+  create_dcp, then assemble.rs multi-reel CPL assembly). The conform_plan.json
+  stays as an artifact. Gated e2e test builds a 2-reel DCP from a tiny EDL over
+  synthetic media and verifies it with dcpdoctor.
+
 ## DoM tracker gaps
 
 Feature requests from the DCP-o-matic Mantis tracker (dom#N =
 https://dcpomatic.com/bugs/view.php?id=N) that dcpwizard lacks. Shared DSP/parsers
 belong in postkit (see postkit DESIGN_TODO); the user-facing surface is here.
 
-- Certificate download for credentialed vendors (dom#2705, dom#2706): cert-fetch
-  covers only the credential-free public endpoints (dolby/doremi, qube). Christie
-  (`ftp://certificates.christiedigital.com`), GDC (`ftp://ftp.gdc-tech.com`) and
-  Barco (`sftp://certificates.barco.com`) have known URL patterns and reachable
-  hosts but need vendor-account credentials threaded through before their
-  endpoints can be used; they currently error telling the user to get the cert
-  from the vendor.
+- Certificate download for credentialed vendors (dom#2705, dom#2706): DONE
+  2026-07-23 (see Done section). christie/gdc/barco wired with --user/--password.
 - Distributed encoding across machines (dom#155, dom#1635, dom#2605). Job queue is
   single-machine.
-- DCI HDR Addendum DCPs (dom#2374, dom#2799): BLOCKED. `create --hdr-dci` validates
-  the flag combo and the per-codestream byte cap (floor(56,250,000/fps) bytes/frame),
-  then refuses: the asdcplib-rs jp2k writer exposes no setter for the picture
-  TransferCharacteristic=ST 2084 UL, so a compliant HDR claim cannot be written over
-  the essence. Unblock: add the UL setter upstream, then let `--hdr-dci` wrap instead
-  of exiting.
-- Closed-caption (CCAP) packaging: accessibility CCAP track, distinct from the open
-  subtitles already wired (placement/RTL/wrap/font/3D-Z + ASS/PAC/MKS/FCPXML/
-  Interop-PNG input).
-- DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
-  DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
-  the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is
-  removed so DTS:X now fails loud as unsupported. Unblock: confirm the DTS:X UL,
-  add a postkit essence type + CPL AuxData DataType, then wire a `--dtsx` flag
-  mirroring `--atmos`.
+- DCI HDR Addendum DCPs (dom#2374, dom#2799): DONE 2026-07-23 (see Done batch 8b).
+  `--hdr-dci` authors an HDR DCP with ST 2084 / P3-D65 on the picture descriptor.
+- Closed-caption (CCAP) packaging: DONE 2026-07-23 for every CPL path (single-reel,
+  multi-reel, vf, versions; see Done sections).
+- DTS:X: DONE 2026-07-23 (doc/comment pointer to the `--atmos` IAB path; see Done
+  section). No public DTS:X DataEssenceCoding UL exists (SMPTE registers have only
+  DTS private nodes; asdcplib/libdcp carry nothing). Since ST 429-18/-19 (2019),
+  DTS:X is delivered as a standard IAB track per ST 2098-2 ("DTS:X for IAB").
 
 ## KDM
 
-- AnnotationText override: postkit derives AnnotationText from content_title
-  ("<title> KDM for <recipient>"). A separate `--annotation` override needs a
-  postkit KdmConfig.annotation field (postkit frozen here), so not added. No
-  Trusted Device List / DeviceList is written.
+- AnnotationText override: DONE 2026-07-23 (`kdm --annotation`; see Done batch 8b).
+  No Trusted Device List / DeviceList is written.
 - Interop KDM (`kdm --format interop`) is legacy: no reference library generates
   Interop (libdcp only reads it) and the suite has no reference Interop KDM to diff
   against. Validate against real legacy gear before production use.
 
 ## Encode / colour / audio
 
-- Colour: P3-D65 target not added (needs a postkit change, frozen here). `colour
-  --target xyz` routes through the real DCDM transform.
-- grok's and postkit's RGB->X'Y'Z' transforms differ slightly (grok red
-  [2817,2183,870] vs postkit [2914,2258,898], different linearization); both are
-  valid X'Y'Z', harmonizing them is open.
-- Markers: only FFOC/LFOC emitted; the other eight are defined but never placed.
+- Colour `--target p3-d65`: DONE 2026-07-23 (see Done batch 8b). `colour --target
+  xyz` and `p3-d65` both route through the real DCDM transform.
+- grok/postkit RGB->X'Y'Z' harmonization: done in postkit 32838ea ("fix rec709
+  to xyz transform, align dcdm gamma"); colour.rs tests assert agreement with
+  grok's [2817,2183,870].
 
 ## HDR, ingest, conform (mostly postkit-side)
 
-- Camera raw: ARRIRAW/R3D/BRAW detected but ffmpeg can't decode them; Sony not detected.
-- ingest has no --lut flag (apply_lut hardcoded false).
-- conform parses and prints only (no reel assembly); only CMX3600 EDL and FCP7 xmeml work.
+- Camera raw: ARRIRAW/R3D/BRAW/Canon and now Sony RAW / X-OCN are all detected-but-
+  undecodable (ffmpeg can't decode them). Sony landed 2026-07-23: postkit's
+  `detect_format` reads the .mxf header partition pack + header-metadata region and
+  matches Sony's private essence ULs -> `SonyRaw`, rejected loud as "Sony RAW (X-OCN
+  family)". Caveat (postkit DESIGN_TODO has the full note): the ULs are reverse-
+  engineered from MediaInfo, NOT SMPTE-registered (bmx and ffmpeg have no Sony RAW
+  essence at all), and mark the Sony RAW family without distinguishing X-OCN ST/LT/XT
+  tiers. A match only produces a clearer detected-but-undecodable error, so the
+  family-level granularity is fine. Non-Sony .mxf still resolves to DNxHR.
+- ingest `--lut`: DONE 2026-07-23 (see Done section).
+- conform: DONE 2026-07-23 (plan + full per-reel encode/wrap/assembly; see Done
+  batch 8b). Remaining: only CMX3600 EDL and FCP7 xmeml parse (no AAF/OTIO yet).
 
 ## Automation, misc
 
-- Job queue progress jumps 0->100; cancel only affects pending jobs; `serve` uses a
-  separate in-process queue.
-- Trailer output is mp4 (no DCP/CPL); accessibility check is substring matching.
+- Job queue progress / cancel / shared `serve` queue: DONE 2026-07-23 (see Done
+  section). Remaining caveat: progress is stage-based (the queue path does not run
+  the encode pipeline); distributed encoding is still single-machine (above).
+- Trailer: DONE 2026-07-23 (see Done section). Remaining caveat: the accessibility
+  check is still substring matching.
 
 ## GUI (remaining)
 
@@ -72,11 +129,11 @@ belong in postkit (see postkit DESIGN_TODO); the user-facing surface is here.
   JobConfig and run_job (structural). Deferred. The CLI path is the way to build
   these DCPs for now.
 
-## Dedup (remaining, postkit-side)
+## Dedup
 
-- combine.rs injects the AnnotationText element after `<Id>` via a local helper
-  because the postkit AssetMap/PackingList writers have no AnnotationText field; add
-  the field to postkit and drop the injection.
+- combine.rs AnnotationText: DONE 2026-07-23 (see Done batch 8b). The local
+  string-splice is gone; the merged PKL/ASSETMAP use the postkit packaging
+  AnnotationText fields. Nothing remaining here.
 
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)
 

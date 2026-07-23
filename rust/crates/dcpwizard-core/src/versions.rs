@@ -29,6 +29,10 @@ pub struct VersionSpec {
     /// Subtitle language code; falls back to the base `--subtitle-language`.
     #[serde(default)]
     pub subtitle_language: Option<String>,
+    /// Closed-caption track for this version (SRT or supplied SMPTE XML). Same
+    /// input formats as `subtitle`; emitted under the MainClosedCaption CPL role.
+    #[serde(default)]
+    pub ccap: Option<PathBuf>,
     /// Additional sound MXF for this version; replaces the base sound in its CPL.
     #[serde(default)]
     pub audio: Option<PathBuf>,
@@ -64,6 +68,13 @@ fn validate_versions(versions: &[VersionSpec]) -> Result<(), String> {
         if let Some(p) = v.subtitle.as_ref().filter(|p| !p.exists()) {
             return Err(format!(
                 "subtitle not found for version '{}': {}",
+                v.title,
+                p.display()
+            ));
+        }
+        if let Some(p) = v.ccap.as_ref().filter(|p| !p.exists()) {
+            return Err(format!(
+                "closed caption not found for version '{}': {}",
                 v.title,
                 p.display()
             ));
@@ -403,6 +414,36 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
             _ => None,
         };
 
+        // closed caption source: same rules as the subtitle (XML single-reel only).
+        let ccap_is_xml = version
+            .ccap
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
+        if ccap_is_xml && ranges.len() > 1 {
+            tracing::error!(
+                "supplied SMPTE closed-caption XML for version '{}' cannot be split across reels; supply SRT",
+                version.title
+            );
+            cleanup(&temps);
+            return -1;
+        }
+        let ccap_cues = match version.ccap.as_ref() {
+            Some(path) if !ccap_is_xml => match crate::subtitle::parse_srt_frames(path, fps) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::error!(
+                        "closed-caption parse failed for version '{}': {e}",
+                        version.title
+                    );
+                    cleanup(&temps);
+                    return -1;
+                }
+            },
+            _ => None,
+        };
+
         let mut cpl_reels = Vec::with_capacity(ranges.len());
         let mut bundle_keys: Vec<ContentKey> = Vec::new();
         for (i, (range, ess)) in ranges.iter().zip(&essences).enumerate() {
@@ -438,6 +479,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
             let mut subtitle_duration = 0u64;
             if sub_is_xml && i == 0 {
                 match wrap_subtitle_xml(
+                    "subtitle",
                     version.subtitle.as_ref().unwrap(),
                     config,
                     fps,
@@ -457,6 +499,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
                 let rebased = crate::reel::rebase_cues_for_reel(cues, *range);
                 if !rebased.is_empty() {
                     match wrap_subtitle_cues(
+                        "subtitle",
                         &rebased,
                         &sub_lang,
                         config,
@@ -468,6 +511,52 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
                         Ok((id, dur)) => {
                             subtitle_id = Some(id);
                             subtitle_duration = dur;
+                        }
+                        Err(()) => {
+                            cleanup(&temps);
+                            return -1;
+                        }
+                    }
+                }
+            }
+
+            // closed caption for this reel (MainClosedCaption role)
+            let mut ccap_id = None;
+            let mut ccap_duration = 0u64;
+            if ccap_is_xml && i == 0 {
+                match wrap_subtitle_xml(
+                    "ccap",
+                    version.ccap.as_ref().unwrap(),
+                    config,
+                    fps,
+                    &mut pkl_entries,
+                    &mut am_entries,
+                ) {
+                    Ok((id, dur)) => {
+                        ccap_id = Some(id);
+                        ccap_duration = dur;
+                    }
+                    Err(()) => {
+                        cleanup(&temps);
+                        return -1;
+                    }
+                }
+            } else if let Some(cues) = ccap_cues.as_ref() {
+                let rebased = crate::reel::rebase_cues_for_reel(cues, *range);
+                if !rebased.is_empty() {
+                    match wrap_subtitle_cues(
+                        "ccap",
+                        &rebased,
+                        &sub_lang,
+                        config,
+                        fps,
+                        &mut pkl_entries,
+                        &mut am_entries,
+                        &mut temps,
+                    ) {
+                        Ok((id, dur)) => {
+                            ccap_id = Some(id);
+                            ccap_duration = dur;
                         }
                         Err(()) => {
                             cleanup(&temps);
@@ -506,6 +595,12 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
                 subtitle_duration,
                 subtitle_entry_point: 0,
                 subtitle_language: subtitle_duration.gt(&0).then(|| sub_lang.clone()),
+                ccap_id,
+                ccap_edit_rate_num: fps,
+                ccap_edit_rate_den: 1,
+                ccap_duration,
+                ccap_entry_point: 0,
+                ccap_language: ccap_duration.gt(&0).then(|| sub_lang.clone()),
                 stereoscopic: false,
                 aux_data: aux_data.clone(),
             });
@@ -572,7 +667,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
     // ── one PKL, one ASSETMAP over every asset ──
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         cleanup(&temps);
         return -1;
@@ -589,7 +684,9 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
             packing_list: true,
         },
     );
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard, None)
+        != 0
+    {
         tracing::error!("Failed to generate ASSETMAP");
         cleanup(&temps);
         return -1;
@@ -682,9 +779,11 @@ pub(crate) fn wrap_sound_reel(
     })
 }
 
-/// Wrap already-rebased SRT cues into a per-reel timed-text MXF.
+/// Wrap already-rebased SRT cues into a per-reel timed-text MXF. `prefix` names
+/// the files ("subtitle" or "ccap"); the essence is identical either way.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn wrap_subtitle_cues(
+    prefix: &str,
     cues: &[crate::subtitle::SubCue],
     lang: &str,
     config: &DcpConfig,
@@ -694,12 +793,12 @@ pub(crate) fn wrap_subtitle_cues(
     temps: &mut Vec<PathBuf>,
 ) -> Result<(String, u64), ()> {
     let uuid = uuid::Uuid::new_v4().to_string();
-    let dcst = config.output_dir.join(format!("subtitle_{uuid}.xml"));
+    let dcst = config.output_dir.join(format!("{prefix}_{uuid}.xml"));
     if let Err(e) = crate::subtitle::write_dcst_frames(cues, lang, fps, &dcst) {
-        tracing::error!("subtitle write failed: {e}");
+        tracing::error!("{prefix} write failed: {e}");
         return Err(());
     }
-    let name = format!("subtitle_{uuid}.mxf");
+    let name = format!("{prefix}_{uuid}.mxf");
     let path = config.output_dir.join(&name);
     let wrapped = crate::mxf_wrap::wrap_mxf_result(&crate::mxf_wrap::MxfWrapConfig {
         input_path: dcst.clone(),
@@ -711,7 +810,7 @@ pub(crate) fn wrap_subtitle_cues(
     });
     temps.push(dcst);
     let Some(track) = wrapped else {
-        tracing::error!("Failed to wrap subtitle MXF");
+        tracing::error!("Failed to wrap {prefix} MXF");
         return Err(());
     };
     register_asset(pkl, am, &uuid, &name, &path);
@@ -719,7 +818,9 @@ pub(crate) fn wrap_subtitle_cues(
 }
 
 /// Wrap a supplied SMPTE timed-text XML into an MXF unchanged (single reel).
+/// `prefix` names the file ("subtitle" or "ccap").
 pub(crate) fn wrap_subtitle_xml(
+    prefix: &str,
     xml_path: &Path,
     config: &DcpConfig,
     fps: u32,
@@ -727,7 +828,7 @@ pub(crate) fn wrap_subtitle_xml(
     am: &mut Vec<crate::assetmap::AssetMapEntry>,
 ) -> Result<(String, u64), ()> {
     let uuid = uuid::Uuid::new_v4().to_string();
-    let name = format!("subtitle_{uuid}.mxf");
+    let name = format!("{prefix}_{uuid}.mxf");
     let path = config.output_dir.join(&name);
     let wrapped = crate::mxf_wrap::wrap_mxf_result(&crate::mxf_wrap::MxfWrapConfig {
         input_path: xml_path.to_path_buf(),
@@ -738,7 +839,7 @@ pub(crate) fn wrap_subtitle_xml(
         mca_config: None,
     });
     let Some(track) = wrapped else {
-        tracing::error!("Failed to wrap subtitle MXF");
+        tracing::error!("Failed to wrap {prefix} MXF");
         return Err(());
     };
     register_asset(pkl, am, &uuid, &name, &path);
@@ -822,6 +923,7 @@ mod tests {
                 title: "A".into(),
                 subtitle: None,
                 subtitle_language: None,
+                ccap: None,
                 audio: None,
                 kind: None,
             },
@@ -829,6 +931,7 @@ mod tests {
                 title: "A".into(),
                 subtitle: None,
                 subtitle_language: None,
+                ccap: None,
                 audio: None,
                 kind: None,
             },

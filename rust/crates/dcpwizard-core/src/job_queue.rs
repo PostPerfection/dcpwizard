@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 
 /// Job type.
@@ -69,6 +71,9 @@ pub enum IpcResponse {
 pub struct JobQueue {
     jobs: Arc<Mutex<HashMap<String, Job>>>,
     running: Arc<Mutex<bool>>,
+    /// cooperative-cancel flag per running job; the job loop and the running
+    /// operation both watch it so a cancel stops in-flight work between stages.
+    cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Default for JobQueue {
@@ -82,6 +87,7 @@ impl JobQueue {
         Self {
             jobs: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(Mutex::new(false)),
+            cancel_flags: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -109,7 +115,8 @@ impl JobQueue {
         id
     }
 
-    /// Cancel a job by ID.
+    /// Cancel a job by ID. A pending job never starts; a running job is asked to
+    /// stop via its cancel flag and the job loop finalises it as Cancelled.
     pub fn cancel(&self, id: &str) -> bool {
         if let Ok(mut jobs) = self.jobs.lock()
             && let Some(job) = jobs.get_mut(id)
@@ -117,6 +124,12 @@ impl JobQueue {
         {
             job.state = JobState::Cancelled;
             job.updated_at = current_epoch_secs();
+            // signal a running operation to bail between stages
+            if let Ok(flags) = self.cancel_flags.lock()
+                && let Some(flag) = flags.get(id)
+            {
+                flag.store(true, Ordering::Relaxed);
+            }
             tracing::info!("Cancelled job {id}");
             return true;
         }
@@ -191,9 +204,43 @@ pub fn start_job_queue(queue: &JobQueue) {
                 queue_clone.update_job(&job.id, JobState::Running, 0, "Processing...");
                 tracing::info!("Processing job {} ({:?})", job.id, job.job_type);
 
-                let result = process_job(&job);
+                // run the job on its own thread so the loop can watch the cancel
+                // flag and finalise the job even if the operation is still running
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
+                    flags.insert(job.id.clone(), cancel.clone());
+                }
+                let control = JobControl {
+                    queue: queue_clone.clone(),
+                    job_id: job.id.clone(),
+                    cancel: cancel.clone(),
+                };
+                let (tx, rx) = mpsc::channel();
+                let worker_job = job.clone();
+                std::thread::spawn(move || {
+                    let code = process_job(&worker_job, &control);
+                    let _ = tx.send(code);
+                });
 
-                if result == 0 {
+                let result_code = loop {
+                    match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                        Ok(code) => break Some(code),
+                        Err(RecvTimeoutError::Timeout) => {
+                            if cancel.load(Ordering::Relaxed) {
+                                break None; // cancelled; detach the worker
+                            }
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break None,
+                    }
+                };
+
+                if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
+                    flags.remove(&job.id);
+                }
+
+                if cancel.load(Ordering::Relaxed) {
+                    queue_clone.update_job(&job.id, JobState::Cancelled, 0, "Cancelled");
+                } else if result_code == Some(0) {
                     queue_clone.update_job(
                         &job.id,
                         JobState::Completed,
@@ -219,10 +266,28 @@ pub fn stop_job_queue(queue: &JobQueue) {
     tracing::info!("Job queue stop requested");
 }
 
-fn process_job(job: &Job) -> i32 {
+/// Progress + cancel bridge handed to a running operation; forwards stage
+/// updates to the job's queue entry and exposes the cooperative cancel flag.
+struct JobControl {
+    queue: JobQueue,
+    job_id: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl crate::dcp::ProgressSink for JobControl {
+    fn stage(&self, percent: u32, message: &str) {
+        self.queue
+            .update_job(&self.job_id, JobState::Running, percent, message);
+    }
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+fn process_job(job: &Job, control: &JobControl) -> i32 {
     match job.job_type {
         JobType::CreateDcp => match serde_json::from_str::<crate::dcp::DcpConfig>(&job.params) {
-            Ok(config) => crate::dcp::create_dcp(&config),
+            Ok(config) => crate::dcp::create_dcp_with_progress(&config, control),
             Err(e) => {
                 tracing::error!("Invalid CreateDcp params: {e}");
                 -1

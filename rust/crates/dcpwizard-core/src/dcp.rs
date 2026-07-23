@@ -37,6 +37,14 @@ pub struct DcpConfig {
     /// for a supplied SMPTE DCST XML (wrapped unchanged).
     #[serde(default)]
     pub subtitle_opts: crate::subtitle::SubtitleOptions,
+    /// Closed-caption (ST 429-12) input, wrapped as timed text with a
+    /// MainClosedCaption CPL role. Distinct from the open `subtitle_path`; same
+    /// input formats (SRT/styled -> DCST, or a supplied SMPTE DCST passthrough).
+    #[serde(default)]
+    pub ccap_path: Option<PathBuf>,
+    /// Closed-caption language code (default "en").
+    #[serde(default)]
+    pub ccap_language: String,
     /// Split the DCP into reels of at most this many minutes each. Zero (default)
     /// keeps the single-reel path.
     pub reel_length_minutes: u32,
@@ -75,6 +83,10 @@ pub struct DcpConfig {
     /// config's soundfield layout (0 = SLVS-only, no leading soundfield).
     #[serde(default)]
     pub sign_language_main_channels: Option<u32>,
+    /// DCI HDR Addendum: wrap the picture MXF with TransferCharacteristic=ST 2084
+    /// (PQ) and P3-D65 colour primaries. Source must already be PQ/DCI.
+    #[serde(default)]
+    pub hdr_dci: bool,
 }
 
 /// Validate custom container dimensions against the resolution bounds.
@@ -121,6 +133,103 @@ fn sorted_j2k_frames(dir: &std::path::Path) -> Vec<PathBuf> {
     frames
 }
 
+/// Wrap a timed-text input into an MXF: SRT/styled formats are converted to
+/// DCST (cues shifted by `head_frames`, fonts/PNGs embedded), a supplied SMPTE
+/// DCST is wrapped unchanged. Returns the track duration, or None on failure
+/// (already logged). Used for the closed-caption track; the open subtitle path
+/// stays inline in create_dcp.
+fn wrap_timed_text_track(
+    input: &std::path::Path,
+    out_mxf: &std::path::Path,
+    lang: &str,
+    fps: u32,
+    head_frames: u64,
+    opts: &crate::subtitle::SubtitleOptions,
+) -> Option<u64> {
+    // temp DCST and staged resources land next to the output MXF
+    let work_dir = out_mxf
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let kind = match crate::subtitle::detect_subtitle_kind(input) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!("{e}");
+            return None;
+        }
+    };
+    if kind == crate::subtitle::SubtitleInputKind::SmpteDcstPassthrough {
+        let wrap_config = crate::mxf_wrap::MxfWrapConfig {
+            input_path: input.to_path_buf(),
+            output_mxf: out_mxf.to_path_buf(),
+            mxf_type: crate::mxf_wrap::MxfType::TimedText,
+            frame_rate: fps,
+            encryption: None,
+            mca_config: None,
+        };
+        match crate::mxf_wrap::wrap_mxf_result(&wrap_config) {
+            Some(t) => Some(t.duration),
+            None => {
+                tracing::error!("Failed to wrap timed-text MXF");
+                None
+            }
+        }
+    } else {
+        let dcst_path = out_mxf.with_extension("dcst.xml");
+        let prepared = match crate::subtitle::prepare_subtitle_track(
+            input,
+            head_frames,
+            lang,
+            fps,
+            opts,
+            &dcst_path,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("closed-caption conversion failed: {e}");
+                return None;
+            }
+        };
+        let wrapped = crate::mxf_wrap::wrap_timed_text_resources(
+            &prepared.dcst_path,
+            &prepared.resources,
+            out_mxf,
+            fps,
+        );
+        let _ = std::fs::remove_file(&dcst_path);
+        for (p, _) in &prepared.resources {
+            if p.starts_with(work_dir) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        match wrapped {
+            Some(t) => Some(t.duration),
+            None => {
+                tracing::error!("Failed to wrap timed-text MXF");
+                None
+            }
+        }
+    }
+}
+
+/// Coarse stage progress + cooperative cancellation for a running create. The
+/// job queue implements this so a create reports real per-stage progress and can
+/// be cancelled between stages; the plain `create_dcp` path uses a no-op sink.
+/// create_dcp wraps a pre-encoded J2K dir, so progress is stage-based (wrap /
+/// package), not per-frame: the per-frame encode pipeline (postkit::pipeline)
+/// runs earlier, outside this path.
+pub trait ProgressSink {
+    fn stage(&self, percent: u32, message: &str);
+    fn cancelled(&self) -> bool;
+}
+
+struct NoProgress;
+impl ProgressSink for NoProgress {
+    fn stage(&self, _percent: u32, _message: &str) {}
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
 /// Create a complete DCP from the given configuration.
 ///
 /// This orchestrates the full DCP creation pipeline:
@@ -128,6 +237,16 @@ fn sorted_j2k_frames(dir: &std::path::Path) -> Vec<PathBuf> {
 /// 2. Generate CPL, PKL, ASSETMAP
 /// 3. Optionally encrypt
 pub fn create_dcp(config: &DcpConfig) -> i32 {
+    create_dcp_with_progress(config, &NoProgress)
+}
+
+/// As [`create_dcp`], reporting coarse stage progress and honouring cooperative
+/// cancellation through `progress`. Returns -2 when cancelled between stages.
+pub fn create_dcp_with_progress(config: &DcpConfig, progress: &dyn ProgressSink) -> i32 {
+    if progress.cancelled() {
+        return -2;
+    }
+    progress.stage(5, "starting");
     tracing::info!(
         "Creating DCP: {} ({})",
         config.title,
@@ -289,17 +408,29 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             tracing::error!("stereoscopic 3D and Atmos are not supported with reel splitting");
             return -1;
         }
+        if config.hdr_dci {
+            tracing::error!("--hdr-dci is not supported with reel splitting");
+            return -1;
+        }
         let mut reel_config = config.clone();
         if let Some(path) = prepared_audio.as_ref() {
             reel_config.audio_path = Some(path.clone());
         }
+        progress.stage(10, "assembling reels");
         let code = crate::reel::create_multi_reel_dcp(&reel_config, fps);
         if let Some(path) = prepared_audio {
             let _ = std::fs::remove_file(path);
         }
+        if code == 0 {
+            progress.stage(100, "done");
+        }
         return code;
     }
 
+    if progress.cancelled() {
+        return -2;
+    }
+    progress.stage(15, "wrapping picture");
     // ── Wrap picture MXF ──────────────────────────────────────────────
     let picture_uuid = uuid::Uuid::new_v4().to_string();
     let picture_mxf_name = format!("picture_{picture_uuid}.mxf");
@@ -359,14 +490,18 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             files.extend(left_frames.iter().cloned());
             files.extend(std::iter::repeat_n(black.clone(), tail_frames as usize));
             picture_duration = files.len() as u64;
-            let wrapped = crate::mxf_wrap::wrap_mxf_files(
-                files,
-                &picture_mxf_path,
-                crate::mxf_wrap::MxfType::J2kPicture,
-                fps,
-                encryption,
-                None,
-            );
+            let wrapped = if config.hdr_dci {
+                crate::mxf_wrap::wrap_j2k_hdr_files(files, &picture_mxf_path, fps, encryption)
+            } else {
+                crate::mxf_wrap::wrap_mxf_files(
+                    files,
+                    &picture_mxf_path,
+                    crate::mxf_wrap::MxfType::J2kPicture,
+                    fps,
+                    encryption,
+                    None,
+                )
+            };
             let _ = std::fs::remove_file(&black);
             if wrapped.is_none() {
                 tracing::error!("Failed to wrap padded picture MXF");
@@ -376,6 +511,10 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 "Picture MXF: {picture_mxf_name} ({picture_duration} frames: {head_frames} head + {content_count} content + {tail_frames} tail)"
             );
         } else if stereoscopic {
+            if config.hdr_dci {
+                tracing::error!("--hdr-dci is not supported for stereoscopic (3D) DCPs");
+                return -1;
+            }
             picture_duration = content_count;
             // left eye is j2k_dir, right eye its own dir; both must match frame counts
             let right_dir = config.right_eye_dir.as_ref().unwrap();
@@ -404,6 +543,20 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             tracing::info!(
                 "Stereoscopic picture MXF: {picture_mxf_name} ({picture_duration} frame pairs)"
             );
+        } else if config.hdr_dci {
+            picture_duration = content_count;
+            if crate::mxf_wrap::wrap_j2k_hdr_files(
+                sorted_j2k_frames(j2k_dir),
+                &picture_mxf_path,
+                fps,
+                encryption,
+            )
+            .is_none()
+            {
+                tracing::error!("Failed to wrap DCI HDR picture MXF");
+                return -1;
+            }
+            tracing::info!("Picture MXF: {picture_mxf_name} ({picture_duration} frames, DCI HDR)");
         } else {
             picture_duration = content_count;
             let wrap_config = crate::mxf_wrap::MxfWrapConfig {
@@ -422,6 +575,10 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         }
     }
 
+    if progress.cancelled() {
+        return -2;
+    }
+    progress.stage(55, "wrapping sound");
     // ── Wrap sound MXF ────────────────────────────────────────────────
     let sound_uuid = uuid::Uuid::new_v4().to_string();
     let sound_mxf_name = format!("sound_{sound_uuid}.mxf");
@@ -619,6 +776,37 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         tracing::info!("Subtitle MXF: {subtitle_mxf_name}");
     }
 
+    // ── Wrap closed-caption (ST 429-12 timed text) MXF ────────────────
+    let ccap_uuid = uuid::Uuid::new_v4().to_string();
+    let ccap_mxf_name = format!("ccap_{ccap_uuid}.mxf");
+    let ccap_mxf_path = config.output_dir.join(&ccap_mxf_name);
+    let mut has_ccap = false;
+    let mut ccap_duration = 0u64;
+    let ccap_lang = if config.ccap_language.is_empty() {
+        "en"
+    } else {
+        &config.ccap_language
+    };
+    if let Some(ccap_path) = config.ccap_path.as_ref()
+        && ccap_path.exists()
+    {
+        match wrap_timed_text_track(
+            ccap_path,
+            &ccap_mxf_path,
+            ccap_lang,
+            fps,
+            head_frames,
+            &crate::subtitle::SubtitleOptions::default(),
+        ) {
+            Some(d) => {
+                ccap_duration = d;
+                has_ccap = true;
+                tracing::info!("Closed-caption MXF: {ccap_mxf_name}");
+            }
+            None => return -1,
+        }
+    }
+
     // ── Wrap Atmos / DCData auxiliary MXF (ST 429-18) ─────────────────
     let atmos_uuid = uuid::Uuid::new_v4().to_string();
     let atmos_mxf_name = format!("atmos_{atmos_uuid}.mxf");
@@ -666,6 +854,10 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         tracing::info!("Atmos MXF: {atmos_mxf_name} ({} frames)", track.duration);
     }
 
+    if progress.cancelled() {
+        return -2;
+    }
+    progress.stage(85, "writing CPL/PKL/ASSETMAP");
     // ── Generate CPL ──────────────────────────────────────────────────
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
@@ -708,6 +900,20 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         subtitle_entry_point: 0,
         subtitle_language: if has_subtitle {
             Some(subtitle_lang.to_string())
+        } else {
+            None
+        },
+        ccap_id: if has_ccap {
+            Some(ccap_uuid.clone())
+        } else {
+            None
+        },
+        ccap_edit_rate_num: fps,
+        ccap_edit_rate_den: 1,
+        ccap_duration,
+        ccap_entry_point: 0,
+        ccap_language: if has_ccap {
+            Some(ccap_lang.to_string())
         } else {
             None
         },
@@ -779,6 +985,19 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             size: sub_size,
         });
     }
+    if has_ccap {
+        let cc_hash = crate::hash::hash_file(&ccap_mxf_path).unwrap_or_default();
+        let cc_size = std::fs::metadata(&ccap_mxf_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        pkl_entries.push(crate::pkl::PklEntry {
+            id: ccap_uuid.clone(),
+            asset_type: "application/mxf".into(),
+            file: ccap_mxf_path.clone(),
+            hash: cc_hash,
+            size: cc_size,
+        });
+    }
     if aux_data.is_some() {
         let aux_hash = crate::hash::hash_file(&atmos_mxf_path).unwrap_or_default();
         let aux_size = std::fs::metadata(&atmos_mxf_path)
@@ -793,7 +1012,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         });
     }
 
-    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
         return -1;
     }
@@ -838,6 +1057,13 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             packing_list: false,
         });
     }
+    if has_ccap {
+        am_entries.push(crate::assetmap::AssetMapEntry {
+            id: ccap_uuid,
+            path: ccap_mxf_name,
+            packing_list: false,
+        });
+    }
     if aux_data.is_some() {
         am_entries.push(crate::assetmap::AssetMapEntry {
             id: atmos_uuid,
@@ -846,7 +1072,9 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         });
     }
 
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard, None)
+        != 0
+    {
         tracing::error!("Failed to generate ASSETMAP");
         return -1;
     }
@@ -892,12 +1120,28 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     if let Some(path) = prepared_audio {
         let _ = std::fs::remove_file(path);
     }
+    progress.stage(100, "done");
     0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct CancelledSink;
+    impl ProgressSink for CancelledSink {
+        fn stage(&self, _percent: u32, _message: &str) {}
+        fn cancelled(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn create_bails_when_cancelled() {
+        // an already-cancelled sink must stop before touching inputs
+        let config = DcpConfig::default();
+        assert_eq!(create_dcp_with_progress(&config, &CancelledSink), -2);
+    }
 
     #[test]
     fn container_dims_validation() {

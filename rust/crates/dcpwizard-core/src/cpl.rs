@@ -55,6 +55,20 @@ pub struct CplReel {
     pub subtitle_duration: u64,
     pub subtitle_entry_point: u64,
     pub subtitle_language: Option<String>,
+    /// Bare UUID of the closed-caption (ST 429-12) timed-text track, when present.
+    /// Distinct from the open subtitle: emitted as MainClosedCaption.
+    #[serde(default)]
+    pub ccap_id: Option<String>,
+    #[serde(default)]
+    pub ccap_edit_rate_num: u32,
+    #[serde(default)]
+    pub ccap_edit_rate_den: u32,
+    #[serde(default)]
+    pub ccap_duration: u64,
+    #[serde(default)]
+    pub ccap_entry_point: u64,
+    #[serde(default)]
+    pub ccap_language: Option<String>,
     /// Picture is a stereoscopic (ST 429-10) essence: emit MainStereoscopicPicture
     /// with FrameRate doubled (two frames per edit unit) instead of MainPicture.
     pub stereoscopic: bool,
@@ -135,10 +149,9 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
     // element for stereoscopic reels. Reel order is preserved.
     let mut xml = cpl.to_xml();
     let needs_splice = metadata_block.is_some()
-        || config
-            .reels
-            .iter()
-            .any(|r| r.subtitle_id.is_some() || r.aux_data.is_some() || r.stereoscopic);
+        || config.reels.iter().any(|r| {
+            r.subtitle_id.is_some() || r.ccap_id.is_some() || r.aux_data.is_some() || r.stereoscopic
+        });
     if needs_splice {
         xml = splice_reel_extras(
             &xml,
@@ -187,6 +200,9 @@ fn splice_reel_extras(
         out.push_str(&segment);
         if let Some(ref sid) = reel.subtitle_id {
             out.push_str(&main_subtitle_block(reel, sid));
+        }
+        if let Some(ref cid) = reel.ccap_id {
+            out.push_str(&main_closed_caption_block(reel, cid));
         }
         if let Some(ref aux) = reel.aux_data {
             out.push_str(&aux_data_block(aux));
@@ -475,6 +491,35 @@ fn main_subtitle_block(reel: &CplReel, subtitle_id: &str) -> String {
     b
 }
 
+/// ST 429-12 closed-caption asset. Same timed-text structure as MainSubtitle but
+/// a distinct accessibility role, so validators and playback treat it as CCAP.
+fn main_closed_caption_block(reel: &CplReel, ccap_id: &str) -> String {
+    let mut b = String::new();
+    b.push_str("        <MainClosedCaption>\n");
+    b.push_str(&format!("          <Id>urn:uuid:{ccap_id}</Id>\n"));
+    b.push_str(&format!(
+        "          <EditRate>{} {}</EditRate>\n",
+        reel.ccap_edit_rate_num, reel.ccap_edit_rate_den
+    ));
+    b.push_str(&format!(
+        "          <IntrinsicDuration>{}</IntrinsicDuration>\n",
+        reel.ccap_duration
+    ));
+    b.push_str(&format!(
+        "          <EntryPoint>{}</EntryPoint>\n",
+        reel.ccap_entry_point
+    ));
+    b.push_str(&format!(
+        "          <Duration>{}</Duration>\n",
+        reel.ccap_duration
+    ));
+    if let Some(ref lang) = reel.ccap_language {
+        b.push_str(&format!("          <Language>{lang}</Language>\n"));
+    }
+    b.push_str("        </MainClosedCaption>\n");
+    b
+}
+
 fn time_now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -557,6 +602,36 @@ mod tests {
         let meta_pos = xml.find("<meta:CompositionMetadataAsset").unwrap();
         let close_pos = xml.find("</AssetList>").unwrap();
         assert!(meta_pos < close_pos);
+    }
+
+    #[test]
+    fn cpl_emits_closed_caption_asset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CPL.xml");
+        let mut reel = sound_reel();
+        reel.ccap_id = Some("ccap-uuid-1".into());
+        reel.ccap_edit_rate_num = 24;
+        reel.ccap_edit_rate_den = 1;
+        reel.ccap_duration = 240;
+        reel.ccap_language = Some("en".into());
+        let config = CplConfig {
+            title: "CCAP Test".into(),
+            content_kind: "feature".into(),
+            reels: vec![reel],
+            standard: crate::Standard::Smpte,
+            ..Default::default()
+        };
+        assert_eq!(generate_cpl(&config, "cpl1", &path), 0);
+        let xml = std::fs::read_to_string(&path).unwrap();
+        assert!(xml.contains("<MainClosedCaption>"));
+        assert!(xml.contains("<Id>urn:uuid:ccap-uuid-1</Id>"));
+        assert!(xml.contains("<Language>en</Language>"));
+        // closed caption is distinct from the open subtitle role
+        assert!(!xml.contains("<MainSubtitle>"));
+        // and it sits inside a reel AssetList
+        let cc_pos = xml.find("<MainClosedCaption>").unwrap();
+        let close_pos = xml.find("</AssetList>").unwrap();
+        assert!(cc_pos < close_pos);
     }
 
     #[test]

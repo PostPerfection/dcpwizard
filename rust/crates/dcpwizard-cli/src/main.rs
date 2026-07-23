@@ -58,6 +58,13 @@ struct CreateSubtitleOpts {
     /// Embed the whole font instead of subsetting it to the used glyphs
     #[arg(long)]
     subtitle_no_subset: bool,
+    /// Closed-caption (ST 429-12) input, wrapped with a MainClosedCaption role
+    /// (accessibility track, distinct from --subtitle). SRT/styled or SMPTE DCST.
+    #[arg(long, conflicts_with = "versions")]
+    ccap: Option<String>,
+    /// Closed-caption language code (e.g. "en", "fr")
+    #[arg(long, default_value = "en")]
+    ccap_language: String,
 }
 
 #[derive(Parser)]
@@ -257,6 +264,12 @@ enum Commands {
         /// Add a subtitle to a reel that has none: --add-subtitle REEL=PATH
         #[arg(long = "add-subtitle", value_name = "REEL=PATH")]
         add_subtitle: Vec<String>,
+        /// Replace a reel's closed caption: --replace-ccap REEL=PATH (SRT or SMPTE XML)
+        #[arg(long = "replace-ccap", value_name = "REEL=PATH")]
+        replace_ccap: Vec<String>,
+        /// Add a closed caption to a reel that has none: --add-ccap REEL=PATH
+        #[arg(long = "add-ccap", value_name = "REEL=PATH")]
+        add_ccap: Vec<String>,
         /// Language code for wrapped subtitle tracks
         #[arg(long, default_value = "en")]
         subtitle_language: String,
@@ -511,6 +524,9 @@ enum Commands {
         /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
         #[arg(long, default_value = "smpte")]
         format: String,
+        /// AnnotationText override (default: "<title> KDM for <recipient>")
+        #[arg(long)]
+        annotation: Option<String>,
     },
     /// Re-wrap a DKDM to a new recipient
     KdmRewrap {
@@ -787,7 +803,7 @@ enum Commands {
         #[arg(short, long)]
         source: String,
 
-        /// Target colour space
+        /// Target colour space (rec709, p3, rec2020, xyz for DCDM, p3-d65 mastering)
         #[arg(short, long)]
         target: String,
 
@@ -796,13 +812,22 @@ enum Commands {
         lut: Option<String>,
     },
 
-    /// Import EDL/AAF/XML timeline for conforming
+    /// Conform an EDL/xmeml timeline: parse, or (with --media-dir) resolve every
+    /// reel to media and write a reel/asset plan + conform manifest
     Conform {
         /// Input timeline file (EDL, AAF, FCP XML, OTIO)
         #[arg(short, long)]
         input: String,
 
-        /// Output as JSON
+        /// Media directory: resolve each reel to a file here and assemble a plan
+        #[arg(long)]
+        media_dir: Option<String>,
+
+        /// Output directory for the reel plan + conform manifest (with --media-dir)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Output the parsed timeline as JSON (parse-only mode)
         #[arg(long)]
         json: bool,
     },
@@ -824,6 +849,10 @@ enum Commands {
         /// Colour space (ACES, Rec.709, P3, LogC)
         #[arg(short, long, default_value = "ACES")]
         colour_space: String,
+
+        /// 3D LUT (.cube) applied during transcode via ffmpeg lut3d
+        #[arg(long)]
+        lut: Option<String>,
     },
 
     /// Extract a frame from video/MXF as image
@@ -1013,7 +1042,8 @@ enum Commands {
     /// Download a projector/server certificate by vendor + serial (dom#2705)
     #[command(name = "cert-fetch")]
     CertFetch {
-        /// Vendor: dolby/doremi or qube (others must be obtained from the vendor)
+        /// Vendor: dolby/doremi, qube (anonymous); christie, gdc, barco
+        /// (need --user/--password). Others must be obtained from the vendor.
         #[arg(long)]
         vendor: String,
         /// Server serial number
@@ -1022,6 +1052,12 @@ enum Commands {
         /// Device type (qube only, e.g. QXPD)
         #[arg(long = "type")]
         device_type: Option<String>,
+        /// Vendor account user (christie/gdc/barco)
+        #[arg(long)]
+        user: Option<String>,
+        /// Vendor account password (christie/gdc/barco); never logged
+        #[arg(long)]
+        password: Option<String>,
         /// Output PEM file for the downloaded certificate
         #[arg(short, long)]
         output: String,
@@ -1055,11 +1091,20 @@ enum Commands {
         fps: u32,
     },
 
-    /// Generate DCP markers (FFOC/LFOC) for a composition
+    /// Generate DCP markers for a composition
     Markers {
         /// Composition length in frames
         #[arg(short, long)]
         frames: u64,
+        /// Place a marker: LABEL=timecode (repeatable). LABEL is one of FFOC,
+        /// LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC; timecode is a
+        /// frame number or HH:MM:SS:FF. Given markers replace the FFOC/LFOC
+        /// default set.
+        #[arg(long = "marker")]
+        markers: Vec<String>,
+        /// Frame rate for HH:MM:SS:FF timecodes (default 24)
+        #[arg(long, default_value = "24")]
+        fps: u32,
         /// Emit an XML MarkerList instead of a plain list
         #[arg(long)]
         xml: bool,
@@ -1387,6 +1432,16 @@ fn parse_colour_space(s: &str) -> postkit::colour::ColourSpace {
     }
 }
 
+/// Map a `colour --target` string to a dcdm-module target (X'Y'Z' DCDM or P3-D65
+/// mastering). Returns None for ffmpeg colorspace targets (rec709/p3/rec2020).
+fn parse_dcdm_target(s: &str) -> Option<postkit::dcdm::DcdmTarget> {
+    match s.to_lowercase().as_str() {
+        "xyz" | "ciexyz" => Some(postkit::dcdm::DcdmTarget::Xyz),
+        "p3-d65" | "p3d65" => Some(postkit::dcdm::DcdmTarget::P3D65),
+        _ => None,
+    }
+}
+
 // ── create-time helpers (container dims, reel splits, input range) ───────────
 
 /// Resolve container dimensions from a preset name or a custom WxH.
@@ -1565,16 +1620,15 @@ fn prepare_create_audio(
     Ok(Some(path))
 }
 
-/// DCI HDR Addendum handling: validate the flag combo and the raised codestream
-/// cap, then fail loud. The picture TransferCharacteristic=ST 2084 UL cannot be
-/// written by the current jp2k writer, so a compliant DCI HDR DCP is refused
-/// rather than emitting a CPL HDR claim over essence that lacks the UL.
-fn reject_hdr_dci(
+/// Validate the DCI HDR Addendum flag combo and the raised per-codestream cap.
+/// The picture MXF is wrapped with TransferCharacteristic=ST 2084 / P3-D65
+/// primaries in create_dcp; this only rejects an unusable request up front.
+fn validate_hdr_dci(
     hdr_to_dci_lut: &Option<String>,
     hdr_already_pq: bool,
     frame_rate: Option<u32>,
     video_bit_rate: Option<u32>,
-) -> ! {
+) {
     use dcpwizard_core::hdr;
     if hdr_to_dci_lut.is_none() && !hdr_already_pq {
         tracing::error!(
@@ -1593,11 +1647,6 @@ fn reject_hdr_dci(
         );
         std::process::exit(1);
     }
-    tracing::error!(
-        "--hdr-dci cannot be authored: the DCI HDR Addendum requires TransferCharacteristic=ST 2084 (UL 06.0e.2b.34.04.01.01.0d.04.01.01.01.01.0a.00.00) in the picture descriptor, but the asdcplib-rs jp2k writer exposes no setter for it. Emitting the CPL HDR claim over essence that lacks the UL would mislabel the DCP, so it is refused. The honest, spec-backed constraint is enforced: per-codestream cap floor(56,250,000/{rate}) = {cap} bytes/frame ({} Mbit/s).",
-        hdr::HDR_MAX_MBPS
-    );
-    std::process::exit(1);
 }
 
 // ── KDM distribution helpers ────────────────────────────────────────────────
@@ -1831,6 +1880,7 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
             content_keys,
             output_root,
             format,
+            None,
             history,
         );
     }
@@ -1863,6 +1913,7 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
             content_keys.clone(),
             out_dir.clone(),
             format,
+            None,
             history.clone(),
         );
         if code != 0 {
@@ -2094,10 +2145,167 @@ fn run_kdm_template(templates_file: Option<String>, action: TemplateAction) -> i
     }
 }
 
+/// Resolve a parsed timeline against a media dir into a reel plan, write the
+/// plan + conform manifest, and print the assembled reels. Per-reel encode/wrap
+/// into a DCP is the remaining step; the plan is the executable hand-off.
+fn run_conform_assembly(
+    input: &str,
+    timeline: &postkit::conform::Timeline,
+    media_dir: &str,
+    output: Option<&str>,
+) -> i32 {
+    let media = PathBuf::from(media_dir);
+    let out = PathBuf::from(output.unwrap_or("conform_out"));
+    let plan = match dcpwizard_core::conform::build_reel_plan(timeline, &media) {
+        Ok(p) => p,
+        Err(missing) => {
+            for m in &missing {
+                tracing::error!("unresolved reel (no matching media in {media_dir}): {m}");
+            }
+            return 1;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(&out) {
+        tracing::error!("cannot create output dir: {e}");
+        return 1;
+    }
+    // postkit conform writes the assembled timeline manifest
+    let opts = postkit::conform::ConformOptions {
+        timeline_file: PathBuf::from(input),
+        media_dir: media,
+        output_dir: out.clone(),
+        ..Default::default()
+    };
+    if postkit::conform::conform(&opts) != 0 {
+        tracing::error!("conform assembly failed");
+        return 1;
+    }
+    // keep the reel plan as an artifact next to the manifest
+    let plan_path = out.join("conform_plan.json");
+    let plan_json = serde_json::to_string_pretty(&plan).unwrap_or_default();
+    if let Err(e) = std::fs::write(&plan_path, plan_json) {
+        tracing::error!("cannot write reel plan: {e}");
+        return 1;
+    }
+    println!(
+        "Conforming {} reel(s) from \"{}\" -> {}",
+        plan.reels.len(),
+        plan.title,
+        out.display()
+    );
+    for r in &plan.reels {
+        println!(
+            "  {} [{}] {} ({}..{})",
+            r.reel_name,
+            r.track_type,
+            r.media_path.display(),
+            r.source_in,
+            r.source_out
+        );
+    }
+
+    // drive the plan to a finished multi-reel DCP (per-reel encode + wrap + assembly)
+    dcpwizard_core::conform::assemble_dcp(&plan, &out)
+}
+
+/// Encode the packaged trailer mp4 to J2K and build a DCP (ContentKind=trailer)
+/// in `<output_dir>/dcp`, reusing the same grok encode + create_dcp path as
+/// `create --video`. The mp4 stays in place as the intermediate.
+fn trailer_to_dcp(mp4: &Path, output_dir: &Path, fps_arg: u32) -> i32 {
+    use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    if let Err(e) = dcpwizard_core::probe::ensure_video_decodable(mp4) {
+        tracing::error!("{e}");
+        return 1;
+    }
+    let info = dcpwizard_core::probe::probe_video(mp4);
+    let (width, height, total_frames) = info
+        .as_ref()
+        .map(|v| (v.width, v.height, v.total_frames))
+        .unwrap_or((1920, 1080, 0));
+    let fps = if fps_arg > 0 { fps_arg } else { 24 };
+
+    let j2k_dir = output_dir.join("j2k");
+    if let Err(e) = std::fs::create_dir_all(&j2k_dir) {
+        tracing::error!("Failed to create j2k dir: {e}");
+        return 1;
+    }
+    let params = CompressParams {
+        compression_ratio: 10.0,
+        frame_rate: fps as u16,
+        apply_xyz_transform: true,
+        ..CompressParams::default()
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let result = grok_encoder::encode_video_pipeline(
+        mp4,
+        &j2k_dir,
+        &params,
+        total_frames as u64,
+        width,
+        height,
+        &cancel,
+        |_p: EncodeProgress| {},
+    );
+    if !result.success {
+        tracing::error!("Trailer encode failed: {}", result.error);
+        return 1;
+    }
+
+    // demux audio if the packaged trailer carries any (card/leader are silent)
+    let audio_path = {
+        let wav = output_dir.join("audio_demux.wav");
+        let demux = std::process::Command::new("ffmpeg")
+            .args(["-y", "-i"])
+            .arg(mp4)
+            .args(["-vn", "-acodec", "pcm_s24le", "-ar", "48000"])
+            .arg(&wav)
+            .output();
+        match demux {
+            Ok(o) if o.status.success() => Some(wav),
+            _ => None,
+        }
+    };
+
+    let dcp_dir = output_dir.join("dcp");
+    let config = dcpwizard_core::dcp::DcpConfig {
+        title: mp4
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Trailer")
+            .to_string(),
+        standard: dcpwizard_core::Standard::Smpte,
+        resolution: dcpwizard_core::Resolution::TwoK,
+        content_type: dcpwizard_core::ContentType::Trailer,
+        frame_rate_num: fps,
+        frame_rate_den: 1,
+        // declare the CPL container at the encoded essence size
+        container_width: width,
+        container_height: height,
+        output_dir: dcp_dir.clone(),
+        j2k_dir: Some(j2k_dir),
+        audio_path,
+        subtitle_language: "en".to_string(),
+        ..Default::default()
+    };
+    let code = dcpwizard_core::dcp::create_dcp(&config);
+    if code == 0 {
+        tracing::info!("Trailer DCP created: {}", dcp_dir.display());
+        0
+    } else {
+        tracing::error!("Trailer DCP creation failed");
+        1
+    }
+}
+
 fn run_cert_fetch(
     vendor: String,
     serial: String,
     device_type: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
     output: String,
 ) -> i32 {
     let v = match dcpwizard_core::cert_fetch::parse_vendor(&vendor) {
@@ -2107,10 +2315,21 @@ fn run_cert_fetch(
             return 1;
         }
     };
+    let creds = match (user, password) {
+        (Some(user), Some(password)) => {
+            Some(dcpwizard_core::cert_fetch::Credentials { user, password })
+        }
+        (None, None) => None,
+        _ => {
+            tracing::error!("pass both --user and --password, or neither");
+            return 1;
+        }
+    };
     match dcpwizard_core::cert_fetch::fetch(
         v,
         &serial,
         device_type.as_deref(),
+        creds.as_ref(),
         &PathBuf::from(&output),
     ) {
         Ok(summary) => {
@@ -2305,10 +2524,10 @@ fn run() {
             let video_bit_rate =
                 video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps));
 
-            // DCI HDR Addendum: validate + report the raised codestream cap, then
-            // fail loud (the jp2k writer cannot set the ST 2084 TransferCharacteristic).
+            // DCI HDR Addendum: validate the flag combo + raised codestream cap.
+            // The ST 2084 / P3-D65 ULs are written onto the picture MXF in create_dcp.
             if hdr_dci {
-                reject_hdr_dci(&hdr_to_dci_lut, hdr_already_pq, frame_rate, video_bit_rate);
+                validate_hdr_dci(&hdr_to_dci_lut, hdr_already_pq, frame_rate, video_bit_rate);
             }
 
             // Detect if input is a video file (not a J2K directory)
@@ -2343,6 +2562,8 @@ fn run() {
                 subtitle_wrap,
                 subtitle_font,
                 subtitle_no_subset,
+                ccap,
+                ccap_language,
             } = *subtitle_qol;
             let subtitle_rtl_mode = match subtitle_rtl.as_str() {
                 "on" => dcpwizard_core::subtitle::RtlMode::On,
@@ -2767,6 +2988,8 @@ fn run() {
                     subtitle_path: subtitle.clone().map(PathBuf::from),
                     subtitle_language: subtitle_language.clone(),
                     subtitle_opts: subtitle_opts.clone(),
+                    ccap_path: ccap.clone().map(PathBuf::from),
+                    ccap_language: ccap_language.clone(),
                     reel_length_minutes: reel_length.unwrap_or(0),
                     right_eye_dir: right_eye_dir.clone(),
                     atmos_path: atmos.clone().map(PathBuf::from),
@@ -2779,6 +3002,7 @@ fn run() {
                     reel_split_frames,
                     sign_language_lang: sign_language_lang.clone(),
                     sign_language_main_channels: sl_main_channels,
+                    hdr_dci,
                 };
                 let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
@@ -2905,6 +3129,8 @@ fn run() {
                     subtitle_path: subtitle.map(PathBuf::from),
                     subtitle_language,
                     subtitle_opts,
+                    ccap_path: ccap.map(PathBuf::from),
+                    ccap_language,
                     reel_length_minutes: reel_length.unwrap_or(0),
                     stereo_3d: right_eye.is_some(),
                     right_eye_dir: right_eye.map(PathBuf::from),
@@ -2917,6 +3143,7 @@ fn run() {
                     reel_split_frames,
                     sign_language_lang,
                     sign_language_main_channels: sl_main_channels,
+                    hdr_dci,
                 };
                 let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
@@ -3261,6 +3488,7 @@ fn run() {
             smtp_config,
             keys,
             format,
+            annotation,
         } => {
             let format = match dcpwizard_core::kdm::parse_format(&format) {
                 Ok(f) => f,
@@ -3303,6 +3531,7 @@ fn run() {
                 content_keys,
                 out_path.clone(),
                 format,
+                annotation,
                 Some(history_path(history_file)),
             );
             if code == 0 {
@@ -3767,6 +3996,7 @@ fn run() {
                 fps_num: 24,
                 fps_den: 1,
                 colour_space: format!("{cs:?}"),
+                target: postkit::dcdm::DcdmTarget::Xyz,
                 lut_path: lut.map(std::path::PathBuf::from).unwrap_or_default(),
             };
             let result = postkit::dcdm::create_dcdm(&opts);
@@ -3786,10 +4016,10 @@ fn run() {
             target,
             lut,
         } => {
-            // X'Y'Z' (DCDM) is not an ffmpeg colorspace-filter target; route it
-            // through the real Rec.709/P3/Rec.2020 -> DCI X'Y'Z' transform in the
-            // dcdm module (fails loud on an unsupported source there).
-            if parse_colour_space(&target) == postkit::colour::ColourSpace::Xyz {
+            // X'Y'Z' (DCDM) and P3-D65 are dcdm-module transforms, not ffmpeg
+            // colorspace-filter targets; route them through the real
+            // Rec.709/P3/Rec.2020 transform (fails loud on an unsupported source).
+            if let Some(dcdm_target) = parse_dcdm_target(&target) {
                 let opts = postkit::dcdm::DcdmOptions {
                     input_dir: std::path::PathBuf::from(&input),
                     output_dir: std::path::PathBuf::from(&output),
@@ -3799,12 +4029,13 @@ fn run() {
                     fps_num: 24,
                     fps_den: 1,
                     colour_space: source.clone(),
+                    target: dcdm_target,
                     lut_path: lut.map(std::path::PathBuf::from).unwrap_or_default(),
                 };
                 let result = postkit::dcdm::create_dcdm(&opts);
                 if result.success {
                     tracing::info!(
-                        "Colour converted {source} -> xyz (DCDM): {} frames written",
+                        "Colour converted {source} -> {target}: {} frames written",
                         result.frames_written
                     );
                     0
@@ -3833,43 +4064,56 @@ fn run() {
             }
         }
 
-        Commands::Conform { input, json } => {
-            match postkit::conform::parse_timeline(std::path::Path::new(&input)) {
-                Ok(timeline) => {
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
-                    } else {
-                        println!("Timeline: {}", timeline.title);
-                        println!("Format: {:?}", timeline.format);
-                        println!("Frame rate: {}", timeline.frame_rate);
-                        println!("Events: {}", timeline.events.len());
-                        for (i, evt) in timeline.events.iter().enumerate() {
-                            println!("  [{i}] {} -> {}", evt.source_in, evt.source_out);
-                        }
+        Commands::Conform {
+            input,
+            media_dir,
+            output,
+            json,
+        } => match postkit::conform::parse_timeline(std::path::Path::new(&input)) {
+            Err(e) => {
+                tracing::error!("Timeline parse failed: {e}");
+                1
+            }
+            Ok(timeline) => {
+                if let Some(media_dir) = media_dir {
+                    run_conform_assembly(&input, &timeline, &media_dir, output.as_deref())
+                } else if json {
+                    println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
+                    0
+                } else {
+                    println!("Timeline: {}", timeline.title);
+                    println!("Format: {:?}", timeline.format);
+                    println!("Frame rate: {}", timeline.frame_rate);
+                    println!("Events: {}", timeline.events.len());
+                    for (i, evt) in timeline.events.iter().enumerate() {
+                        println!("  [{i}] {} -> {}", evt.source_in, evt.source_out);
                     }
                     0
                 }
-                Err(e) => {
-                    tracing::error!("Timeline parse failed: {e}");
-                    1
-                }
             }
-        }
+        },
 
         Commands::Ingest {
             source,
             output,
             format,
             colour_space,
+            lut,
         } => {
+            if let Some(ref l) = lut
+                && !std::path::Path::new(l).is_file()
+            {
+                tracing::error!("LUT file not found: {l}");
+                std::process::exit(1);
+            }
             let opts = postkit::ingest::IngestOptions {
                 source: std::path::PathBuf::from(&source),
                 output_dir: std::path::PathBuf::from(&output),
                 output_format: format,
                 colour_space,
                 debayer_quality: 3,
-                apply_lut: false,
-                lut_path: std::path::PathBuf::new(),
+                apply_lut: lut.is_some(),
+                lut_path: lut.map(std::path::PathBuf::from).unwrap_or_default(),
                 gpu_device: -1,
             };
             postkit::ingest::ingest(&opts)
@@ -4155,8 +4399,10 @@ fn run() {
             vendor,
             serial,
             device_type,
+            user,
+            password,
             output,
-        } => run_cert_fetch(vendor, serial, device_type, output),
+        } => run_cert_fetch(vendor, serial, device_type, user, password, output),
 
         Commands::Trailer {
             content,
@@ -4190,27 +4436,48 @@ fn run() {
                 fps_den: 1,
             };
             let result = postkit::trailer::package_trailer(&opts);
-            if result.success {
+            if !result.success {
+                tracing::error!("Trailer packaging failed: {}", result.error);
+                1
+            } else {
                 tracing::info!(
                     "Trailer packaged: {} ({})",
                     result.output_dir.display(),
                     result.output_file.display()
                 );
-                0
-            } else {
-                tracing::error!("Trailer packaging failed: {}", result.error);
-                1
+                // route the packaged mp4 through the encode + create path so the
+                // deliverable is a real DCP, not just an mp4.
+                trailer_to_dcp(&result.output_file, &result.output_dir, fps)
             }
         }
 
-        Commands::Markers { frames, xml } => {
-            let markers = dcpwizard_core::markers::default_markers(frames);
+        Commands::Markers {
+            frames,
+            markers,
+            fps,
+            xml,
+        } => {
+            let entries = if markers.is_empty() {
+                dcpwizard_core::markers::default_markers(frames)
+            } else {
+                let mut out = Vec::with_capacity(markers.len());
+                for arg in &markers {
+                    match dcpwizard_core::markers::parse_marker_arg(arg, fps, frames) {
+                        Ok(e) => out.push(e),
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                out
+            };
             if xml {
-                println!("{}", dcpwizard_core::markers::markers_to_xml(&markers));
-            } else if markers.is_empty() {
+                println!("{}", dcpwizard_core::markers::markers_to_xml(&entries));
+            } else if entries.is_empty() {
                 println!("No markers (composition length is 0 frames)");
             } else {
-                for m in &markers {
+                for m in &entries {
                     println!("{}\t{}", m.marker.label(), m.frame);
                 }
             }
@@ -4491,15 +4758,18 @@ fn run() {
             replace_sound,
             replace_subtitle,
             add_subtitle,
+            replace_ccap,
+            add_ccap,
             subtitle_language,
         } => {
-            // Parse REEL=PATH into a per-reel map. picture/sound/subtitle share
-            // reels; --add-subtitle and --replace-subtitle both set the subtitle.
+            // Parse REEL=PATH into a per-reel map. picture/sound/subtitle/ccap share
+            // reels; --add-* and --replace-* both set the track.
             #[derive(Clone, Copy)]
             enum Track {
                 Picture,
                 Sound,
                 Subtitle,
+                Ccap,
             }
             let mut reels: std::collections::BTreeMap<u32, dcpwizard_core::vf::ReplacementReel> =
                 std::collections::BTreeMap::new();
@@ -4509,6 +4779,8 @@ fn run() {
                 (&replace_sound, Track::Sound),
                 (&replace_subtitle, Track::Subtitle),
                 (&add_subtitle, Track::Subtitle),
+                (&replace_ccap, Track::Ccap),
+                (&add_ccap, Track::Ccap),
             ] {
                 for spec in specs {
                     let Some((reel_str, path)) = spec.split_once('=') else {
@@ -4533,6 +4805,7 @@ fn run() {
                         Track::Picture => entry.picture = p,
                         Track::Sound => entry.sound = p,
                         Track::Subtitle => entry.subtitle = p,
+                        Track::Ccap => entry.ccap = p,
                     }
                 }
             }
@@ -4670,4 +4943,28 @@ fn run() {
 
     postkit::grok_encoder::deinitialize();
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colour_target_selects_dcdm_target() {
+        assert_eq!(
+            parse_dcdm_target("xyz"),
+            Some(postkit::dcdm::DcdmTarget::Xyz)
+        );
+        assert_eq!(
+            parse_dcdm_target("p3-d65"),
+            Some(postkit::dcdm::DcdmTarget::P3D65)
+        );
+        assert_eq!(
+            parse_dcdm_target("p3d65"),
+            Some(postkit::dcdm::DcdmTarget::P3D65)
+        );
+        // ffmpeg colorspace targets are not dcdm-module targets
+        assert_eq!(parse_dcdm_target("rec709"), None);
+        assert_eq!(parse_dcdm_target("p3"), None);
+    }
 }

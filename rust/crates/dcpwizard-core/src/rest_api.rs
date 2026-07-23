@@ -3,9 +3,14 @@
 //! Kept separate from [`postkit::rest_api::RestServer`]: postkit's route handler
 //! signature is `Fn(method, path)` and never passes the request body, so it
 //! cannot express the body-consuming `POST /create` and `POST /verify` routes
-//! this server needs. The GET routes (/health, /jobs, /metrics) also depend on
-//! dcpwizard's own job queue.
+//! this server needs.
+//!
+//! This server owns no queue of its own: every job route proxies to the shared
+//! job daemon over IPC (the same queue the `batch` CLI drives), so `serve` and
+//! the CLI operate on one queue. If the daemon is not running, job routes return
+//! 503 telling the user to start it.
 
+use crate::job_queue::{IpcRequest, IpcResponse, Job, JobType, send_ipc_request};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
@@ -26,8 +31,11 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
         }
     };
 
-    let queue = crate::job_queue::JobQueue::new();
-    crate::job_queue::start_job_queue(&queue);
+    if !crate::job_queue::is_daemon_running() {
+        tracing::warn!(
+            "job daemon is not running; job routes will 503. Start it with: dcpwizard daemon"
+        );
+    }
 
     tracing::info!("REST API listening on {bind_addr}");
 
@@ -39,8 +47,6 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
                 continue;
             }
         };
-
-        let queue = queue.clone();
 
         std::thread::spawn(move || {
             let mut buf = vec![0u8; 8192];
@@ -79,17 +85,25 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
                     let response = serde_json::json!({"daemon_running": running}).to_string();
                     let _ = send_json(&mut stream, 200, &response);
                 }
-                ("GET", "/jobs") => {
-                    let jobs = queue.list();
-                    let response = serde_json::to_string(&jobs).unwrap_or_else(|_| "[]".into());
-                    let _ = send_json(&mut stream, 200, &response);
-                }
-                ("POST", "/create") => match serde_json::from_str::<crate::dcp::DcpConfig>(&body) {
-                    Ok(_config) => {
-                        let job_id = queue.submit(crate::job_queue::JobType::CreateDcp, &body);
-                        let response = serde_json::json!({"job_id": job_id}).to_string();
-                        let _ = send_json(&mut stream, 202, &response);
+                ("GET", "/jobs") => match daemon_jobs() {
+                    Ok(jobs) => {
+                        let response = serde_json::to_string(&jobs).unwrap_or_else(|_| "[]".into());
+                        let _ = send_json(&mut stream, 200, &response);
                     }
+                    Err(e) => {
+                        let _ = send_json(&mut stream, 503, &daemon_error(&e));
+                    }
+                },
+                ("POST", "/create") => match serde_json::from_str::<crate::dcp::DcpConfig>(&body) {
+                    Ok(_config) => match submit_to_daemon(JobType::CreateDcp, &body) {
+                        Ok(job_id) => {
+                            let response = serde_json::json!({"job_id": job_id}).to_string();
+                            let _ = send_json(&mut stream, 202, &response);
+                        }
+                        Err(e) => {
+                            let _ = send_json(&mut stream, 503, &daemon_error(&e));
+                        }
+                    },
                     Err(e) => {
                         let response = serde_json::json!({"error": format!("Invalid config: {e}")})
                             .to_string();
@@ -103,15 +117,26 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
                             serde_json::json!({"error": "Missing DCP path in body"}).to_string();
                         let _ = send_json(&mut stream, 400, &response);
                     } else {
-                        let job_id = queue.submit(crate::job_queue::JobType::VerifyDcp, path);
-                        let response = serde_json::json!({"job_id": job_id}).to_string();
-                        let _ = send_json(&mut stream, 202, &response);
+                        match submit_to_daemon(JobType::VerifyDcp, path) {
+                            Ok(job_id) => {
+                                let response = serde_json::json!({"job_id": job_id}).to_string();
+                                let _ = send_json(&mut stream, 202, &response);
+                            }
+                            Err(e) => {
+                                let _ = send_json(&mut stream, 503, &daemon_error(&e));
+                            }
+                        }
                     }
                 }
-                ("GET", "/metrics") => {
-                    let metrics = build_prometheus_metrics(&queue);
-                    let _ = send_plain(&mut stream, 200, &metrics);
-                }
+                ("GET", "/metrics") => match daemon_jobs() {
+                    Ok(jobs) => {
+                        let metrics = build_prometheus_metrics(&jobs);
+                        let _ = send_plain(&mut stream, 200, &metrics);
+                    }
+                    Err(e) => {
+                        let _ = send_json(&mut stream, 503, &daemon_error(&e));
+                    }
+                },
                 _ => {
                     let _ = send_response(&mut stream, 404, "Not Found");
                 }
@@ -120,6 +145,31 @@ pub fn start_rest_api(bind_addr: &str) -> i32 {
     }
 
     0
+}
+
+/// Ask the daemon for the current job list over IPC.
+fn daemon_jobs() -> Result<Vec<Job>, String> {
+    match send_ipc_request(&IpcRequest::List)? {
+        IpcResponse::Jobs(jobs) => Ok(jobs),
+        IpcResponse::Error(e) => Err(e),
+        _ => Err("unexpected daemon response".into()),
+    }
+}
+
+/// Submit a job to the daemon over IPC, returning the new job id.
+fn submit_to_daemon(job_type: JobType, params: &str) -> Result<String, String> {
+    match send_ipc_request(&IpcRequest::Submit {
+        job_type,
+        params: params.to_string(),
+    })? {
+        IpcResponse::Submitted { id } => Ok(id),
+        IpcResponse::Error(e) => Err(e),
+        _ => Err("unexpected daemon response".into()),
+    }
+}
+
+fn daemon_error(e: &str) -> String {
+    serde_json::json!({"error": format!("job daemon unavailable: {e}")}).to_string()
 }
 
 fn send_response(
@@ -132,6 +182,7 @@ fn send_response(
         202 => "Accepted",
         400 => "Bad Request",
         404 => "Not Found",
+        503 => "Service Unavailable",
         _ => "Error",
     };
 
@@ -149,6 +200,7 @@ fn send_json(stream: &mut std::net::TcpStream, status: u16, json: &str) -> std::
         202 => "Accepted",
         400 => "Bad Request",
         404 => "Not Found",
+        503 => "Service Unavailable",
         _ => "Error",
     };
 
@@ -173,12 +225,11 @@ fn send_plain(stream: &mut std::net::TcpStream, status: u16, body: &str) -> std:
     stream.flush()
 }
 
-/// Build Prometheus-compatible metrics text from the job queue state.
-fn build_prometheus_metrics(queue: &crate::job_queue::JobQueue) -> String {
+/// Build Prometheus-compatible metrics text from a job list.
+fn build_prometheus_metrics(jobs: &[Job]) -> String {
     use crate::job_queue::JobState;
     use std::fmt::Write;
 
-    let jobs = queue.list();
     let total = jobs.len();
     let pending = jobs.iter().filter(|j| j.state == JobState::Pending).count();
     let running = jobs.iter().filter(|j| j.state == JobState::Running).count();

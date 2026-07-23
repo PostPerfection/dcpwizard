@@ -225,12 +225,10 @@ pub fn combine(config: &CombineConfig) -> i32 {
             })
             .collect();
         let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
-        if crate::pkl::generate_pkl(&entries, &pkl_uuid, standard, &pkl_path) != 0 {
+        if crate::pkl::generate_pkl(&entries, &pkl_uuid, standard, Some(&annotation), &pkl_path)
+            != 0
+        {
             tracing::error!("failed to write merged PKL");
-            return -1;
-        }
-        if let Err(e) = inject_annotation(&pkl_path, &annotation) {
-            tracing::error!("{e}");
             return -1;
         }
         pkl_entries.push((pkl_uuid, file_name(&pkl_path)));
@@ -263,16 +261,14 @@ pub fn combine(config: &CombineConfig) -> i32 {
         });
     }
 
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard) != 0 {
+    if crate::assetmap::generate_assetmap(
+        &am_entries,
+        &config.output_dir,
+        standard,
+        Some(&annotation),
+    ) != 0
+    {
         tracing::error!("failed to write merged ASSETMAP");
-        return -1;
-    }
-    let am_name = match standard {
-        crate::Standard::Smpte => "ASSETMAP.xml",
-        crate::Standard::Interop => "ASSETMAP",
-    };
-    if let Err(e) = inject_annotation(&config.output_dir.join(am_name), &annotation) {
-        tracing::error!("{e}");
         return -1;
     }
 
@@ -322,27 +318,6 @@ fn unique_root_name(filename: &str, id: &str, used: &mut HashSet<String>) -> Str
         n += 1;
     }
     candidate
-}
-
-/// Insert an `<AnnotationText>` right after the document `<Id>` line. Both the
-/// PKL (ST 429-8) and ASSETMAP (ST 429-9) schemas place AnnotationText there.
-fn inject_annotation(path: &Path, text: &str) -> Result<(), String> {
-    let xml = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let marker = "</Id>\n";
-    let Some(pos) = xml.find(marker) else {
-        return Err(format!("no <Id> in {}", path.display()));
-    };
-    let at = pos + marker.len();
-    let indent = "  ";
-    let line = format!(
-        "{indent}<AnnotationText>{}</AnnotationText>\n",
-        postkit::packaging::escape_xml(text)
-    );
-    let mut out = String::with_capacity(xml.len() + line.len());
-    out.push_str(&xml[..at]);
-    out.push_str(&line);
-    out.push_str(&xml[at..]);
-    std::fs::write(path, out).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// Parse one input DCP: its standard, its ASSETMAP assets (with hashes/types
