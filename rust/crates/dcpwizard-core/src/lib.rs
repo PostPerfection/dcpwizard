@@ -1,6 +1,7 @@
 pub mod accessibility;
 pub mod assemble;
 pub mod assetmap;
+pub mod audio_route;
 pub mod burnin;
 pub mod cert_fetch;
 pub mod certificate;
@@ -20,6 +21,7 @@ pub mod edit;
 pub mod edl_import;
 pub mod email;
 pub mod encode;
+pub mod encode_qol;
 pub mod encrypt;
 pub mod export;
 pub mod flm;

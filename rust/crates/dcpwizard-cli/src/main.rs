@@ -1,5 +1,34 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
+
+/// W5 create-time audio + encode QoL options, boxed into the Create variant.
+#[derive(Args)]
+struct CreateAudioQol {
+    /// Normalize audio to a loudness target before wrapping (dom#1382):
+    /// leqm=<db> (ISO 21727 Leq(m)) or lufs=<value> (EBU R128 integrated).
+    #[arg(long)]
+    loudness_target: Option<String>,
+    /// True-peak ceiling in dBTP for --loudness-target (default -1.0). The
+    /// gain is refused loud if it would breach this.
+    #[arg(long)]
+    true_peak_ceiling: Option<f64>,
+    /// Upmix stereo audio to 5.1 before wrapping (dom#921/#1080): variant
+    /// a (band-split) or b (passthrough + delayed surrounds).
+    #[arg(long, value_parser = ["a", "b"])]
+    upmix: Option<String>,
+    /// Wait until this wall-clock time before encoding (dom#2359): HH:MM,
+    /// an RFC 3339 timestamp, or a +offset (+30m, +2h).
+    #[arg(long)]
+    start_at: Option<String>,
+    /// Resume an interrupted encode, reusing J2K frames already on disk
+    /// (dom#344). Requires the same source and settings as the first run.
+    #[arg(long)]
+    resume: bool,
+    /// Power the machine off after a successful encode (dom#1394). Fails
+    /// loud up front if no shutdown command is available.
+    #[arg(long)]
+    shutdown_when_done: bool,
+}
 
 #[derive(Parser)]
 #[command(
@@ -142,6 +171,9 @@ enum Commands {
         /// source range metadata (video input only).
         #[arg(long, value_parser = ["full", "legal"])]
         input_range: Option<String>,
+        // boxed so the Create variant stays small (clippy large_enum_variant).
+        #[command(flatten)]
+        audio_qol: Box<CreateAudioQol>,
     },
     /// Rebuild ASSETMAP and PKL to cover every asset file present (metadata-only
     /// repackaging; no re-wrap or re-encode). For re-ingesting exported OV/VF
@@ -514,6 +546,36 @@ enum Commands {
     Loudness {
         /// Audio file
         audio_file: String,
+    },
+    /// Equal-power crossfade join of two WAVs (dom#374)
+    Crossfade {
+        /// First (leading) WAV
+        #[arg(long)]
+        a: String,
+        /// Second (trailing) WAV
+        #[arg(long)]
+        b: String,
+        /// Output WAV
+        #[arg(short, long)]
+        output: String,
+        /// Overlap length in seconds
+        #[arg(long, default_value = "1.0")]
+        overlap: f64,
+    },
+    /// Decode a mid-side channel pair to L/R in a WAV (dom#3020)
+    MidSideDecode {
+        /// Input WAV
+        #[arg(short, long)]
+        input: String,
+        /// Output WAV
+        #[arg(short, long)]
+        output: String,
+        /// Mid channel index (0-based); becomes left
+        #[arg(long, default_value = "0")]
+        mid: usize,
+        /// Side channel index (0-based); becomes right
+        #[arg(long, default_value = "1")]
+        side: usize,
     },
     /// Generate QC report
     Report {
@@ -1383,6 +1445,62 @@ fn build_sign_language_audio(
     Ok((combined, main_channels))
 }
 
+/// Create-time audio processing (W5): filename channel routing when `audio` is a
+/// directory (dom#2134), then stereo->5.1 upmix (dom#921/#1080), then loudness
+/// normalization (dom#1382). Intermediates go under `work_dir` (a scratch dir).
+/// Runs before sign-language packing and any pull-up.
+fn prepare_create_audio(
+    audio: Option<PathBuf>,
+    upmix: Option<&str>,
+    loudness_target: Option<&str>,
+    true_peak_ceiling: Option<f64>,
+    work_dir: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let Some(mut path) = audio else {
+        return Ok(None);
+    };
+
+    if path.is_dir() {
+        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+        let routed = work_dir.join("routed.wav");
+        path = dcpwizard_core::audio_route::route_directory(&path, &routed)?;
+        tracing::info!("Routed channel WAVs from the input directory by filename");
+    }
+
+    if let Some(v) = upmix {
+        let variant = match v {
+            "a" | "A" => postkit::upmix::Upmixer::A,
+            "b" | "B" => postkit::upmix::Upmixer::B,
+            other => return Err(format!("unknown upmix variant '{other}' (use a or b)")),
+        };
+        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+        let out = work_dir.join("upmix.wav");
+        postkit::upmix::upmix_wav(variant, &path, &out).map_err(|e| e.to_string())?;
+        tracing::info!("Upmixed stereo to 5.1 (variant {v})");
+        path = out;
+    }
+
+    if let Some(spec) = loudness_target {
+        let target = dcpwizard_core::loudness::parse_loudness_target(spec)?;
+        let ceiling =
+            true_peak_ceiling.unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP);
+        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+        let out = work_dir.join("loudness.wav");
+        let plan = dcpwizard_core::loudness::adjust_loudness(&path, &out, target, ceiling)
+            .map_err(|e| e.to_string())?;
+        tracing::info!(
+            "Loudness adjusted {:.1} -> {:.1} dB (gain {:+.2} dB, peak {:.2} dBTP)",
+            plan.measured_db,
+            plan.target_db,
+            plan.gain_db,
+            plan.resulting_true_peak_dbtp,
+        );
+        path = out;
+    }
+
+    Ok(Some(path))
+}
+
 /// DCI HDR Addendum handling: validate the flag combo and the raised codestream
 /// cap, then fail loud. The picture TransferCharacteristic=ST 2084 UL cannot be
 /// written by the current jp2k writer, so a compliant DCI HDR DCP is refused
@@ -2027,7 +2145,40 @@ fn run() {
             split_at,
             split_chapters,
             input_range,
+            audio_qol,
         } => {
+            let CreateAudioQol {
+                loudness_target,
+                true_peak_ceiling,
+                upmix,
+                start_at,
+                resume,
+                shutdown_when_done,
+            } = *audio_qol;
+            // fail loud on shutdown up front, before the long encode, so the
+            // user is not left with a finished DCP and no power-off.
+            if shutdown_when_done
+                && let Err(e) = dcpwizard_core::encode_qol::resolve_shutdown_command()
+            {
+                tracing::error!("{e}");
+                std::process::exit(1);
+            }
+            // scheduled start: block until the wall-clock time before any work.
+            if let Some(spec) = start_at.as_deref() {
+                match dcpwizard_core::encode_qol::parse_start_at(
+                    spec,
+                    dcpwizard_core::encode_qol::now_local(),
+                ) {
+                    Ok(target) => {
+                        tracing::info!("Scheduled start: waiting until {target}");
+                        dcpwizard_core::encode_qol::wait_until(target);
+                    }
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
             let std_val = if standard == "interop" {
@@ -2118,7 +2269,7 @@ fn run() {
                     })
                     .unwrap_or(false);
 
-            if is_video_file {
+            let code = if is_video_file {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
                 use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
                 use std::sync::Arc;
@@ -2279,7 +2430,27 @@ fn run() {
                     cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 });
 
-                let result = grok_encoder::encode_video_pipeline(
+                // persist encode identity so an interrupted run can --resume the
+                // J2K frames on disk (dom#344). --resume verifies the params match
+                // before reusing them.
+                let encode_state = dcpwizard_core::encode_qol::EncodeState {
+                    source: video_path.to_string_lossy().to_string(),
+                    total_frames: total_frames as u64,
+                    fps,
+                    width,
+                    height,
+                    bitrate_mbps: video_bit_rate.unwrap_or(0),
+                };
+                if resume && let Err(e) = encode_state.check_resumable(&output_dir) {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+                if let Err(e) = encode_state.save(&output_dir) {
+                    tracing::warn!("could not save resume state: {e}");
+                }
+
+                let encode_start = std::time::Instant::now();
+                let result = grok_encoder::encode_video_pipeline_resumable(
                     &encode_video_path,
                     &j2k_dir,
                     &params,
@@ -2287,15 +2458,31 @@ fn run() {
                     width,
                     height,
                     &cancel,
+                    resume,
                     |p: EncodeProgress| {
                         let percent = if p.total_frames > 0 {
                             (p.frames_encoded as f64 / p.total_frames as f64) * 100.0
                         } else {
                             0.0
                         };
+                        // ETA from average fps since the encode started (dom#502):
+                        // steadier than the instantaneous rate.
+                        let elapsed = encode_start.elapsed().as_secs_f64();
+                        let avg_fps = if elapsed > 0.0 {
+                            p.frames_encoded as f64 / elapsed
+                        } else {
+                            0.0
+                        };
+                        let eta = dcpwizard_core::encode_qol::eta_seconds(
+                            p.frames_encoded,
+                            p.total_frames,
+                            avg_fps,
+                        )
+                        .map(dcpwizard_core::encode_qol::format_eta)
+                        .unwrap_or_else(|| "--:--".to_string());
                         eprint!(
-                            "\r[encode] {}/{} frames ({:.0}%) {:.1} fps   ",
-                            p.frames_encoded, p.total_frames, percent, p.fps
+                            "\r[encode] {}/{} frames ({:.0}%) {:.1} fps  avg {:.1}  eta {}   ",
+                            p.frames_encoded, p.total_frames, percent, p.fps, avg_fps, eta
                         );
                     },
                 );
@@ -2334,7 +2521,7 @@ fn run() {
                 };
 
                 // Auto-demux audio from video if --audio not provided
-                let audio_path = if let Some(a) = audio {
+                let raw_audio = if let Some(a) = audio {
                     Some(PathBuf::from(a))
                 } else {
                     let wav_out = output_dir.join("audio_demux.wav");
@@ -2364,6 +2551,22 @@ fn run() {
                         }
                     }
                 };
+                // W5 audio processing: filename channel routing (a --audio
+                // directory), stereo->5.1 upmix, then loudness normalization.
+                let audio_path = match prepare_create_audio(
+                    raw_audio,
+                    upmix.as_deref(),
+                    loudness_target.as_deref(),
+                    true_peak_ceiling,
+                    &output_dir.join("audio_work"),
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
+                    }
+                };
+
                 let audio_path = if needs_audio_pull_up {
                     audio_path.map(|input| {
                         let output = output_dir.join("audio_pullup.wav");
@@ -2492,6 +2695,8 @@ fn run() {
 
                 // Clean up intermediate files
                 let _ = std::fs::remove_dir_all(&j2k_dir);
+                let _ = std::fs::remove_dir_all(output_dir.join("audio_work"));
+                dcpwizard_core::encode_qol::EncodeState::clear(&output_dir);
                 if let Some(ref d) = right_eye_dir {
                     let _ = std::fs::remove_dir_all(d);
                 }
@@ -2544,6 +2749,23 @@ fn run() {
                         }
                     };
 
+                // W5 audio processing: filename channel routing (a --audio
+                // directory), stereo->5.1 upmix, then loudness normalization.
+                let work_dir = output_dir.join("audio_work");
+                let prepared_audio = match prepare_create_audio(
+                    audio.map(PathBuf::from),
+                    upmix.as_deref(),
+                    loudness_target.as_deref(),
+                    true_peak_ceiling,
+                    &work_dir,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
+                    }
+                };
+
                 // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15.
                 // Cover at least the J2K frame count so the sound spans the picture.
                 let (audio_path, sl_main_channels) = if let Some(slv) = sign_language_video.as_ref()
@@ -2557,7 +2779,7 @@ fn run() {
                         .unwrap_or(0) as u64;
                     match build_sign_language_audio(
                         slv,
-                        audio.as_deref().map(Path::new),
+                        prepared_audio.as_deref(),
                         frames,
                         fps,
                         &output_dir,
@@ -2569,7 +2791,7 @@ fn run() {
                         }
                     }
                 } else {
-                    (audio.map(PathBuf::from), None)
+                    (prepared_audio, None)
                 };
 
                 let config = dcpwizard_core::dcp::DcpConfig {
@@ -2577,7 +2799,7 @@ fn run() {
                     standard: std_val,
                     encrypt,
                     key_out: key_out.map(PathBuf::from),
-                    output_dir,
+                    output_dir: output_dir.clone(),
                     frame_rate_num: fps,
                     frame_rate_den: 1,
                     resolution,
@@ -2603,10 +2825,26 @@ fn run() {
                     sign_language_lang,
                     sign_language_main_channels: sl_main_channels,
                 };
-                match versions_specs.as_ref() {
+                let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
                     None => dcpwizard_core::dcp::create_dcp(&config),
+                };
+                let _ = std::fs::remove_dir_all(&work_dir);
+                code
+            };
+
+            // shutdown on completion (dom#1394): opt-in, only after a clean run.
+            // resolve_shutdown_command already failed loud up front if missing.
+            if shutdown_when_done && code == 0 {
+                tracing::info!("Encode complete; powering off (--shutdown-when-done)");
+                if let Err(e) = dcpwizard_core::encode_qol::run_shutdown() {
+                    tracing::error!("{e}");
+                    1
+                } else {
+                    code
                 }
+            } else {
+                code
             }
         }
 
@@ -3078,6 +3316,48 @@ fn run() {
                 1
             }
         }
+
+        Commands::Crossfade {
+            a,
+            b,
+            output,
+            overlap,
+        } => match postkit::crossfade::crossfade_join_wav(
+            &PathBuf::from(a),
+            &PathBuf::from(b),
+            &PathBuf::from(&output),
+            overlap,
+        ) {
+            Ok(()) => {
+                tracing::info!("Wrote crossfade join: {output}");
+                0
+            }
+            Err(e) => {
+                tracing::error!("crossfade failed: {e}");
+                1
+            }
+        },
+
+        Commands::MidSideDecode {
+            input,
+            output,
+            mid,
+            side,
+        } => match postkit::mid_side::decode_mid_side_wav(
+            &PathBuf::from(input),
+            &PathBuf::from(&output),
+            mid,
+            side,
+        ) {
+            Ok(()) => {
+                tracing::info!("Wrote mid-side decoded WAV: {output}");
+                0
+            }
+            Err(e) => {
+                tracing::error!("mid-side decode failed: {e}");
+                1
+            }
+        },
 
         Commands::Report { dcp, output } => {
             dcpwizard_core::report::generate_report(&PathBuf::from(dcp), &PathBuf::from(output))

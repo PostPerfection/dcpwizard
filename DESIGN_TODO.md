@@ -64,16 +64,11 @@ belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface 
   single-machine.
 - Creation: sign-language video track (dom#1602), DCI HDR addendum DCPs (dom#2374,
   dom#2799), APV codec (dom#3159).
-- Audio: loudness adjustment to a target, not just measurement (dom#1382), upmix
-  (dom#921, dom#1080), crossfades (dom#374), mid-side decode (dom#3020),
-  filename-based channel auto-routing (dom#2134).
 - Subtitles: editor (dom#828, dom#2071), auto line-wrap (dom#1626), RTL (dom#860),
   vertical alignment (dom#1729, dom#2796), 3D Z position (dom#1359), more input
   formats: ASS styling (dom#1462), PAC (dom#1719), MKS (dom#3131), FCPXML
   (dom#2909), XML+PNG bitmap (dom#1376); font subsetting (dom#1023) and de-dup
   across reels (dom#2533).
-- Encode QoL: pause/resume across restarts (dom#344), scheduled encoding
-  (dom#2359), runtime prediction (dom#502), shutdown on completion (dom#1394).
 
 ## Planned features
 

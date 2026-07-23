@@ -144,3 +144,84 @@ fn kdm_missing_inputs() {
         .assert()
         .failure();
 }
+
+// ── W5 audio subcommands ────────────────────────────────────────────────────
+
+fn write_wav(path: &std::path::Path, channels: u16, frames: &[i32]) {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate: 48000,
+        bits_per_sample: 24,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec).unwrap();
+    for &s in frames {
+        w.write_sample(s).unwrap();
+    }
+    w.finalize().unwrap();
+}
+
+#[test]
+fn crossfade_joins_two_wavs() {
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a.wav");
+    let b = dir.path().join("b.wav");
+    let out = dir.path().join("joined.wav");
+    let fs = 1i32 << 22;
+    write_wav(&a, 1, &vec![fs; 48000]); // 1s mono
+    write_wav(&b, 1, &vec![fs / 2; 48000]);
+
+    cmd()
+        .args([
+            "crossfade",
+            "--a",
+            a.to_str().unwrap(),
+            "--b",
+            b.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--overlap",
+            "0.5",
+        ])
+        .assert()
+        .success();
+
+    // output = a + b - overlap = 48000 + 48000 - 24000 frames.
+    let r = hound::WavReader::open(&out).unwrap();
+    assert_eq!(r.duration(), 72000);
+}
+
+#[test]
+fn mid_side_decode_writes_lr() {
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join("ms.wav");
+    let out = dir.path().join("lr.wav");
+    // interleaved 2ch: M=0.5fs, S=0.25fs -> L=0.75fs, R=0.25fs.
+    let fs = (1i64 << 23) as f32;
+    let m = (0.5 * fs) as i32;
+    let s = (0.25 * fs) as i32;
+    let frames: Vec<i32> = (0..100).flat_map(|_| [m, s]).collect();
+    write_wav(&src, 2, &frames);
+
+    cmd()
+        .args([
+            "mid-side-decode",
+            "-i",
+            src.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--mid",
+            "0",
+            "--side",
+            "1",
+        ])
+        .assert()
+        .success();
+
+    let mut r = hound::WavReader::open(&out).unwrap();
+    let samples: Vec<i32> = r.samples::<i32>().map(|x| x.unwrap()).collect();
+    let l = samples[0] as f32 / fs;
+    let rr = samples[1] as f32 / fs;
+    assert!((l - 0.75).abs() < 1e-3, "L was {l}");
+    assert!((rr - 0.25).abs() < 1e-3, "R was {rr}");
+}

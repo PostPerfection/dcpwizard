@@ -102,6 +102,14 @@ smoke "create split-chapters" create --title x --video "$C" --output "$C" --spli
 smoke "create input-range" create --title x --video "$C" --output "$C" --input-range full
 smoke "create sign-language" create --title x --video "$C" --output "$C" --sign-language-video "$C" --sign-language-lang sgn-ase
 smoke "create hdr-dci flags" create --title x --video "$C" --output "$C" --hdr-dci --hdr-already-pq
+# W5 audio + encode QoL. --start-at +0s returns immediately; dummy input fails
+# the J2K branch before any shutdown, so --shutdown-when-done never fires.
+smoke "create loudness+upmix" create --title x --video "$C" --output "$C" \
+                            --loudness-target leqm=85 --true-peak-ceiling=-1.0 --upmix a
+smoke "create start-at+resume" create --title x --video "$C" --output "$C" \
+                            --start-at +0s --resume --shutdown-when-done
+smoke "crossfade"        crossfade --a "$C" --b "$C" -o "$C" --overlap 1.0
+smoke "mid-side-decode"  mid-side-decode -i "$C" -o "$C" --mid 0 --side 1
 smoke "pipeline input-range" pipeline -i "$C" -t x -o "$C" --input-range legal --split-chapters
 # disk writer commands
 smoke "format-drive"     format-drive "$C" --fs ext2 --label DCP_DELIVERY --yes --image

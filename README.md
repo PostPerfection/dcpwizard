@@ -37,6 +37,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Image sequence input**, DPX, TIFF, EXR, PNG
 - **Scale / Crop / Letterbox**, target resolution adaptation
 - **Colour conversion** to XYZ (DCI, gamma 2.6)
+- **Encode QoL** on `create`: `--start-at` (scheduled wall-clock start), `--resume` (reuse on-disk J2K frames after an interruption, survives restarts), average-fps ETA in progress output, `--shutdown-when-done` (power off after a clean encode)
 
 ### Encryption & KDM
 - **AES-128 essence encryption**, content keys generated with a CSPRNG, encrypted at wrap time
@@ -56,6 +57,11 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 ### Audio
 - **PCM audio wrapping** (48 kHz)
 - **Loudness measurement**, EBU R128 / ATSC A/85
+- **Loudness normalization** to a target via `create --loudness-target leqm=<db>|lufs=<v>` (with `--true-peak-ceiling`)
+- **Stereo→5.1 upmix** at create via `create --upmix a|b`
+- **Filename channel auto-routing**: point `create --audio` at a directory of mono `name_L.wav`/`_R`/`_C`/`_Lfe`/`_Ls`/`_Rs`… files
+- **Crossfade join** of two WAVs via `crossfade --a --b -o --overlap`
+- **Mid-side decode** via `mid-side-decode -i -o --mid --side`
 - **WAV audio** input
 
 ### Quality Control
@@ -261,6 +267,20 @@ dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
 # Accessibility channels: label sound channel 6 as HI and 7 as VI-N
 dcpwizard create --title "My Film" --video ./j2k --audio ./8ch.wav \
     --output ./dcp --hi-channel 6 --vi-channel 7
+
+# Audio processing at create time: route a directory of mono channel WAVs
+# (name_L.wav, name_R.wav, ...), upmix stereo to 5.1, normalize loudness
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
+    --audio ./channels --upmix a --loudness-target leqm=85 --true-peak-ceiling=-1.0
+
+# Standalone audio tools: equal-power crossfade join, mid-side decode
+dcpwizard crossfade --a first.wav --b second.wav -o joined.wav --overlap 1.0
+dcpwizard mid-side-decode -i ms.wav -o lr.wav --mid 0 --side 1
+
+# Encode QoL: start at a wall-clock time, resume after an interruption,
+# power off when the encode finishes
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
+    --start-at 22:00 --resume --shutdown-when-done
 
 # Full pipeline: video → J2K → DCP in one pass (no intermediate files)
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
