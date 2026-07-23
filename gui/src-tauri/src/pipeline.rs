@@ -220,6 +220,7 @@ pub async fn create_vf(
             reel_number: r.reel_number,
             picture: path_opt(r.picture),
             sound: path_opt(r.sound),
+            subtitle: None,
         })
         .collect();
 
@@ -235,6 +236,7 @@ pub async fn create_vf(
         vf_dir: PathBuf::from(&output_dir),
         title: title.unwrap_or_default(),
         replacement_reels,
+        subtitle_language: String::new(),
     };
 
     // create_vf does blocking IO (mxf wrap, hashing), keep it off the async runtime.

@@ -103,13 +103,21 @@ pub fn format_drive(
             ));
         }
     } else {
-        use std::os::unix::fs::FileTypeExt;
-        if !meta.file_type().is_block_device() {
-            return Err(format!(
-                "{} is not a block device; use --image to format a regular file",
-                target.display()
-            ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            if !meta.file_type().is_block_device() {
+                return Err(format!(
+                    "{} is not a block device; use --image to format a regular file",
+                    target.display()
+                ));
+            }
         }
+        #[cfg(not(unix))]
+        return Err(format!(
+            "block-device formatting is unix-only; use --image to format a regular file ({})",
+            target.display()
+        ));
     }
 
     if which(fs.mkfs_bin()).is_none() {
