@@ -617,22 +617,24 @@ fn scale_tiff(tif: &Path, w: u32, h: u32) -> bool {
 }
 
 fn find_grk_decompress() -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        "grk_decompress.exe"
+    } else {
+        "grk_decompress"
+    };
     // sibling of grk_compress in ~/bin/grok/bin, else PATH
     if let Some(comp) = crate::grok::find_grk_compress()
         && let Some(dir) = comp.parent()
     {
-        let p = dir.join("grk_decompress");
+        let p = dir.join(exe);
         if p.exists() {
             return Some(p);
         }
     }
-    std::process::Command::new("which")
-        .arg("grk_decompress")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| PathBuf::from(s.trim()))
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|d| d.join(exe))
+        .find(|p| p.is_file())
 }
 
 fn sorted_files(dir: &Path) -> Vec<PathBuf> {
