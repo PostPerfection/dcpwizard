@@ -115,7 +115,7 @@ pub fn format_drive(
         }
         #[cfg(not(unix))]
         return Err(format!(
-            "block-device formatting is unix-only; use --image to format a regular file ({})",
+            "{} is not usable: block device formatting is unix-only; use --image to format a regular file",
             target.display()
         ));
     }
