@@ -227,6 +227,55 @@
                 </fieldset>
 
                 <fieldset>
+                  <legend>3D</legend>
+                  <div class="prop-field">
+                    <label for="prop-right-eye">Right-eye video (stereoscopic)</label>
+                    <div class="input-with-btn">
+                      <input id="prop-right-eye" type="text" placeholder="Left eye is the main video…" readonly>
+                      <button id="prop-browse-right-eye" class="btn-sm">…</button>
+                    </div>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Audio</legend>
+                  <div class="prop-field">
+                    <label for="prop-atmos">Dolby Atmos / IAB track</label>
+                    <div class="input-with-btn">
+                      <input id="prop-atmos" type="text" placeholder="Atmos/DCData bitstream…" readonly>
+                      <button id="prop-browse-atmos" class="btn-sm">…</button>
+                    </div>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-loudness">Loudness target</label>
+                    <input id="prop-loudness" type="text" placeholder="leqm=85 or lufs=-20">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-true-peak">True-peak ceiling (dBTP)</label>
+                    <input id="prop-true-peak" type="number" step="0.1" placeholder="-1.0">
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend>Subtitles &amp; Captions</legend>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-language">Subtitle language (imported subtitle asset)</label>
+                    <input id="prop-subtitle-language" type="text" value="en" placeholder="en">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-ccap">Closed captions (CCAP)</label>
+                    <div class="input-with-btn">
+                      <input id="prop-ccap" type="text" placeholder="SRT or SMPTE timed-text…" readonly>
+                      <button id="prop-browse-ccap" class="btn-sm">…</button>
+                    </div>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-ccap-language">CCAP language</label>
+                    <input id="prop-ccap-language" type="text" value="en" placeholder="en">
+                  </div>
+                </fieldset>
+
+                <fieldset>
                   <legend>Output</legend>
                   <div class="prop-field">
                     <label for="prop-output">Directory</label>

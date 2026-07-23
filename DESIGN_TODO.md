@@ -121,13 +121,29 @@ belong in postkit (see postkit DESIGN_TODO); the user-facing surface is here.
 - Trailer: DONE 2026-07-23 (see Done section). Remaining caveat: the accessibility
   check is still substring matching.
 
-## GUI (remaining)
+## GUI
 
-- Create-panel pickers (3D/Atmos/loudness/subtitle flags/etc) NOT wired: the create
-  panel goes through the tauri `submit_job` -> JobConfig -> run_job job queue, not
-  the CLI, so adding create flags needs plumbing through the command signature,
-  JobConfig and run_job (structural). Deferred. The CLI path is the way to build
-  these DCPs for now.
+- Create-panel pickers: DONE 2026-07-23. The tauri `submit_job` -> JobConfig ->
+  run_job path now carries right-eye 3D (encoded into `<output>/right/j2k` via a
+  second run_encode_with_ratio call, stereo_3d derived from its presence), Atmos
+  track, subtitle file + language, CCAP + language, and loudness target + true-peak
+  ceiling (dcpwizard_core::loudness::adjust_loudness on the WAV before wrapping).
+  content kind / bandwidth / encryption were already wired. index.html gained the
+  3D / Audio / Subtitles-&-Captions fieldsets; main.js added the browse handlers +
+  submit_job args.
+  - Skipped: `--hdr-dci`. The job queue encodes through
+    postkit::pipeline::run_encode_with_ratio -> stream_encode, which hardcodes
+    apply_xyz_transform=true and has no HDR-to-DCI LUT / PQ-passthrough branch or
+    per-codestream cap handling. Authoring an HDR DCP there would mislabel
+    XYZ-transformed frames as ST 2084 PQ, so it stays CLI-only (grok path).
+  - Skipped: upmix / filename channel-routing (CLI prepare_create_audio), reel
+    splitting, pad head/tail, sign language, HDR tonemap, delivery profiles,
+    versions/multi. Out of the requested create surface; several need the CLI grok
+    preprocessing the queue path does not run.
+  - Pre-existing break fixed in passing: gui create_vf built a ReplacementReel
+    without the `ccap` field added by batch 8b (the gui crate did not compile at
+    209a83d); set `ccap: None`. imfwizard: check its VF command for the same gap if
+    its core ReplacementReel grew a ccap field.
 
 ## Dedup
 
@@ -158,6 +174,13 @@ other:
   run_encode_with_ratio, scope/flat/full container dims, episode ContentKind) and
   lib.rs (register tauri_plugin_opener). imfwizard already wires bandwidth->ratio;
   mirror the opener plugin + any container/ContentKind logic that applies there.
+  2026-07-23 create-panel wiring edited dcpwizard pipeline.rs submit_job/JobConfig/
+  run_job (right-eye 3D via a second run_encode_with_ratio, atmos_path, subtitle +
+  language, ccap + language, loudness normalize before wrap) and main.js/index.html
+  (new pickers). imfwizard already submits compositions with subtitles/audio; the
+  atmos + loudness-normalize-before-wrap and single-DCP 3D right-eye bits are
+  dcpwizard-specific (IMF has no atmos aux track / stereoscopic DCP concept), so
+  nothing to mirror unless imfwizard adds a loudness step.
 - .github/workflows/ci.yml, release.yml, gui-release.yml — copies across dcpwizard,
   imfwizard, dcpdoctor differing by binary/artifact names + per-app build deps.
   Separate git repos, so no shared reusable-workflow without a central repo. Keep

@@ -47,8 +47,18 @@ struct JobConfig {
     content_kind: String,
     encrypt: bool,
     key_out: Option<String>,
-    stereo_3d: bool,
     channels: String,
+    // right-eye video for a stereoscopic 3D DCP (main input is the left eye)
+    right_eye: Option<String>,
+    // dolby atmos / dcdata bitstream wrapped as a ST 429-18 aux track
+    atmos: Option<String>,
+    subtitle: Option<String>,
+    subtitle_language: String,
+    ccap: Option<String>,
+    ccap_language: String,
+    // loudness normalize spec (leqm=<db> or lufs=<value>) applied to the audio
+    loudness_target: Option<String>,
+    true_peak_ceiling: Option<f64>,
 }
 
 // ─── Queue state (managed by Tauri) ────────────────────────────────────────
@@ -96,8 +106,15 @@ pub async fn submit_job(
     content_kind: Option<String>,
     encrypt: Option<bool>,
     key_out: Option<String>,
-    stereo_3d: Option<bool>,
     channels: Option<String>,
+    right_eye: Option<String>,
+    atmos: Option<String>,
+    subtitle: Option<String>,
+    subtitle_language: Option<String>,
+    ccap: Option<String>,
+    ccap_language: Option<String>,
+    loudness_target: Option<String>,
+    true_peak_ceiling: Option<f64>,
 ) -> Result<u64, String> {
     let queue = app.state::<JobQueue>();
     let id = queue.next_id.fetch_add(1, Ordering::Relaxed);
@@ -122,8 +139,15 @@ pub async fn submit_job(
         content_kind: content_kind.unwrap_or_else(|| "feature".into()),
         encrypt: encrypt.unwrap_or(false),
         key_out: key_out.filter(|k| !k.is_empty()),
-        stereo_3d: stereo_3d.unwrap_or(false),
         channels: channels.unwrap_or_else(|| "5.1".into()),
+        right_eye: right_eye.filter(|s| !s.is_empty()),
+        atmos: atmos.filter(|s| !s.is_empty()),
+        subtitle: subtitle.filter(|s| !s.is_empty()),
+        subtitle_language: subtitle_language.unwrap_or_else(|| "en".into()),
+        ccap: ccap.filter(|s| !s.is_empty()),
+        ccap_language: ccap_language.unwrap_or_else(|| "en".into()),
+        loudness_target: loudness_target.filter(|s| !s.is_empty()),
+        true_peak_ceiling,
     };
 
     {
@@ -221,6 +245,7 @@ pub async fn create_vf(
             picture: path_opt(r.picture),
             sound: path_opt(r.sound),
             subtitle: None,
+            ccap: None,
         })
         .collect();
 
@@ -393,6 +418,57 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         |msg| log_to(&log_ref, msg),
     )?;
 
+    // Stereoscopic 3D: encode the right eye into its own subdir at the same
+    // ratio/fps (the main input is the left eye).
+    let right_eye_dir = if let Some(re) = job.right_eye.as_deref() {
+        log_to(&log_file, &format!("[ENCODE] Right eye: {re}"));
+        let re_out = output.join("right");
+        let log_ref = log_file.clone();
+        let re_result = postkit::pipeline::run_encode_with_ratio(
+            std::path::Path::new(re),
+            &re_out,
+            compression_ratio,
+            fps_num,
+            &cancel,
+            &pause,
+            |_p| {},
+            |msg| log_to(&log_ref, msg),
+        )?;
+        Some(re_result.j2k_dir)
+    } else {
+        None
+    };
+
+    // Loudness normalize the audio before wrapping (dom#1382). Mirrors the CLI
+    // prepare_create_audio loudness step; upmix/routing stay CLI-only.
+    let audio_path = job
+        .audio_path
+        .as_ref()
+        .filter(|a| !a.is_empty())
+        .map(std::path::PathBuf::from);
+    let audio_path =
+        if let (Some(spec), Some(input)) = (job.loudness_target.as_deref(), &audio_path) {
+            let target = dcpwizard_core::loudness::parse_loudness_target(spec)?;
+            let ceiling = job
+                .true_peak_ceiling
+                .unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP);
+            let work_dir = output.join("audio_work");
+            std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
+            let out = work_dir.join("loudness.wav");
+            let plan = dcpwizard_core::loudness::adjust_loudness(input, &out, target, ceiling)
+                .map_err(|e| e.to_string())?;
+            log_to(
+                &log_file,
+                &format!(
+                    "[AUDIO] loudness {:.1} -> {:.1} dB (gain {:+.2} dB, peak {:.2} dBTP)",
+                    plan.measured_db, plan.target_db, plan.gain_db, plan.resulting_true_peak_dbtp
+                ),
+            );
+            Some(out)
+        } else {
+            audio_path
+        };
+
     // Package DCP
     emit_progress(
         app,
@@ -450,14 +526,15 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         max_bitrate_mbps: job.bandwidth,
         encrypt: job.encrypt,
         key_out: job.key_out.as_ref().map(std::path::PathBuf::from),
-        stereo_3d: job.stereo_3d,
+        stereo_3d: right_eye_dir.is_some(),
+        right_eye_dir,
         j2k_dir: Some(encode_result.j2k_dir.clone()),
-        audio_path: job
-            .audio_path
-            .as_ref()
-            .filter(|a| !a.is_empty())
-            .map(std::path::PathBuf::from),
-        // subtitles are packaged via the CLI create --subtitle path, not the batch job
+        audio_path,
+        atmos_path: job.atmos.as_ref().map(std::path::PathBuf::from),
+        subtitle_path: job.subtitle.as_ref().map(std::path::PathBuf::from),
+        subtitle_language: job.subtitle_language.clone(),
+        ccap_path: job.ccap.as_ref().map(std::path::PathBuf::from),
+        ccap_language: job.ccap_language.clone(),
         ..Default::default()
     };
 

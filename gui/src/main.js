@@ -508,6 +508,33 @@ document.getElementById("prop-browse-key-out")?.addEventListener("click", async 
   if (file) document.getElementById("prop-key-out").value = file;
 });
 
+document.getElementById("prop-browse-right-eye")?.addEventListener("click", async () => {
+  const path = await open({
+    directory: false, multiple: false,
+    filters: [
+      { name: 'Video', extensions: ['mp4','mkv','mov','avi','mxf','webm'] },
+      { name: 'All', extensions: ['*'] }
+    ]
+  });
+  if (path) document.getElementById("prop-right-eye").value = path;
+});
+
+document.getElementById("prop-browse-atmos")?.addEventListener("click", async () => {
+  const path = await open({ directory: false, multiple: false });
+  if (path) document.getElementById("prop-atmos").value = path;
+});
+
+document.getElementById("prop-browse-ccap")?.addEventListener("click", async () => {
+  const path = await open({
+    directory: false, multiple: false,
+    filters: [
+      { name: 'Captions', extensions: ['srt','xml','ttml','vtt'] },
+      { name: 'All', extensions: ['*'] }
+    ]
+  });
+  if (path) document.getElementById("prop-ccap").value = path;
+});
+
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   const title = document.getElementById("prop-title")?.value?.trim();
   if (!title) { tauriMessage("Enter a project title in Properties"); return; }
@@ -602,6 +629,14 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       contentKind: document.getElementById("prop-content-kind")?.value || "feature",
       encrypt,
       keyOut: keyOut || null,
+      rightEye: document.getElementById("prop-right-eye")?.value || null,
+      atmos: document.getElementById("prop-atmos")?.value || null,
+      subtitle: reel.subtitle?.path || null,
+      subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
+      ccap: document.getElementById("prop-ccap")?.value || null,
+      ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
+      loudnessTarget: document.getElementById("prop-loudness")?.value || null,
+      truePeakCeiling: parseFloat(document.getElementById("prop-true-peak")?.value) || null,
     });
     setStatus("Building DCP...");
   } catch (e) {
