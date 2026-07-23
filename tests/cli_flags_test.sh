@@ -29,7 +29,7 @@ fi
 
 # clap prints these to stderr and exits 2 when parsing fails. Runtime errors
 # (missing files, etc.) are fine: they mean parsing succeeded.
-PARSE_ERR='unexpected argument|required arguments were not provided|a value is required for|unrecognized subcommand|invalid value'
+PARSE_ERR='unexpected argument|required arguments were not provided|a value is required for|unrecognized subcommand|invalid value|cannot be used with'
 
 echo "=== DCPWizard CLI Flag Verification ==="
 echo "Binary: $BINARY"
@@ -90,6 +90,45 @@ smoke "subtitle-convert" subtitle-convert -i "$C" -l en --fps 24 -o "$C"
 smoke "burnin"          burnin -i "$C" -s "$C" -o "$C"
 smoke "convert"         convert -i "$C" -t mov -m fast -o "$C"
 smoke "create+encrypt"  create --title x --video "$C" --output "$C" --encrypt --key-out "$C"
+smoke "assemble"        assemble --input "$C" --input "$C" --output "$C" --title x
+smoke "edit"            edit --input "$C" --output "$C" --title x --annotation a --content-kind FTR --issuer i
+smoke "create-vf subs"  create-vf --ov "$C" --output "$C" --add-subtitle 1="$C" --replace-subtitle 2="$C" --subtitle-language fr
+smoke "create-multi"    create-multi --compositions "$C" --output "$C" --standard smpte --frame-rate 24 --subtitle-language en
+# new create features: background colour, custom container, splits, input range
+smoke "create pad-color" create --title x --video "$C" --output "$C" --pad-head 12f --pad-tail 12f --pad-color ff0000
+smoke "create container-dims" create --title x --video "$C" --output "$C" --container-dims 1920x1080
+smoke "create split-at"  create --title x --video "$C" --output "$C" --split-at 00:00:01,00:00:02
+smoke "create split-chapters" create --title x --video "$C" --output "$C" --split-chapters
+smoke "create input-range" create --title x --video "$C" --output "$C" --input-range full
+smoke "create sign-language" create --title x --video "$C" --output "$C" --sign-language-video "$C" --sign-language-lang sgn-ase
+smoke "create hdr-dci flags" create --title x --video "$C" --output "$C" --hdr-dci --hdr-already-pq
+smoke "pipeline input-range" pipeline -i "$C" -t x -o "$C" --input-range legal --split-chapters
+# disk writer commands
+smoke "format-drive"     format-drive "$C" --fs ext2 --label DCP_DELIVERY --yes --image
+smoke "check-drive"      check-drive "$C"
+
+# ── KDM distribution commands (cinema db, templates, history, email, cert-fetch)
+smoke "cinema add"        cinema --db "$C" add --name X --email a@b.test --notes n
+smoke "cinema list"       cinema --db "$C" list
+smoke "cinema add-screen" cinema --db "$C" add-screen --cinema X --name S1 --cert "$C" --inline
+smoke "cinema remove-screen" cinema --db "$C" remove-screen --cinema X --name S1
+smoke "cinema search"     cinema --db "$C" search foo
+smoke "cinema import-flm" cinema --db "$C" import-flm "$C"
+smoke "cinema remove"     cinema --db "$C" remove --name X
+smoke "kdm-history"       kdm-history --history-file "$C" --title x --recipient r --since 2026-01 --until 2026-12
+smoke "kdm-template add"  kdm-template --templates-file "$C" add --name preshow --start-offset "0 days" --duration "1 week" --tz-offset "+02:00"
+smoke "kdm-template list" kdm-template --templates-file "$C" list
+smoke "kdm-template rm"   kdm-template --templates-file "$C" remove --name preshow
+# christie is rejected at the vendor stage (no network) but exercises the flags
+smoke "cert-fetch"        cert-fetch --vendor christie --serial 123456 --type QXPD -o "$C"
+smoke "kdm --template+email" kdm --cpl-id "$UUID" --content-title x --cert "$C" \
+                            --signer-cert "$C" --signer-key "$C" -o "$C" \
+                            --template preshow --templates-file "$C" --history-file "$C" \
+                            --email-to a@b.test --smtp-config "$C"
+smoke "kdm-batch cinema"  kdm-batch --cpl-id "$UUID" --content-title x --cinema X --screen X/S1 \
+                            --db "$C" --signer-cert "$C" --signer-key "$C" -o "$C" \
+                            --template preshow --templates-file "$C" --history-file "$C" \
+                            --email-to a@b.test --smtp-config "$C" --email-only-additional
 
 # --encrypt must require --key-out: this call MUST be rejected at parse time.
 reject() {
@@ -105,6 +144,33 @@ reject() {
 }
 reject "create --encrypt without --key-out" \
        create --title x --video "$C" --output "$C" --encrypt
+# --split-at and --reel-length are mutually exclusive
+reject "create --split-at with --reel-length" \
+       create --title x --video "$C" --output "$C" --split-at 00:00:01 --reel-length 20
+# --container-dims and --container are mutually exclusive
+reject "create --container-dims with --container" \
+       create --title x --video "$C" --output "$C" --container-dims 1920x1080 --container 2k-flat
+# --sign-language-video requires --sign-language-lang
+reject "create --sign-language-video without --sign-language-lang" \
+       create --title x --video "$C" --output "$C" --sign-language-video "$C"
+
+# --hdr-dci is refused at runtime: the jp2k writer cannot set the ST 2084
+# TransferCharacteristic, so a compliant DCI HDR DCP is not authored.
+refuse() {
+  local label="$1"; local needle="$2"; shift 2
+  local out
+  out=$("$BINARY" "$@" 2>&1 || true)
+  if echo "$out" | grep -qiF "$needle"; then
+    echo "ok (refused): $label"
+  else
+    echo "FAIL: '$label' should have printed: $needle"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+refuse "create --hdr-dci refused" "cannot be authored" \
+       create --title x --video "$C" --output "$C" --hdr-dci --hdr-already-pq
+refuse "create --hdr-dci needs PQ path" "needs the source path to PQ" \
+       create --title x --video "$C" --output "$C" --hdr-dci
 
 echo ""
 echo "=== Summary ==="

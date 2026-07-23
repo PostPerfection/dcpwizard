@@ -65,16 +65,61 @@ pub fn read_j2k_dimensions(path: &Path) -> Result<(u32, u32), String> {
     Ok((header.width, header.height))
 }
 
-/// Encode one black frame at `width`x`height` to a J2K codestream at `out`, using
-/// the same grok pipeline the encoder uses for content frames. Black in DCI X'Y'Z'
-/// is all-zero samples, so a zero-filled 12-bit frame is black regardless of the
-/// colour transform.
-pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Result<(), String> {
+/// Parse a pad/background colour into 16-bit per-channel RGB.
+///
+/// Accepts `#RRGGBB` or `RRGGBB` (8-bit hex sRGB). Each 8-bit value is expanded to
+/// 16 bits by `v * 257` so `ff` -> `ffff`, matching how an 8-bit source decodes to
+/// the rgb48 buffer the encoder feeds grok.
+pub fn parse_pad_color(spec: &str) -> Result<[u16; 3], String> {
+    let hex = spec.trim().strip_prefix('#').unwrap_or(spec.trim());
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "pad colour '{spec}' must be 6 hex digits (RRGGBB or #RRGGBB)"
+        ));
+    }
+    let mut rgb = [0u16; 3];
+    for (i, slot) in rgb.iter_mut().enumerate() {
+        let v = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+            .map_err(|_| format!("invalid hex in pad colour '{spec}'"))?;
+        *slot = v as u16 * 257;
+    }
+    Ok(rgb)
+}
+
+/// Encode one solid `rgb` frame at `width`x`height` to a J2K codestream at `out`,
+/// using the same grok pipeline the encoder uses for content frames. The colour is
+/// run through postkit's Rec.709 RGB -> DCI X'Y'Z' DCDM transform
+/// (`colour::rgb_to_xyz_inplace`) before compression, so the stored codestream
+/// carries the correct X'Y'Z' code values. Black (0,0,0) maps to all-zero samples.
+pub fn generate_solid_frame(
+    width: u32,
+    height: u32,
+    fps: u32,
+    rgb: [u16; 3],
+    out: &Path,
+) -> Result<(), String> {
     use postkit::grok_encoder::{self, CompressParams, RawFrame};
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
     let pixels = (width as usize) * (height as usize);
+    // one pixel as rgb48be (6 bytes, each channel big-endian 16-bit)
+    let mut px = [
+        (rgb[0] >> 8) as u8,
+        rgb[0] as u8,
+        (rgb[1] >> 8) as u8,
+        rgb[1] as u8,
+        (rgb[2] >> 8) as u8,
+        rgb[2] as u8,
+    ];
+    // apply the DCDM colour transform (Rec.709 -> DCI X'Y'Z') to the solid pixel,
+    // then replicate the transformed sample across the whole frame
+    postkit::colour::rgb_to_xyz_inplace(&mut px);
+    let mut data = Vec::with_capacity(pixels * 6);
+    for _ in 0..pixels {
+        data.extend_from_slice(&px);
+    }
+
     let params = CompressParams {
         frame_rate: fps.max(1) as u16,
         ..CompressParams::default()
@@ -83,7 +128,7 @@ pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Re
     let work = out
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!(".dcpwizard_black_{}", uuid::Uuid::new_v4()));
+        .join(format!(".dcpwizard_solid_{}", uuid::Uuid::new_v4()));
     let cancel = Arc::new(AtomicBool::new(false));
 
     grok_encoder::initialize(0);
@@ -98,11 +143,11 @@ pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Re
                 return None;
             }
             produced = true;
-            Some(RawFrame::Planar {
-                components: [vec![0i32; pixels], vec![0i32; pixels], vec![0i32; pixels]],
+            Some(RawFrame::Packed {
+                data: std::mem::take(&mut data),
                 width,
                 height,
-                precision: 12,
+                precision: 16,
                 index: 0,
             })
         },
@@ -112,14 +157,19 @@ pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Re
 
     if !result.success {
         let _ = std::fs::remove_dir_all(&work);
-        return Err(format!("black frame encode failed: {}", result.error));
+        return Err(format!("solid frame encode failed: {}", result.error));
     }
     let frame = work.join("frame_00000000.j2c");
     let outcome = std::fs::rename(&frame, out)
         .or_else(|_| std::fs::copy(&frame, out).map(|_| ()))
-        .map_err(|e| format!("cannot place black frame at {}: {e}", out.display()));
+        .map_err(|e| format!("cannot place solid frame at {}: {e}", out.display()));
     let _ = std::fs::remove_dir_all(&work);
     outcome
+}
+
+/// Encode one black frame (convenience for `generate_solid_frame` with rgb 0,0,0).
+pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Result<(), String> {
+    generate_solid_frame(width, height, fps, [0, 0, 0], out)
 }
 
 /// Write `src` padded with `head_samples` of silence before and `tail_samples`
@@ -194,6 +244,22 @@ mod tests {
     fn bare_number_is_rejected_as_ambiguous() {
         assert!(parse_pad_frames("48", 24).is_err());
         assert!(parse_pad_frames("2.0", 24).is_err());
+    }
+
+    #[test]
+    fn pad_color_parses_hex() {
+        assert_eq!(parse_pad_color("#000000").unwrap(), [0, 0, 0]);
+        assert_eq!(parse_pad_color("ffffff").unwrap(), [0xffff, 0xffff, 0xffff]);
+        assert_eq!(parse_pad_color("#ff0000").unwrap(), [0xffff, 0, 0]);
+        // 0x80 -> 0x80*257 = 0x8080
+        assert_eq!(parse_pad_color("808080").unwrap(), [0x8080, 0x8080, 0x8080]);
+    }
+
+    #[test]
+    fn pad_color_rejects_bad_input() {
+        assert!(parse_pad_color("fff").is_err());
+        assert!(parse_pad_color("#gggggg").is_err());
+        assert!(parse_pad_color("red").is_err());
     }
 
     #[test]

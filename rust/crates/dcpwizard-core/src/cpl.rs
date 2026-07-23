@@ -12,6 +12,10 @@ pub struct CplConfig {
     /// Packaged sound layout for the SMPTE CompositionMetadataAsset (ST 429-16).
     /// None for a silent composition or Interop (no metadata asset is written).
     pub main_sound: Option<MainSound>,
+    /// RFC 5646 sign-language tag (ISDCF Doc 13). When set, the CompositionMetadata
+    /// carries the SignLanguageVideo ExtensionMetadata with this Language Tag.
+    #[serde(default)]
+    pub sign_language: Option<String>,
 }
 
 /// Sound layout for the SMPTE CompositionMetadataAsset (ST 429-16): the
@@ -311,6 +315,24 @@ fn composition_metadata_block(config: &CplConfig, reel: &CplReel, sound: &MainSo
     b.push_str("                </meta:Property>\n");
     b.push_str("              </meta:PropertyList>\n");
     b.push_str("            </meta:ExtensionMetadata>\n");
+    // ISDCF Doc 13 sign-language video: the Language Tag identifies the packed
+    // VP9 program carried on channel 15 of the sound track.
+    if let Some(lang) = config.sign_language.as_deref() {
+        b.push_str(
+            "            <meta:ExtensionMetadata scope=\"http://isdcf.com/2017/10/SignLanguageVideo\">\n",
+        );
+        b.push_str("              <meta:Name>Sign Language Video</meta:Name>\n");
+        b.push_str("              <meta:PropertyList>\n");
+        b.push_str("                <meta:Property>\n");
+        b.push_str("                  <meta:Name>Language Tag</meta:Name>\n");
+        b.push_str(&format!(
+            "                  <meta:Value>{}</meta:Value>\n",
+            escape_xml(lang)
+        ));
+        b.push_str("                </meta:Property>\n");
+        b.push_str("              </meta:PropertyList>\n");
+        b.push_str("            </meta:ExtensionMetadata>\n");
+    }
     b.push_str("          </meta:ExtensionMetadataList>\n");
     b.push_str("        </meta:CompositionMetadataAsset>\n");
     b

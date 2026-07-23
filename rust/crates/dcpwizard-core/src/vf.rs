@@ -8,16 +8,22 @@ pub struct VfConfig {
     pub vf_dir: PathBuf,
     pub title: String,
     pub replacement_reels: Vec<ReplacementReel>,
+    /// Language code for wrapped subtitle tracks (default "en").
+    pub subtitle_language: String,
 }
 
-/// A reel in the VF that replaces one or both OV essence tracks. A track is
-/// raw essence (J2K frames for picture, WAV for sound) that gets wrapped, or an
-/// already-wrapped `.mxf`. Reels with no replacement are referenced from the OV.
+/// A reel in the VF that replaces one or more OV essence tracks. A track is
+/// raw essence (J2K frames for picture, WAV for sound, SRT/SMPTE XML for
+/// subtitle) that gets wrapped, or an already-wrapped `.mxf`. Reels with no
+/// replacement are referenced from the OV.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplacementReel {
     pub reel_number: u32,
     pub picture: Option<PathBuf>,
     pub sound: Option<PathBuf>,
+    /// Subtitle to add or replace on this reel (SRT converted, SMPTE XML wrapped
+    /// unchanged). Both --add-subtitle and --replace-subtitle land here.
+    pub subtitle: Option<PathBuf>,
 }
 
 /// A new MXF that physically ships in the VF (registered in PKL + ASSETMAP).
@@ -68,11 +74,17 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     if !config
         .replacement_reels
         .iter()
-        .any(|r| r.picture.is_some() || r.sound.is_some())
+        .any(|r| r.picture.is_some() || r.sound.is_some() || r.subtitle.is_some())
     {
         tracing::error!("no replacement essence supplied; nothing to replace");
         return -1;
     }
+
+    let sub_lang = if config.subtitle_language.is_empty() {
+        "en"
+    } else {
+        &config.subtitle_language
+    };
 
     if let Err(e) = std::fs::create_dir_all(&config.vf_dir) {
         tracing::error!("Failed to create VF directory: {e}");
@@ -141,6 +153,26 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             None => None,
         };
 
+        // Subtitle: a new track added or replaced on this reel. Unchanged reels
+        // keep no subtitle here (the VF ships only what it replaces).
+        let subtitle = match rep.and_then(|r| r.subtitle.as_ref()) {
+            Some(input) => {
+                let Some(a) = prepare_subtitle(
+                    input,
+                    sub_lang,
+                    edit_num,
+                    entry.duration_frames,
+                    &config.vf_dir,
+                ) else {
+                    return -1;
+                };
+                let out = Some((a.id.clone(), a.duration));
+                new_assets.push(a);
+                out
+            }
+            None => None,
+        };
+
         cpl_reels.push(crate::cpl::CplReel {
             reel_id: uuid::Uuid::new_v4().to_string(),
             picture_id,
@@ -157,12 +189,12 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             sound_duration: sound.as_ref().map(|s| s.1).unwrap_or(0),
             sound_entry_point: 0,
             sound_key_id: None,
-            subtitle_id: None,
-            subtitle_edit_rate_num: 0,
-            subtitle_edit_rate_den: 0,
-            subtitle_duration: 0,
+            subtitle_id: subtitle.as_ref().map(|s| s.0.clone()),
+            subtitle_edit_rate_num: if subtitle.is_some() { edit_num } else { 0 },
+            subtitle_edit_rate_den: if subtitle.is_some() { edit_den } else { 0 },
+            subtitle_duration: subtitle.as_ref().map(|s| s.1).unwrap_or(0),
             subtitle_entry_point: 0,
-            subtitle_language: None,
+            subtitle_language: subtitle.as_ref().map(|_| sub_lang.to_string()),
             stereoscopic: false,
             aux_data: None,
         });
@@ -189,6 +221,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         reels: cpl_reels,
         standard,
         main_sound: None,
+        sign_language: None,
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
         tracing::error!("Failed to generate VF CPL");
@@ -340,6 +373,76 @@ fn prepare_asset(
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     Some(NewAsset {
         id,
+        filename,
+        hash,
+        size,
+        duration,
+    })
+}
+
+/// Wrap a subtitle track into the VF: SRT is converted to ST 428-7 DCST first,
+/// supplied SMPTE XML is wrapped unchanged. Returns the wrapped track's real
+/// asset id, hash, size, and duration. `None` on failure (logged).
+fn prepare_subtitle(
+    input: &Path,
+    lang: &str,
+    fps: u32,
+    fallback_duration: u64,
+    vf_dir: &Path,
+) -> Option<NewAsset> {
+    if !input.exists() {
+        tracing::error!("subtitle not found: {}", input.display());
+        return None;
+    }
+    let is_xml = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
+
+    // SRT gets converted to a temp DCST; supplied XML is wrapped as-is.
+    let mut temp_dcst: Option<PathBuf> = None;
+    let dcst_path = if is_xml {
+        input.to_path_buf()
+    } else {
+        let tmp = vf_dir.join(format!("subtitle_{}.xml", uuid::Uuid::new_v4()));
+        if let Err(e) = crate::subtitle::srt_to_shifted_dcst(input, 0, lang, fps, &tmp) {
+            tracing::error!("subtitle conversion failed: {e}");
+            return None;
+        }
+        temp_dcst = Some(tmp.clone());
+        tmp
+    };
+
+    let filename = format!("subtitle_{}.mxf", uuid::Uuid::new_v4());
+    let wrap_config = crate::mxf_wrap::MxfWrapConfig {
+        input_path: dcst_path,
+        output_mxf: vf_dir.join(&filename),
+        mxf_type: crate::mxf_wrap::MxfType::TimedText,
+        frame_rate: fps,
+        encryption: None,
+        mca_config: None,
+    };
+    let track = crate::mxf_wrap::wrap_mxf_result(&wrap_config);
+    if let Some(tmp) = temp_dcst {
+        let _ = std::fs::remove_file(tmp);
+    }
+    let track = track?;
+    let path = vf_dir.join(&filename);
+    let hash = match crate::hash::hash_file(&path) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Failed to hash {}: {e}", path.display());
+            return None;
+        }
+    };
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let duration = if track.duration > 0 {
+        track.duration
+    } else {
+        fallback_duration
+    };
+    Some(NewAsset {
+        id: track.uuid,
         filename,
         hash,
         size,
@@ -512,10 +615,12 @@ mod tests {
             ov_dir: ov.clone(),
             vf_dir: vf.clone(),
             title: String::new(),
+            subtitle_language: String::new(),
             replacement_reels: vec![ReplacementReel {
                 reel_number: 1,
                 picture: None,
                 sound: Some(new_snd),
+                subtitle: None,
             }],
         };
         assert_eq!(create_vf(&config), 0);
@@ -586,6 +691,7 @@ mod tests {
             ov_dir: ov,
             vf_dir: tmp.path().join("vf"),
             title: String::new(),
+            subtitle_language: String::new(),
             replacement_reels: vec![],
         };
         assert_eq!(create_vf(&config), -1);
@@ -603,10 +709,12 @@ mod tests {
             ov_dir: ov,
             vf_dir: tmp.path().join("vf"),
             title: String::new(),
+            subtitle_language: String::new(),
             replacement_reels: vec![ReplacementReel {
                 reel_number: 9,
                 picture: None,
                 sound: Some(snd),
+                subtitle: None,
             }],
         };
         assert_eq!(create_vf(&config), -1);

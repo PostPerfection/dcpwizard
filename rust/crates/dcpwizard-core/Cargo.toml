@@ -12,14 +12,19 @@ dcpdoctor-core.workspace = true
 dirs = "6"
 getrandom = "0.2"
 libc = "0.2"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls", "ring", "webpki-roots"] }
 postkit.workspace = true
+roxmltree = "0.20"
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
+tempfile = "3"
 thiserror.workspace = true
 time = "0.3"
+toml = "1"
 tracing.workspace = true
 uuid.workspace = true
+zip = "8"
 
 [dev-dependencies]
 tempfile = "3"

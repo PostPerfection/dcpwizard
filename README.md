@@ -83,7 +83,7 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 - **Frame-accurate preview** with display colourspace selection
 
 ### Delivery & Automation
-- **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU)
+- **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU); **format-drive** (ext2/ext3, volume label, mounted-target refusal) and **check-drive** (report fs type + label) for cinema hard-drive delivery
 - **Watch folder** mode, automated DCP creation on file arrival
 - **Job queue** with progress tracking and cancellation
 - **REST API** for headless/batch operation
@@ -324,6 +324,11 @@ dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
 
+# Format a delivery drive ext2/ext3 (refuses any mounted target; needs --yes)
+dcpwizard format-drive /dev/sdb --fs ext3 --label MY_FILM --yes
+# Check an existing drive's filesystem and label without touching it
+dcpwizard check-drive /dev/sdb
+
 # Measure audio loudness
 dcpwizard loudness audio.wav
 
@@ -390,6 +395,46 @@ dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" \
     --signer-chain intermediate.pem --signer-chain root.pem \
     --keys ./secret/my_film.keys.json --output-dir ./kdms
 
+# ── KDM distribution ────────────────────────────────────────────────────────
+# Cinema/screen database (default: ~/.local/share/dcpwizard/cinemas.json,
+# override with --db). Screens hold a recipient cert; serial + thumbprint are
+# cached for search. No private keys are ever stored.
+dcpwizard cinema add --name "Odeon" --email ops@odeon.test --notes "priority"
+dcpwizard cinema add-screen --cinema Odeon --name "Screen 1" --cert screen1.pem
+dcpwizard cinema add-screen --cinema Odeon --name "Screen 2" --cert screen2.pem --inline
+dcpwizard cinema list
+dcpwizard cinema search 4ca4b493          # by name, or cert serial/thumbprint
+dcpwizard cinema import-flm facility.xml  # import an FLM-x (SMPTE 430-7) file
+
+# Named validity templates (default: ~/.local/share/dcpwizard/kdm-templates.json)
+dcpwizard kdm-template add --name preshow --duration "1 week" --tz-offset "+02:00"
+dcpwizard kdm-template add --name movie --start-offset "0 days" --duration "180 days"
+dcpwizard kdm-template list
+# use a template for the validity window (explicit --valid-from/--valid-to override)
+dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert screen1.pem \
+    --signer-cert signer.pem --signer-key signer.key --template preshow --output kdm.xml
+
+# Batch to whole cinemas / single screens from the db (--cert/--cert-dir still work)
+dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" \
+    --cinema Odeon --screen "Rex/Screen 1" \
+    --signer-cert signer.pem --signer-key signer.key --output-dir ./kdms
+
+# Email the KDMs (one zipped email per cinema, dom#2516) using an SMTP config
+# (see "KDM email config" below). --email-only-additional ignores cinema contacts.
+dcpwizard kdm-batch --cpl-id <uuid> --content-title "My Film" --cinema Odeon \
+    --signer-cert signer.pem --signer-key signer.key --output-dir ./kdms \
+    --smtp-config ~/.config/dcpwizard/smtp.toml --email-to distributor@studio.test
+
+# KDM generation history (default: ~/.local/share/dcpwizard/kdm-history.jsonl).
+# Every successful kdm/kdm-batch appends a metadata record (never key material).
+dcpwizard kdm-history --title "My Film" --since 2026-07
+
+# Download a projector/server recipient cert by vendor + serial. Verified public
+# endpoints: dolby/doremi and qube (anonymous FTP). Other vendors error with a
+# note to obtain the cert from the vendor. Requires the `curl` binary.
+dcpwizard cert-fetch --vendor dolby --serial 218281828 -o screen.pem
+dcpwizard cert-fetch --vendor qube --type QXPD --serial 54 -o screen.pem
+
 # Package a trailer (ratings card + countdown leader + content)
 dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
     --rating "PG-13" --rating-system mpaa --band green --countdown 8
@@ -418,6 +463,37 @@ dcpwizard dashboard list
 dcpwizard dashboard matrix --output distribution.csv
 dcpwizard dashboard serve --port 9090
 ```
+
+### KDM email config
+
+`kdm`/`kdm-batch` `--smtp-config` points at a TOML file. It holds the SMTP
+password, so keep it outside the repo (e.g. `~/.config/dcpwizard/smtp.toml`,
+mode 600). The password is never logged or echoed in errors.
+
+| key | required | notes |
+|-----|----------|-------|
+| `host` | yes | SMTP server hostname |
+| `port` | yes | e.g. 465 (tls) or 587 (starttls) |
+| `security` | no | `tls` (default), `starttls`, or `none` |
+| `username` | no | SMTP auth user |
+| `password` | no | SMTP auth password |
+| `from` | yes | sender address |
+| `subject_template` | no | supports `{title}` and `{cinema}` |
+| `body_template` | no | supports `{title}` and `{cinema}` |
+
+```toml
+host = "smtp.example.com"
+port = 587
+security = "starttls"
+username = "keys@studio.example"
+password = "..."
+from = "Studio Keys <keys@studio.example>"
+subject_template = "KDMs for {title} — {cinema}"
+```
+
+With `--cinema`, one email per cinema is sent to its stored contact emails (plus
+any `--email-to`), each with that cinema's KDMs zipped. `--email-only-additional`
+sends only to `--email-to`.
 
 ## REST API
 

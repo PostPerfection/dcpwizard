@@ -19,8 +19,14 @@ mod tests {
     #[test]
     fn test_grok_lib_path_returns_string() {
         let p = grok_lib_path();
-        // Returns empty string if grok not installed
-        assert!(p.is_empty() || std::path::Path::new(&p).exists());
+        // when grok is installed under ~/bin/grok, its lib dir is prepended to
+        // whatever LD_LIBRARY_PATH was inherited
+        let home_grok = std::env::var("HOME")
+            .map(|h| format!("{h}/bin/grok/lib64"))
+            .unwrap_or_default();
+        if !home_grok.is_empty() && std::path::Path::new(&home_grok).exists() {
+            assert!(p.contains(&home_grok));
+        }
     }
 
     #[test]

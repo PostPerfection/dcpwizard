@@ -52,6 +52,48 @@ pub struct DcpConfig {
     /// Black-frame + silence padding appended at the tail of the program. Same
     /// syntax as `pad_head`.
     pub pad_tail: Option<String>,
+    /// Background/pad colour as `#RRGGBB` sRGB. Absent = black. Applied to the
+    /// head/tail pad frames (run through the DCDM transform before J2K encoding).
+    #[serde(default)]
+    pub pad_color: Option<String>,
+    /// Explicit reel-split boundaries as frame numbers (from --split-at timecodes
+    /// or --split-chapters). Empty = no explicit split. Mutually exclusive with
+    /// `reel_length_minutes`.
+    #[serde(default)]
+    pub reel_split_frames: Vec<u64>,
+    /// RFC 5646 sign-language tag (ISDCF Doc 13). When set, the sound track's
+    /// channel 15 is labelled SLVS and the CPL carries the SignLanguageVideo
+    /// ExtensionMetadata. `audio_path` must already be the combined 16-channel
+    /// WAV with the packed VP9 program on channel 15 (see `sign_language`).
+    #[serde(default)]
+    pub sign_language_lang: Option<String>,
+    /// Leading main-audio channel count under an SLVS track, for the SLVS MCA
+    /// config's soundfield layout (0 = SLVS-only, no leading soundfield).
+    #[serde(default)]
+    pub sign_language_main_channels: Option<u32>,
+}
+
+/// Validate custom container dimensions against the resolution bounds.
+///
+/// Both dims must be positive, even, and fit within the container for the chosen
+/// resolution: 2048x1080 (2K) or 4096x2160 (4K).
+pub fn validate_container_dims(width: u32, height: u32, is_4k: bool) -> Result<(), String> {
+    let (max_w, max_h) = if is_4k { (4096, 2160) } else { (2048, 1080) };
+    if width == 0 || height == 0 {
+        return Err("container dimensions must be positive".into());
+    }
+    if !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(format!(
+            "container dimensions {width}x{height} must both be even"
+        ));
+    }
+    if width > max_w || height > max_h {
+        return Err(format!(
+            "container dimensions {width}x{height} exceed the {} container {max_w}x{max_h}",
+            if is_4k { "4K" } else { "2K" }
+        ));
+    }
+    Ok(())
 }
 
 /// Dolby Atmos IAB bitstream data-essence UL, as used in real Atmos DCP AuxData.
@@ -169,11 +211,23 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         },
         None => 0,
     };
+    // background/pad colour (default black); parse before any encoding
+    let pad_rgb = match config.pad_color.as_deref() {
+        Some(spec) => match crate::pad::parse_pad_color(spec) {
+            Ok(rgb) => rgb,
+            Err(e) => {
+                tracing::error!("--pad-color: {e}");
+                return -1;
+            }
+        },
+        None => [0, 0, 0],
+    };
+
     let padding = head_frames + tail_frames > 0;
     if padding {
-        if config.reel_length_minutes > 0 {
+        if config.reel_length_minutes > 0 || !config.reel_split_frames.is_empty() {
             tracing::error!(
-                "head/tail padding is not supported with reel splitting (--reel-length)"
+                "head/tail padding is not supported with reel splitting (--reel-length / --split-at)"
             );
             return -1;
         }
@@ -222,7 +276,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     };
 
     // multi-reel path is opt-in; the single-reel path below is unchanged
-    if config.reel_length_minutes > 0 {
+    if config.reel_length_minutes > 0 || !config.reel_split_frames.is_empty() {
         if stereoscopic || config.atmos_path.is_some() {
             tracing::error!("stereoscopic 3D and Atmos are not supported with reel splitting");
             return -1;
@@ -286,8 +340,8 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             };
             let black = config
                 .output_dir
-                .join(format!(".dcpwizard_black_{picture_uuid}.j2c"));
-            if let Err(e) = crate::pad::generate_black_frame(bw, bh, fps, &black) {
+                .join(format!(".dcpwizard_pad_{picture_uuid}.j2c"));
+            if let Err(e) = crate::pad::generate_solid_frame(bw, bh, fps, pad_rgb, &black) {
                 tracing::error!("{e}");
                 return -1;
             }
@@ -393,8 +447,20 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
                 return -1;
             }
         };
-        let mca_config =
-            crate::mxf_wrap::build_mca_config(channels, config.hi_channel, config.vi_channel);
+        // sign-language: override the MCA config so channel 15 is labelled SLVS
+        // (the audio is already the combined 16-channel track). Otherwise derive
+        // the layout from the channel count plus any HI/VI channels.
+        let mca_config = if let Some(lang) = config.sign_language_lang.as_ref() {
+            let main_ch = config.sign_language_main_channels.unwrap_or(0);
+            let main = crate::mxf_wrap::build_mca_config(main_ch, None, None).unwrap_or_default();
+            Some(crate::sign_language::slvs_mca_config(
+                &main,
+                main_ch as usize,
+                lang,
+            ))
+        } else {
+            crate::mxf_wrap::build_mca_config(channels, config.hi_channel, config.vi_channel)
+        };
         // MainSoundConfiguration for the CPL metadata asset, from the same channel
         // count as the MCA labels (silent fill channels become '-').
         if let Some(configuration) =
@@ -625,6 +691,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
         reels: vec![reel],
         standard: config.standard,
         main_sound,
+        sign_language: config.sign_language_lang.clone(),
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
@@ -800,6 +867,21 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn container_dims_validation() {
+        // 2K bounds
+        assert!(validate_container_dims(2048, 1080, false).is_ok());
+        assert!(validate_container_dims(1920, 1080, false).is_ok());
+        assert!(validate_container_dims(2050, 1080, false).is_err()); // too wide for 2K
+        // 4K bounds
+        assert!(validate_container_dims(4096, 2160, true).is_ok());
+        assert!(validate_container_dims(4096, 2160, false).is_err()); // 4K dims on 2K
+        // odd and zero rejected
+        assert!(validate_container_dims(1921, 1080, false).is_err());
+        assert!(validate_container_dims(1920, 1081, false).is_err());
+        assert!(validate_container_dims(0, 1080, false).is_err());
+    }
 
     #[test]
     fn test_create_dcp_requires_picture_input() {

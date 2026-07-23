@@ -100,10 +100,10 @@ struct ReelEssence {
 }
 
 /// A wrapped sound track for one reel of one version.
-struct SoundReel {
-    uuid: String,
-    key_id: Option<String>,
-    key_info: Option<ContentKey>,
+pub(crate) struct SoundReel {
+    pub(crate) uuid: String,
+    pub(crate) key_id: Option<String>,
+    pub(crate) key_info: Option<ContentKey>,
 }
 
 /// Build a multi-CPL package from `versions`. Called only when `--versions` is
@@ -639,7 +639,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
 /// Wrap one reel's slice of a sound source into an MXF, registering it in the
 /// PKL/ASSETMAP. Returns the asset uuid plus any content key.
 #[allow(clippy::too_many_arguments)]
-fn wrap_sound_reel(
+pub(crate) fn wrap_sound_reel(
     config: &DcpConfig,
     src: &Path,
     info: &WavInfo,
@@ -684,7 +684,7 @@ fn wrap_sound_reel(
 
 /// Wrap already-rebased SRT cues into a per-reel timed-text MXF.
 #[allow(clippy::too_many_arguments)]
-fn wrap_subtitle_cues(
+pub(crate) fn wrap_subtitle_cues(
     cues: &[crate::subtitle::SubCue],
     lang: &str,
     config: &DcpConfig,
@@ -719,7 +719,7 @@ fn wrap_subtitle_cues(
 }
 
 /// Wrap a supplied SMPTE timed-text XML into an MXF unchanged (single reel).
-fn wrap_subtitle_xml(
+pub(crate) fn wrap_subtitle_xml(
     xml_path: &Path,
     config: &DcpConfig,
     fps: u32,
@@ -747,7 +747,11 @@ fn wrap_subtitle_xml(
 
 /// Prepare an audio source to canonical DCP 5.1 layout when it is 5.1, else use
 /// it as-is. A converted temp file is tracked in `temps` for cleanup.
-fn prepare_audio(config: &DcpConfig, path: &Path, temps: &mut Vec<PathBuf>) -> Result<PathBuf, ()> {
+pub(crate) fn prepare_audio(
+    config: &DcpConfig,
+    path: &Path,
+    temps: &mut Vec<PathBuf>,
+) -> Result<PathBuf, ()> {
     let out = config
         .output_dir
         .join(format!(".dcpwizard_vaudio_{}.wav", uuid::Uuid::new_v4()));
@@ -764,7 +768,11 @@ fn prepare_audio(config: &DcpConfig, path: &Path, temps: &mut Vec<PathBuf>) -> R
     }
 }
 
-fn mint_key(config: &DcpConfig, kind: KeyType, uuid: &str) -> Result<Option<GeneratedKey>, ()> {
+pub(crate) fn mint_key(
+    config: &DcpConfig,
+    kind: KeyType,
+    uuid: &str,
+) -> Result<Option<GeneratedKey>, ()> {
     if !config.encrypt {
         return Ok(None);
     }
@@ -778,7 +786,7 @@ fn mint_key(config: &DcpConfig, kind: KeyType, uuid: &str) -> Result<Option<Gene
 }
 
 /// Derive a per-CPL key filename from `--key-out`: keys.json -> keys_1_<title>.json.
-fn key_file_path(base: &Path, index: usize, title: &str) -> PathBuf {
+pub(crate) fn key_file_path(base: &Path, index: usize, title: &str) -> PathBuf {
     let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("keys");
     let ext = base.extension().and_then(|s| s.to_str());
     let sanitized: String = title
@@ -792,7 +800,7 @@ fn key_file_path(base: &Path, index: usize, title: &str) -> PathBuf {
     base.with_file_name(name)
 }
 
-fn cleanup(temps: &[PathBuf]) {
+pub(crate) fn cleanup(temps: &[PathBuf]) {
     for t in temps {
         let _ = std::fs::remove_file(t);
     }

@@ -59,6 +59,113 @@ pub fn plan_reel_ranges(total_frames: u64, fps: u32, reel_length_minutes: u32) -
     ranges
 }
 
+/// Parse a timecode into a frame index at `fps`.
+///
+/// Accepts `HH:MM:SS` or `HH:MM:SS:FF` (frames). The frame field must be below
+/// `fps`. Returns the absolute frame number for the timecode.
+pub fn parse_timecode(tc: &str, fps: u32) -> Result<u64, String> {
+    let fps = fps.max(1) as u64;
+    let parts: Vec<&str> = tc.trim().split(':').collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(format!("timecode '{tc}' must be HH:MM:SS or HH:MM:SS:FF"));
+    }
+    let num = |s: &str| -> Result<u64, String> {
+        s.parse::<u64>()
+            .map_err(|_| format!("invalid number '{s}' in timecode '{tc}'"))
+    };
+    let h = num(parts[0])?;
+    let m = num(parts[1])?;
+    let s = num(parts[2])?;
+    if m >= 60 || s >= 60 {
+        return Err(format!("timecode '{tc}' has minutes/seconds out of range"));
+    }
+    let f = if parts.len() == 4 { num(parts[3])? } else { 0 };
+    if f >= fps {
+        return Err(format!("timecode '{tc}' frame field must be < {fps}"));
+    }
+    Ok(((h * 60 + m) * 60 + s) * fps + f)
+}
+
+/// Parse chapter start frames from `ffprobe -show_chapters -print_format json`.
+///
+/// Each chapter's `start_time` (seconds) becomes a reel boundary at the nearest
+/// frame. The frame-0 boundary (a chapter at the very start) is dropped; the rest
+/// are sorted and de-duplicated. An empty chapter list is an error: the caller
+/// asked to split by chapters but the source has none.
+pub fn parse_chapter_starts(json: &str, fps: u32) -> Result<Vec<u64>, String> {
+    let fps = fps.max(1) as f64;
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("cannot parse ffprobe chapters: {e}"))?;
+    let chapters = v
+        .get("chapters")
+        .and_then(|c| c.as_array())
+        .ok_or("ffprobe returned no chapters array")?;
+    let mut frames: Vec<u64> = Vec::new();
+    for ch in chapters {
+        let start = ch
+            .get("start_time")
+            .and_then(|s| s.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .ok_or("chapter is missing a numeric start_time")?;
+        let frame = (start * fps).round() as u64;
+        if frame > 0 {
+            frames.push(frame);
+        }
+    }
+    frames.sort_unstable();
+    frames.dedup();
+    if frames.is_empty() {
+        return Err("source has no chapter marks to split on".into());
+    }
+    Ok(frames)
+}
+
+/// Build reel ranges from explicit split boundaries (frame numbers where a new
+/// reel starts).
+///
+/// Boundaries are sorted and de-duplicated. Every resulting reel must be at least
+/// one second (`fps` frames, SMPTE ST 429-2); a boundary that would make any reel
+/// shorter, or one at/beyond the content, is a loud error.
+pub fn plan_reel_ranges_explicit(
+    total_frames: u64,
+    fps: u32,
+    boundaries: &[u64],
+) -> Result<Vec<ReelRange>, String> {
+    let fps = fps.max(1) as u64;
+    let mut bounds: Vec<u64> = boundaries.to_vec();
+    bounds.sort_unstable();
+    bounds.dedup();
+    if let Some(&b) = bounds.iter().find(|&&b| b == 0 || b >= total_frames) {
+        return Err(format!(
+            "split point at frame {b} is outside the content (1..{})",
+            total_frames.saturating_sub(1)
+        ));
+    }
+
+    let mut ranges = Vec::with_capacity(bounds.len() + 1);
+    let mut start = 0u64;
+    for &b in &bounds {
+        ranges.push(ReelRange { start, end: b });
+        start = b;
+    }
+    ranges.push(ReelRange {
+        start,
+        end: total_frames,
+    });
+
+    for r in &ranges {
+        if r.frames() < fps {
+            return Err(format!(
+                "reel {}..{} is shorter than one second ({} frames < {fps}); adjust the split points",
+                r.start,
+                r.end,
+                r.frames()
+            ));
+        }
+    }
+    Ok(ranges)
+}
+
 /// PCM WAV layout needed to slice the essence sample-accurately.
 pub(crate) struct WavInfo {
     pub(crate) sample_rate: u32,
@@ -192,7 +299,17 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         return -1;
     }
     let total_frames = frames.len() as u64;
-    let ranges = plan_reel_ranges(total_frames, fps, config.reel_length_minutes);
+    let ranges = if !config.reel_split_frames.is_empty() {
+        match plan_reel_ranges_explicit(total_frames, fps, &config.reel_split_frames) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        }
+    } else {
+        plan_reel_ranges(total_frames, fps, config.reel_length_minutes)
+    };
     tracing::info!(
         "Splitting {total_frames} frames into {} reel(s) at {fps} fps",
         ranges.len()
@@ -669,6 +786,86 @@ mod tests {
             assert_eq!(48_000 % fps, 0, "{fps} not sample-exact at 48kHz");
             assert_eq!(96_000 % fps, 0, "{fps} not sample-exact at 96kHz");
         }
+    }
+
+    #[test]
+    fn timecode_parses_to_frames() {
+        assert_eq!(parse_timecode("00:00:00", 24).unwrap(), 0);
+        assert_eq!(parse_timecode("00:00:01", 24).unwrap(), 24);
+        assert_eq!(parse_timecode("00:01:00", 24).unwrap(), 1440);
+        assert_eq!(parse_timecode("01:00:00:00", 24).unwrap(), 86400);
+        assert_eq!(parse_timecode("00:00:02:12", 24).unwrap(), 60);
+    }
+
+    #[test]
+    fn timecode_rejects_bad_input() {
+        assert!(parse_timecode("1:2", 24).is_err());
+        assert!(parse_timecode("00:60:00", 24).is_err());
+        assert!(parse_timecode("00:00:00:24", 24).is_err()); // frame >= fps
+        assert!(parse_timecode("aa:bb:cc", 24).is_err());
+    }
+
+    #[test]
+    fn explicit_split_builds_contiguous_ranges() {
+        // 2000 frames at 24fps, split at frame 1000
+        let r = plan_reel_ranges_explicit(2000, 24, &[1000]).unwrap();
+        assert_eq!(
+            r,
+            vec![
+                ReelRange {
+                    start: 0,
+                    end: 1000
+                },
+                ReelRange {
+                    start: 1000,
+                    end: 2000
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_split_sorts_and_dedups() {
+        let r = plan_reel_ranges_explicit(3000, 24, &[2000, 1000, 1000]).unwrap();
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0].end, 1000);
+        assert_eq!(r[1].end, 2000);
+        assert_eq!(r[2].end, 3000);
+    }
+
+    #[test]
+    fn explicit_split_rejects_sub_one_second_reel() {
+        // split at frame 10 with 24fps makes a 10-frame first reel: reject loud
+        assert!(plan_reel_ranges_explicit(2000, 24, &[10]).is_err());
+        // split near the end makes a short last reel
+        assert!(plan_reel_ranges_explicit(2000, 24, &[1990]).is_err());
+    }
+
+    #[test]
+    fn chapter_starts_parse_from_ffprobe_json() {
+        let json = r#"{"chapters":[
+            {"id":0,"start_time":"0.000000","end_time":"60.0"},
+            {"id":1,"start_time":"60.000000","end_time":"120.0"},
+            {"id":2,"start_time":"120.000000","end_time":"180.0"}
+        ]}"#;
+        // 60s and 120s at 24fps -> frames 1440, 2880; the frame-0 chapter is dropped
+        assert_eq!(parse_chapter_starts(json, 24).unwrap(), vec![1440, 2880]);
+    }
+
+    #[test]
+    fn chapter_starts_error_when_none() {
+        let json = r#"{"chapters":[]}"#;
+        assert!(parse_chapter_starts(json, 24).is_err());
+        // a single chapter at frame 0 also yields no usable boundary
+        let one = r#"{"chapters":[{"id":0,"start_time":"0.0","end_time":"10.0"}]}"#;
+        assert!(parse_chapter_starts(one, 24).is_err());
+    }
+
+    #[test]
+    fn explicit_split_rejects_out_of_range_boundary() {
+        assert!(plan_reel_ranges_explicit(2000, 24, &[0]).is_err());
+        assert!(plan_reel_ranges_explicit(2000, 24, &[2000]).is_err());
+        assert!(plan_reel_ranges_explicit(2000, 24, &[5000]).is_err());
     }
 
     #[test]

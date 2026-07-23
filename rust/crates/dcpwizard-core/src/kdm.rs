@@ -50,7 +50,7 @@ pub fn load_content_keys(
 
 /// Parse a human-friendly duration ("2 weeks", "30 days", "7d", "24h", "2w").
 /// Duplicates postkit's private parser so we can resolve the window ourselves.
-fn parse_duration(s: &str) -> Result<chrono::Duration, String> {
+pub fn parse_duration(s: &str) -> Result<chrono::Duration, String> {
     let s = s.trim().to_lowercase();
     let parts: Vec<&str> = s.split_whitespace().collect();
     if parts.len() == 2 {
@@ -104,10 +104,49 @@ fn resolve_validity(valid_from: &str, valid_to: &str) -> Result<(String, String)
     Ok((from, to))
 }
 
+/// SMPTE/Interop format as a stable lowercase string for the history log.
+fn format_str(f: KdmFormat) -> &'static str {
+    match f {
+        KdmFormat::Smpte => "smpte",
+        KdmFormat::Interop => "interop",
+    }
+}
+
+/// Append a history record for a KDM just written (dom#1014). Reads the
+/// recipient cert only for its subject/serial; never touches key material. A
+/// logging failure warns but does not fail the (already written) KDM.
+#[allow(clippy::too_many_arguments)]
+fn log_history(
+    history: &Path,
+    cpl_id: &str,
+    content_title: &str,
+    recipient_cert: &Path,
+    valid_from: &str,
+    valid_to: &str,
+    output: &Path,
+    format: KdmFormat,
+) {
+    let info = postkit::certificate::read_certificate(recipient_cert);
+    let rec = crate::kdm_log::Record::now(
+        cpl_id,
+        content_title,
+        &info.subject_cn,
+        &info.serial,
+        valid_from,
+        valid_to,
+        &output.display().to_string(),
+        format_str(format),
+    );
+    if let Err(e) = crate::kdm_log::append(history, &rec) {
+        tracing::warn!("could not append KDM history: {e}");
+    }
+}
+
 /// Generate a signed KDM. `content_keys` (from the DCP's keys file) binds the
 /// KDM to the encrypted essence; an empty vec makes postkit mint a fresh key.
 /// `valid_from`/`valid_to` accept "now", ISO 8601 or a relative duration
 /// ("2 weeks"); the window is resolved here so a duration keeps the start offset.
+/// `history`, when set, appends one metadata record per successful KDM.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_kdm(
     cpl_id: String,
@@ -121,6 +160,7 @@ pub fn generate_kdm(
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output: PathBuf,
     format: KdmFormat,
+    history: Option<PathBuf>,
 ) -> i32 {
     let (valid_from, valid_to) = match resolve_validity(&valid_from, &valid_to) {
         Ok(w) => w,
@@ -146,7 +186,21 @@ pub fn generate_kdm(
         format,
     };
     match postkit::certificate::generate_kdm(&config) {
-        Ok(()) => 0,
+        Ok(()) => {
+            if let Some(h) = &history {
+                log_history(
+                    h,
+                    &config.cpl_id,
+                    &config.content_title,
+                    &config.recipient_cert_file,
+                    &config.valid_from,
+                    &config.valid_to,
+                    &config.output_file,
+                    format,
+                );
+            }
+            0
+        }
         Err(e) => {
             tracing::error!("{e}");
             1
@@ -170,6 +224,7 @@ pub fn generate_kdm_batch(
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output_dir: PathBuf,
     format: KdmFormat,
+    history: Option<PathBuf>,
 ) -> i32 {
     if let Err(e) = std::fs::create_dir_all(&output_dir) {
         tracing::error!("Failed to create output directory: {e}");
@@ -196,6 +251,7 @@ pub fn generate_kdm_batch(
             content_keys.clone(),
             output.clone(),
             format,
+            history.clone(),
         );
         if code == 0 {
             tracing::info!("KDM for {} -> {}", cert.display(), output.display());
@@ -300,6 +356,7 @@ mod tests {
             Vec::new(),
             out.path().to_path_buf(),
             KdmFormat::Smpte,
+            None,
         );
         assert_ne!(code, 0);
     }
@@ -377,6 +434,7 @@ mod tests {
             Vec::new(),
             dir.path().join("out"),
             KdmFormat::Smpte,
+            None,
         );
         assert_ne!(code, 0);
     }
@@ -436,6 +494,7 @@ mod tests {
 
         let cpl_id = "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9";
         let out = dir.path().join("kdms");
+        let history = dir.path().join("history.jsonl");
         let code = generate_kdm_batch(
             cpl_id.into(),
             "Test Feature".into(),
@@ -448,8 +507,20 @@ mod tests {
             content_keys,
             out.clone(),
             KdmFormat::Smpte,
+            Some(history.clone()),
         );
         assert_eq!(code, 0, "batch must succeed for every recipient");
+
+        // dom#1014: one history record per successful recipient, metadata only
+        let recs = crate::kdm_log::read_all(&history).unwrap();
+        assert_eq!(recs.len(), 2, "one history record per KDM");
+        assert_eq!(recs[0].content_title, "Test Feature");
+        assert!(!recs[0].recipient_serial.is_empty(), "serial cached in log");
+        let raw = std::fs::read_to_string(&history).unwrap();
+        assert!(
+            !raw.to_lowercase().contains("key"),
+            "no key material in history"
+        );
 
         let kdms: Vec<PathBuf> = std::fs::read_dir(&out)
             .unwrap()
@@ -525,6 +596,7 @@ mod tests {
             content_keys,
             out.clone(),
             KdmFormat::Interop,
+            None,
         );
         assert_eq!(code, 0, "interop KDM generation must succeed");
 

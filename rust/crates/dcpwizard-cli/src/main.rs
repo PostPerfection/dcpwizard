@@ -38,6 +38,22 @@ enum Commands {
         /// Allow generic FFmpeg HDR tone mapping. It is not a delivery transform.
         #[arg(long)]
         allow_generic_hdr_tonemap: bool,
+        /// Author a DCI HDR Addendum DCP (ST 2084 PQ). Requires --hdr-to-dci-lut
+        /// or --hdr-already-pq. See the fail-loud note: the current jp2k writer
+        /// cannot set the picture TransferCharacteristic UL.
+        #[arg(long)]
+        hdr_dci: bool,
+        /// Acknowledge the source is already ST 2084 PQ (DCI HDR), so --hdr-dci
+        /// needs no LUT conversion.
+        #[arg(long)]
+        hdr_already_pq: bool,
+        /// Sign-language video (ISDCF Doc 13): encoded to VP9 and packed onto
+        /// channel 15 of the sound track. Requires --sign-language-lang.
+        #[arg(long, requires = "sign_language_lang")]
+        sign_language_video: Option<String>,
+        /// RFC 5646 sign-language tag for --sign-language-video (e.g. sgn-ase).
+        #[arg(long)]
+        sign_language_lang: Option<String>,
         /// SRT file to convert, or supplied SMPTE subtitle XML to package unchanged
         #[arg(long, conflicts_with = "versions")]
         subtitle: Option<String>,
@@ -106,6 +122,26 @@ enum Commands {
         /// Pad the tail with black frames + silence. Same syntax as --pad-head.
         #[arg(long)]
         pad_tail: Option<String>,
+        /// Background/pad colour as hex sRGB (RRGGBB or #RRGGBB). Default: black.
+        /// Applied to head/tail pad frames via the DCDM colour transform.
+        #[arg(long)]
+        pad_color: Option<String>,
+        /// Custom container dimensions WxH (e.g. 1920x1080). Must be even and fit
+        /// within the 2K (2048x1080) or 4K (4096x2160) container. Overrides --container.
+        #[arg(long, conflicts_with = "container")]
+        container_dims: Option<String>,
+        /// Split into reels at these timecodes (comma-separated HH:MM:SS or
+        /// HH:MM:SS:FF). Each reel must be >= 1s. Conflicts with --reel-length.
+        #[arg(long, conflicts_with = "reel_length")]
+        split_at: Option<String>,
+        /// Split into reels at the source video's chapter marks (ffprobe).
+        /// Conflicts with --reel-length and --split-at.
+        #[arg(long, conflicts_with_all = ["reel_length", "split_at"])]
+        split_chapters: bool,
+        /// Force the ffmpeg decode range: full or legal. Corrects wrong or missing
+        /// source range metadata (video input only).
+        #[arg(long, value_parser = ["full", "legal"])]
+        input_range: Option<String>,
     },
     /// Rebuild ASSETMAP and PKL to cover every asset file present (metadata-only
     /// repackaging; no re-wrap or re-encode). For re-ingesting exported OV/VF
@@ -151,6 +187,89 @@ enum Commands {
         /// Replace a reel's sound essence: --replace-sound REEL=PATH (repeatable)
         #[arg(long = "replace-sound", value_name = "REEL=PATH")]
         replace_sound: Vec<String>,
+        /// Replace a reel's subtitle: --replace-subtitle REEL=PATH (SRT or SMPTE XML)
+        #[arg(long = "replace-subtitle", value_name = "REEL=PATH")]
+        replace_subtitle: Vec<String>,
+        /// Add a subtitle to a reel that has none: --add-subtitle REEL=PATH
+        #[arg(long = "add-subtitle", value_name = "REEL=PATH")]
+        add_subtitle: Vec<String>,
+        /// Language code for wrapped subtitle tracks
+        #[arg(long, default_value = "en")]
+        subtitle_language: String,
+    },
+    /// Assemble a new OV composition from existing DCPs: one new CPL whose reels
+    /// are the inputs' reels in order. Essence is copied byte-identical and
+    /// referenced by its existing UUIDs. Inputs must share standard/rate/
+    /// resolution and must not be encrypted.
+    Assemble {
+        /// Input DCP directories (two or more), in program order
+        #[arg(long = "input", required = true, num_args = 1..)]
+        input: Vec<String>,
+        /// Output OV directory
+        #[arg(short, long)]
+        output: String,
+        /// Title for the assembled composition
+        #[arg(short, long, default_value = "")]
+        title: String,
+    },
+    /// Edit a DCP's CPL metadata (title/annotation/content-kind/issuer) without
+    /// re-wrapping essence. Assigns a new CPL id and refreshes PKL/ASSETMAP.
+    /// Refuses encrypted DCPs (the KDM binds the CPL id).
+    Edit {
+        /// DCP directory to edit
+        #[arg(long)]
+        input: String,
+        /// Write the edited DCP here (copied first); omit to edit in place
+        #[arg(short, long)]
+        output: Option<String>,
+        /// New content title
+        #[arg(long)]
+        title: Option<String>,
+        /// New CPL AnnotationText
+        #[arg(long)]
+        annotation: Option<String>,
+        /// New content kind (abbrev FTR/TLR/... or a raw kind string)
+        #[arg(long)]
+        content_kind: Option<String>,
+        /// New Issuer
+        #[arg(long)]
+        issuer: Option<String>,
+    },
+    /// Build a multi-composition DCP: one CPL per manifest entry, each with its
+    /// own j2k_dir/audio/subtitle, over one shared PKL/ASSETMAP. Contrast
+    /// `create --versions` (multiple CPLs over shared essence).
+    CreateMulti {
+        /// Compositions manifest (JSON array): each entry names title, j2k_dir,
+        /// and optional audio/subtitle/subtitle_language/kind
+        #[arg(long)]
+        compositions: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+        /// DCP standard (smpte|interop)
+        #[arg(long, default_value = "smpte")]
+        standard: String,
+        /// DCP frame rate
+        #[arg(long, default_value = "24")]
+        frame_rate: u32,
+        /// Force 4K resolution (default 2K)
+        #[arg(long)]
+        fourk: bool,
+        /// Picture container: 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, 4k-full
+        #[arg(long)]
+        container: Option<String>,
+        /// Default subtitle language code for entries that omit one
+        #[arg(long, default_value = "en")]
+        subtitle_language: String,
+        /// Default content type abbrev (FTR, TLR, ...) for entries that omit kind
+        #[arg(long)]
+        content_type: Option<String>,
+        /// Encrypt the DCP
+        #[arg(long)]
+        encrypt: bool,
+        /// Where to write the content keys (required with --encrypt)
+        #[arg(long, required_if_eq("encrypt", "true"))]
+        key_out: Option<String>,
     },
     /// Encode images to JPEG 2000
     Encode {
@@ -184,6 +303,13 @@ enum Commands {
         /// Frame rate (default: 24)
         #[arg(long, default_value = "24")]
         fps: u32,
+        /// Force the ffmpeg decode range: full or legal. Corrects wrong or missing
+        /// source range metadata.
+        #[arg(long, value_parser = ["full", "legal"])]
+        input_range: Option<String>,
+        /// Split into reels at the source video's chapter marks (ffprobe).
+        #[arg(long)]
+        split_chapters: bool,
     },
     /// Transcode video to image sequence
     Transcode {
@@ -217,6 +343,33 @@ enum Commands {
         /// Optional target height (with --width, rescales the picture)
         #[arg(long)]
         height: Option<u32>,
+        /// KDM XML to decrypt an encrypted source (needs --recipient-key)
+        #[arg(long)]
+        kdm: Option<String>,
+        /// Recipient RSA private key (PEM) matching --kdm
+        #[arg(long)]
+        recipient_key: Option<String>,
+        /// dcpwizard KEYS.json, an alternative key source to --kdm
+        #[arg(long)]
+        keys: Option<String>,
+    },
+    /// Decrypt an encrypted DCP into a cleartext DCP with the same structure
+    Decrypt {
+        /// Input (encrypted) DCP directory
+        #[arg(short, long)]
+        input: String,
+        /// Output DCP directory (must differ from input)
+        #[arg(short, long)]
+        output: String,
+        /// KDM XML (needs --recipient-key)
+        #[arg(long)]
+        kdm: Option<String>,
+        /// Recipient RSA private key (PEM) matching --kdm
+        #[arg(long)]
+        recipient_key: Option<String>,
+        /// dcpwizard KEYS.json, an alternative key source to --kdm
+        #[arg(long)]
+        keys: Option<String>,
     },
     /// Verify an existing DCP
     Verify {
@@ -266,12 +419,27 @@ enum Commands {
         /// Output KDM file
         #[arg(short, long)]
         output: String,
-        /// Valid from (ISO 8601, e.g. "2024-06-01T00:00:00+00:00") or "now"
-        #[arg(short = 'f', long, default_value = "now")]
-        valid_from: String,
-        /// Valid to: ISO 8601 or a relative duration (e.g. "2 weeks", "30 days")
-        #[arg(short = 't', long, default_value = "2 weeks")]
-        valid_to: String,
+        /// Valid from (ISO 8601 or "now"). Overrides a --template start.
+        #[arg(short = 'f', long)]
+        valid_from: Option<String>,
+        /// Valid to (ISO 8601 or relative duration). Overrides a --template end.
+        #[arg(short = 't', long)]
+        valid_to: Option<String>,
+        /// Named validity template to expand the window from (kdm-template)
+        #[arg(long)]
+        template: Option<String>,
+        /// Validity templates file (default: XDG data dir)
+        #[arg(long)]
+        templates_file: Option<String>,
+        /// KDM history log file (default: XDG data dir); every KDM is recorded
+        #[arg(long)]
+        history_file: Option<String>,
+        /// Email the KDM to this address (repeatable). Requires --smtp-config
+        #[arg(long = "email-to")]
+        email_to: Vec<String>,
+        /// SMTP config TOML for sending the KDM by email
+        #[arg(long)]
+        smtp_config: Option<String>,
         /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
         /// this KDM should carry. Required to unlock an encrypted DCP.
         #[arg(long)]
@@ -318,6 +486,29 @@ enum Commands {
         /// Destination drive/directory
         #[arg(long)]
         dst: String,
+    },
+    /// Format a delivery drive as ext2/ext3 (cinema hard-drive delivery).
+    /// Refuses any mounted target; requires --yes.
+    FormatDrive {
+        /// Target block device (or regular file with --image)
+        target: String,
+        /// Filesystem: ext2 or ext3
+        #[arg(long, default_value = "ext2")]
+        fs: String,
+        /// Volume label
+        #[arg(long)]
+        label: Option<String>,
+        /// Confirm the erase (required)
+        #[arg(long)]
+        yes: bool,
+        /// Format a regular file instead of a block device (tests/loopback)
+        #[arg(long)]
+        image: bool,
+    },
+    /// Report a drive's filesystem type and label without modifying it.
+    CheckDrive {
+        /// Target block device or image file
+        target: String,
     },
     /// Measure audio loudness
     Loudness {
@@ -599,6 +790,15 @@ enum Commands {
         /// gets a KDM. Combined with any --cert values.
         #[arg(long)]
         cert_dir: Option<String>,
+        /// Cinema in the db: generate a KDM for every screen (repeatable)
+        #[arg(long = "cinema")]
+        cinemas: Vec<String>,
+        /// Single screen selector "cinema/screen" from the db (repeatable)
+        #[arg(long = "screen")]
+        screens: Vec<String>,
+        /// Cinema db file (default: XDG data dir)
+        #[arg(long)]
+        db: Option<String>,
         /// Signer leaf certificate file
         #[arg(long)]
         signer_cert: String,
@@ -611,12 +811,31 @@ enum Commands {
         /// Output directory for generated KDMs
         #[arg(short, long)]
         output_dir: String,
-        /// Valid from (ISO 8601 or "now")
-        #[arg(short = 'f', long, default_value = "now")]
-        valid_from: String,
-        /// Valid to (ISO 8601 or relative duration, e.g. "2 weeks")
-        #[arg(short = 't', long, default_value = "2 weeks")]
-        valid_to: String,
+        /// Valid from (ISO 8601 or "now"). Overrides a --template start.
+        #[arg(short = 'f', long)]
+        valid_from: Option<String>,
+        /// Valid to (ISO 8601 or relative duration). Overrides a --template end.
+        #[arg(short = 't', long)]
+        valid_to: Option<String>,
+        /// Named validity template to expand the window from
+        #[arg(long)]
+        template: Option<String>,
+        /// Validity templates file (default: XDG data dir)
+        #[arg(long)]
+        templates_file: Option<String>,
+        /// KDM history log file (default: XDG data dir); every KDM is recorded
+        #[arg(long)]
+        history_file: Option<String>,
+        /// Email each cinema its KDMs zipped (one email per cinema). Extra
+        /// address(es) to add to every email (repeatable)
+        #[arg(long = "email-to")]
+        email_to: Vec<String>,
+        /// SMTP config TOML for sending KDMs by email
+        #[arg(long)]
+        smtp_config: Option<String>,
+        /// Ignore cinema contact emails; send only to --email-to (dom#2515)
+        #[arg(long)]
+        email_only_additional: bool,
         /// DCP keys file (KEYS.json from `create --encrypt`) whose content keys
         /// every generated KDM should carry.
         #[arg(long)]
@@ -624,6 +843,62 @@ enum Commands {
         /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
         #[arg(long, default_value = "smpte")]
         format: String,
+    },
+
+    /// Manage the cinema/screen database
+    Cinema {
+        /// Cinema db file (default: XDG data dir)
+        #[arg(long, global = true)]
+        db: Option<String>,
+        #[command(subcommand)]
+        action: CinemaAction,
+    },
+
+    /// Show the KDM generation history log (dom#1014)
+    #[command(name = "kdm-history")]
+    KdmHistory {
+        /// History log file (default: XDG data dir)
+        #[arg(long)]
+        history_file: Option<String>,
+        /// Filter by content title substring
+        #[arg(long)]
+        title: Option<String>,
+        /// Filter by recipient subject or serial substring
+        #[arg(long)]
+        recipient: Option<String>,
+        /// Only records at or after this date/prefix (e.g. "2026-07")
+        #[arg(long)]
+        since: Option<String>,
+        /// Only records at or before this date/prefix
+        #[arg(long)]
+        until: Option<String>,
+    },
+
+    /// Manage named KDM validity templates (dom#2424)
+    #[command(name = "kdm-template")]
+    KdmTemplate {
+        /// Templates file (default: XDG data dir)
+        #[arg(long, global = true)]
+        templates_file: Option<String>,
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
+
+    /// Download a projector/server certificate by vendor + serial (dom#2705)
+    #[command(name = "cert-fetch")]
+    CertFetch {
+        /// Vendor: dolby/doremi or qube (others must be obtained from the vendor)
+        #[arg(long)]
+        vendor: String,
+        /// Server serial number
+        #[arg(long)]
+        serial: String,
+        /// Device type (qube only, e.g. QXPD)
+        #[arg(long = "type")]
+        device_type: Option<String>,
+        /// Output PEM file for the downloaded certificate
+        #[arg(short, long)]
+        output: String,
     },
 
     /// Package a trailer (ratings card + countdown leader + content)
@@ -870,6 +1145,87 @@ enum CertAction {
 }
 
 #[derive(Subcommand)]
+enum CinemaAction {
+    /// Add a cinema
+    Add {
+        /// Cinema name
+        #[arg(long)]
+        name: String,
+        /// Contact email (repeatable)
+        #[arg(long = "email")]
+        emails: Vec<String>,
+        /// Free-text notes
+        #[arg(long, default_value = "")]
+        notes: String,
+    },
+    /// List cinemas and their screens
+    List,
+    /// Remove a cinema
+    Remove {
+        #[arg(long)]
+        name: String,
+    },
+    /// Add a screen with its recipient certificate
+    AddScreen {
+        /// Cinema name
+        #[arg(long)]
+        cinema: String,
+        /// Screen name
+        #[arg(long)]
+        name: String,
+        /// Recipient certificate (PEM/CRT file)
+        #[arg(long)]
+        cert: String,
+        /// Embed the certificate PEM in the db instead of storing the path
+        #[arg(long)]
+        inline: bool,
+    },
+    /// Remove a screen from a cinema
+    RemoveScreen {
+        #[arg(long)]
+        cinema: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// Search cinemas/screens by name or certificate serial/thumbprint (dom#2707)
+    Search {
+        /// Query substring
+        query: String,
+    },
+    /// Import a facility from an FLM-x file (dom#239)
+    ImportFlm {
+        /// FLM XML file
+        file: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateAction {
+    /// Add a validity template
+    Add {
+        /// Template name
+        #[arg(long)]
+        name: String,
+        /// Offset from now to the start (e.g. "0 days", "2 days")
+        #[arg(long, default_value = "")]
+        start_offset: String,
+        /// Window length (e.g. "1 week", "180 days")
+        #[arg(long)]
+        duration: String,
+        /// UTC offset for emitted timestamps (e.g. "+02:00"); empty = UTC
+        #[arg(long, default_value = "")]
+        tz_offset: String,
+    },
+    /// List validity templates
+    List,
+    /// Remove a validity template
+    Remove {
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum BatchAction {
     /// List all jobs
     List,
@@ -901,6 +1257,687 @@ fn parse_colour_space(s: &str) -> postkit::colour::ColourSpace {
         _ => {
             tracing::warn!("Unknown colour space '{s}', defaulting to Rec709");
             postkit::colour::ColourSpace::Rec709
+        }
+    }
+}
+
+// ── create-time helpers (container dims, reel splits, input range) ───────────
+
+/// Resolve container dimensions from a preset name or a custom WxH.
+///
+/// `dims` (e.g. "1920x1080") wins over a `preset`; both absent yields (0,0)
+/// meaning "use the full-container resolution default". Custom dims are validated
+/// against the 2K/4K bounds.
+fn resolve_container(
+    preset: Option<&str>,
+    dims: Option<&str>,
+    is_4k: bool,
+) -> Result<(u32, u32), String> {
+    if let Some(spec) = dims {
+        let (w, h) = spec
+            .split_once(['x', 'X'])
+            .ok_or_else(|| format!("--container-dims '{spec}' must be WxH (e.g. 1920x1080)"))?;
+        let w: u32 = w
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid width in --container-dims '{spec}'"))?;
+        let h: u32 = h
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid height in --container-dims '{spec}'"))?;
+        dcpwizard_core::dcp::validate_container_dims(w, h, is_4k)?;
+        return Ok((w, h));
+    }
+    match preset {
+        Some("2k-scope") => Ok((2048, 858)),
+        Some("2k-flat") => Ok((1998, 1080)),
+        Some("2k-full") => Ok((2048, 1080)),
+        Some("4k-scope") => Ok((4096, 1716)),
+        Some("4k-flat") => Ok((3996, 2160)),
+        Some("4k-full") => Ok((4096, 2160)),
+        Some(value) => Err(format!("Unknown container: {value}")),
+        None => Ok((0, 0)),
+    }
+}
+
+/// ffprobe chapter boundaries for `video` at `fps`, or a loud error.
+fn video_chapter_boundaries(video: &Path, fps: u32) -> Result<Vec<u64>, String> {
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "quiet", "-print_format", "json", "-show_chapters"])
+        .arg(video)
+        .output()
+        .map_err(|e| format!("failed to run ffprobe: {e}"))?;
+    if !out.status.success() {
+        return Err("ffprobe failed to read chapters".into());
+    }
+    let json = String::from_utf8_lossy(&out.stdout);
+    dcpwizard_core::reel::parse_chapter_starts(&json, fps)
+}
+
+/// Resolve reel-split boundaries from --split-at timecodes or --split-chapters.
+fn resolve_reel_splits(
+    split_at: Option<&str>,
+    split_chapters: bool,
+    chapter_video: Option<&Path>,
+    fps: u32,
+) -> Result<Vec<u64>, String> {
+    if let Some(spec) = split_at {
+        let mut frames = Vec::new();
+        for tc in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            frames.push(dcpwizard_core::reel::parse_timecode(tc, fps)?);
+        }
+        if frames.is_empty() {
+            return Err("--split-at needs at least one timecode".into());
+        }
+        return Ok(frames);
+    }
+    if split_chapters {
+        let video = chapter_video
+            .ok_or("--split-chapters needs a video input to read chapter marks from")?;
+        return video_chapter_boundaries(video, fps);
+    }
+    Ok(Vec::new())
+}
+
+/// Re-encode `video` to a lossless intermediate that forces the given decode
+/// `range` (full|legal), so the downstream ffmpeg raw-RGB decode is correct even
+/// when the source range metadata is wrong or missing. Returns the intermediate path.
+fn normalize_input_range(video: &Path, range: &str, out_dir: &Path) -> Result<PathBuf, String> {
+    // ffmpeg's scale in_range names: full<->pc, legal<->tv/mpeg
+    let in_range = if range == "full" { "full" } else { "tv" };
+    let out = out_dir.join("range_corrected.mkv");
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-i")
+        .arg(video)
+        .arg("-vf")
+        .arg(format!("scale=in_range={in_range}:out_range=full"))
+        .args(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "gbrp16le", "-an"])
+        .arg(&out)
+        .status()
+        .map_err(|e| format!("failed to run ffmpeg for input-range correction: {e}"))?;
+    if !status.success() {
+        return Err("ffmpeg input-range correction failed".into());
+    }
+    Ok(out)
+}
+
+/// Build the combined sign-language sound track (ISDCF Doc 13): VP9-pack the
+/// sign video onto channel 15 over the main audio. Returns the combined WAV and
+/// the leading main-audio channel count for the SLVS MCA config.
+fn build_sign_language_audio(
+    slvs_video: &str,
+    main_audio: Option<&Path>,
+    min_frames: u64,
+    fps: u32,
+    output_dir: &Path,
+) -> Result<(PathBuf, u32), String> {
+    let combined = output_dir.join("slvs_sound.wav");
+    let main_channels = dcpwizard_core::sign_language::build_slvs_sound(
+        &PathBuf::from(slvs_video),
+        main_audio,
+        min_frames,
+        fps,
+        &combined,
+    )?;
+    Ok((combined, main_channels))
+}
+
+/// DCI HDR Addendum handling: validate the flag combo and the raised codestream
+/// cap, then fail loud. The picture TransferCharacteristic=ST 2084 UL cannot be
+/// written by the current jp2k writer, so a compliant DCI HDR DCP is refused
+/// rather than emitting a CPL HDR claim over essence that lacks the UL.
+fn reject_hdr_dci(
+    hdr_to_dci_lut: &Option<String>,
+    hdr_already_pq: bool,
+    frame_rate: Option<u32>,
+    video_bit_rate: Option<u32>,
+) -> ! {
+    use dcpwizard_core::hdr;
+    if hdr_to_dci_lut.is_none() && !hdr_already_pq {
+        tracing::error!(
+            "--hdr-dci needs the source path to PQ: pass --hdr-to-dci-lut or --hdr-already-pq"
+        );
+        std::process::exit(1);
+    }
+    let rate = frame_rate.unwrap_or(24);
+    let cap = hdr::hdr_codestream_byte_cap(rate);
+    if let Some(mbps) = video_bit_rate
+        && mbps > hdr::HDR_MAX_MBPS
+    {
+        tracing::error!(
+            "--hdr-dci caps the codestream at {cap} bytes/frame ({} Mbit/s at {rate} fps); requested {mbps} Mbit/s exceeds it",
+            hdr::HDR_MAX_MBPS
+        );
+        std::process::exit(1);
+    }
+    tracing::error!(
+        "--hdr-dci cannot be authored: the DCI HDR Addendum requires TransferCharacteristic=ST 2084 (UL 06.0e.2b.34.04.01.01.0d.04.01.01.01.01.0a.00.00) in the picture descriptor, but the asdcplib-rs jp2k writer exposes no setter for it. Emitting the CPL HDR claim over essence that lacks the UL would mislabel the DCP, so it is refused. The honest, spec-backed constraint is enforced: per-codestream cap floor(56,250,000/{rate}) = {cap} bytes/frame ({} Mbit/s).",
+        hdr::HDR_MAX_MBPS
+    );
+    std::process::exit(1);
+}
+
+// ── KDM distribution helpers ────────────────────────────────────────────────
+
+/// resolve a validity window: a --template supplies the base window, explicit
+/// --valid-from/--valid-to override it, and the fallback is now .. +2 weeks.
+fn resolve_window(
+    valid_from: Option<String>,
+    valid_to: Option<String>,
+    template: Option<String>,
+    templates_file: Option<String>,
+) -> Result<(String, String), String> {
+    let (mut vf, mut vt) = ("now".to_string(), "2 weeks".to_string());
+    if let Some(name) = template {
+        let path = templates_file
+            .map(PathBuf::from)
+            .unwrap_or_else(dcpwizard_core::store::default_templates_path);
+        let store = dcpwizard_core::kdm_template::TemplateStore::load(&path)?;
+        let t = store
+            .get(&name)
+            .ok_or_else(|| format!("template '{name}' not found"))?;
+        let (f, t2) = t.expand()?;
+        vf = f;
+        vt = t2;
+    }
+    if let Some(f) = valid_from {
+        vf = f;
+    }
+    if let Some(t) = valid_to {
+        vt = t;
+    }
+    Ok((vf, vt))
+}
+
+fn history_path(history_file: Option<String>) -> PathBuf {
+    history_file
+        .map(PathBuf::from)
+        .unwrap_or_else(dcpwizard_core::store::default_history_path)
+}
+
+fn cinema_db_path(db: Option<String>) -> PathBuf {
+    db.map(PathBuf::from)
+        .unwrap_or_else(dcpwizard_core::store::default_db_path)
+}
+
+fn templates_db_path(templates_file: Option<String>) -> PathBuf {
+    templates_file
+        .map(PathBuf::from)
+        .unwrap_or_else(dcpwizard_core::store::default_templates_path)
+}
+
+fn send_kdm_email(
+    cfg_path: &str,
+    cinema: &str,
+    title: &str,
+    to: &[String],
+    files: &[PathBuf],
+) -> Result<(), String> {
+    if to.is_empty() {
+        return Err("no email recipients: pass --email-to".to_string());
+    }
+    let cfg = dcpwizard_core::email::SmtpConfig::load(Path::new(cfg_path))?;
+    dcpwizard_core::email::send_kdms(&cfg, cinema, title, to, files)
+}
+
+fn sanitize_dir_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn xml_files_in(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("xml"))
+        .collect();
+    v.sort();
+    v
+}
+
+/// a set of recipients that share one delivery email (one cinema, or the loose
+/// --cert/--cert-dir group with an empty name).
+struct BatchGroup {
+    name: String,
+    emails: Vec<String>,
+    cert_paths: Vec<PathBuf>,
+}
+
+struct KdmBatchArgs {
+    cpl_id: String,
+    content_title: String,
+    certs: Vec<String>,
+    cert_dir: Option<String>,
+    cinemas: Vec<String>,
+    screens: Vec<String>,
+    db: Option<String>,
+    signer_cert: String,
+    signer_key: String,
+    signer_chain: Vec<String>,
+    output_dir: String,
+    valid_from: Option<String>,
+    valid_to: Option<String>,
+    template: Option<String>,
+    templates_file: Option<String>,
+    history_file: Option<String>,
+    email_to: Vec<String>,
+    smtp_config: Option<String>,
+    email_only_additional: bool,
+    keys: Option<String>,
+    format: String,
+}
+
+fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
+    let format = match dcpwizard_core::kdm::parse_format(&a.format) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
+    let (valid_from, valid_to) =
+        match resolve_window(a.valid_from, a.valid_to, a.template, a.templates_file) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("{e}");
+                return 1;
+            }
+        };
+    let content_keys = match a.keys {
+        Some(path) => match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &a.cpl_id)
+        {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::error!("{e}");
+                return 1;
+            }
+        },
+        None => Vec::new(),
+    };
+
+    // materialized inline certs live here for the whole batch.
+    let tmp = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("cannot create temp dir: {e}");
+            return 1;
+        }
+    };
+
+    // loose certs from --cert / --cert-dir go into an unnamed group.
+    let mut loose: Vec<String> = a.certs;
+    if let Some(dir) = a.cert_dir {
+        match dcpwizard_core::kdm::certs_in_dir(&PathBuf::from(&dir)) {
+            Ok(found) => loose.extend(found),
+            Err(e) => {
+                tracing::error!("{e}");
+                return 1;
+            }
+        }
+    }
+
+    let mut groups: Vec<BatchGroup> = Vec::new();
+    if !loose.is_empty() {
+        groups.push(BatchGroup {
+            name: String::new(),
+            emails: Vec::new(),
+            cert_paths: loose.into_iter().map(PathBuf::from).collect(),
+        });
+    }
+
+    // db-resolved cinema/screen recipients, grouped by cinema.
+    if !a.cinemas.is_empty() || !a.screens.is_empty() {
+        let db = match dcpwizard_core::cinema::CinemaDb::load(&cinema_db_path(a.db)) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("{e}");
+                return 1;
+            }
+        };
+        let recips = match db.resolve(&a.cinemas, &a.screens, tmp.path()) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("{e}");
+                return 1;
+            }
+        };
+        for r in recips {
+            match groups.iter_mut().find(|g| g.name == r.cinema) {
+                Some(g) => g.cert_paths.push(r.cert_path),
+                None => groups.push(BatchGroup {
+                    name: r.cinema,
+                    emails: r.emails,
+                    cert_paths: vec![r.cert_path],
+                }),
+            }
+        }
+    }
+
+    if groups.iter().all(|g| g.cert_paths.is_empty()) {
+        tracing::error!("No recipients (use --cert, --cert-dir, --cinema or --screen)");
+        return 1;
+    }
+
+    let history = Some(history_path(a.history_file));
+    let signer_cert = PathBuf::from(&a.signer_cert);
+    let signer_key = PathBuf::from(&a.signer_key);
+    let signer_chain: Vec<PathBuf> = a.signer_chain.iter().map(PathBuf::from).collect();
+    let output_root = PathBuf::from(&a.output_dir);
+
+    // without email: one flat batch into output_dir (preserves prior behaviour).
+    if a.smtp_config.is_none() {
+        let all: Vec<PathBuf> = groups.into_iter().flat_map(|g| g.cert_paths).collect();
+        return dcpwizard_core::kdm::generate_kdm_batch(
+            a.cpl_id,
+            a.content_title,
+            all,
+            signer_cert,
+            signer_key,
+            signer_chain,
+            valid_from,
+            valid_to,
+            content_keys,
+            output_root,
+            format,
+            history,
+        );
+    }
+
+    // with email: one email per group (dom#2516), each with that group's KDMs
+    // zipped. multiple groups get their own subdir so files don't collide.
+    let cfg_path = a.smtp_config.unwrap();
+    let multi = groups.len() > 1;
+    let mut failures = 0;
+    for g in &groups {
+        let out_dir = if multi {
+            let sub = if g.name.is_empty() {
+                "additional".to_string()
+            } else {
+                sanitize_dir_name(&g.name)
+            };
+            output_root.join(sub)
+        } else {
+            output_root.clone()
+        };
+        let code = dcpwizard_core::kdm::generate_kdm_batch(
+            a.cpl_id.clone(),
+            a.content_title.clone(),
+            g.cert_paths.clone(),
+            signer_cert.clone(),
+            signer_key.clone(),
+            signer_chain.clone(),
+            valid_from.clone(),
+            valid_to.clone(),
+            content_keys.clone(),
+            out_dir.clone(),
+            format,
+            history.clone(),
+        );
+        if code != 0 {
+            failures += 1;
+            continue;
+        }
+        // recipients: cinema contacts (unless only-additional) plus --email-to.
+        let mut to: Vec<String> = if a.email_only_additional {
+            Vec::new()
+        } else {
+            g.emails.clone()
+        };
+        for e in &a.email_to {
+            if !to.contains(e) {
+                to.push(e.clone());
+            }
+        }
+        let files = xml_files_in(&out_dir);
+        match send_kdm_email(&cfg_path, &g.name, &a.content_title, &to, &files) {
+            Ok(()) => tracing::info!(
+                "emailed {} KDM(s) for {}",
+                files.len(),
+                if g.name.is_empty() {
+                    "additional recipients"
+                } else {
+                    &g.name
+                }
+            ),
+            Err(e) => {
+                tracing::error!("{e}");
+                failures += 1;
+            }
+        }
+    }
+    if failures == 0 { 0 } else { 1 }
+}
+
+fn run_cinema(db: Option<String>, action: CinemaAction) -> i32 {
+    let path = cinema_db_path(db);
+    let mut store = match dcpwizard_core::cinema::CinemaDb::load(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
+    use dcpwizard_core::cinema::CertSource;
+    let mutated: Result<bool, String> = match action {
+        CinemaAction::Add {
+            name,
+            emails,
+            notes,
+        } => store.add_cinema(&name, emails, notes).map(|_| true),
+        CinemaAction::Remove { name } => store.remove_cinema(&name).map(|_| true),
+        CinemaAction::AddScreen {
+            cinema,
+            name,
+            cert,
+            inline,
+        } => {
+            let src = if inline {
+                match std::fs::read_to_string(&cert) {
+                    Ok(pem) => CertSource::Inline(pem),
+                    Err(e) => {
+                        tracing::error!("cannot read {cert}: {e}");
+                        return 1;
+                    }
+                }
+            } else {
+                CertSource::Path(PathBuf::from(&cert))
+            };
+            store.add_screen(&cinema, &name, src).map(|_| true)
+        }
+        CinemaAction::RemoveScreen { cinema, name } => {
+            store.remove_screen(&cinema, &name).map(|_| true)
+        }
+        CinemaAction::ImportFlm { file } => match store.import_flm(&PathBuf::from(&file)) {
+            Ok(summary) => {
+                println!("imported {summary}");
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        },
+        CinemaAction::List => {
+            for c in &store.cinemas {
+                println!("{} [{}]", c.name, c.emails.join(", "));
+                for s in &c.screens {
+                    println!("  - {} (serial {})", s.name, s.cert_serial);
+                }
+            }
+            Ok(false)
+        }
+        CinemaAction::Search { query } => {
+            let hits = store.search(&query);
+            if hits.is_empty() {
+                println!("no matches for '{query}'");
+            }
+            for (cinema, screen) in hits {
+                if screen.is_empty() {
+                    println!("{cinema}");
+                } else {
+                    println!("{cinema} / {screen}");
+                }
+            }
+            Ok(false)
+        }
+    };
+    match mutated {
+        Ok(true) => {
+            if let Err(e) = store.save(&path) {
+                tracing::error!("{e}");
+                return 1;
+            }
+            0
+        }
+        Ok(false) => 0,
+        Err(e) => {
+            tracing::error!("{e}");
+            1
+        }
+    }
+}
+
+fn run_kdm_history(
+    history_file: Option<String>,
+    title: Option<String>,
+    recipient: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+) -> i32 {
+    let path = history_path(history_file);
+    let all = match dcpwizard_core::kdm_log::read_all(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
+    let recs = dcpwizard_core::kdm_log::filter(
+        all,
+        title.as_deref(),
+        recipient.as_deref(),
+        since.as_deref(),
+        until.as_deref(),
+    );
+    if recs.is_empty() {
+        println!("no history records");
+    }
+    for r in recs {
+        println!(
+            "{}  {}  {}  serial={}  {}..{}  {}",
+            r.timestamp,
+            r.format,
+            r.content_title,
+            r.recipient_serial,
+            r.valid_from,
+            r.valid_to,
+            r.output_path
+        );
+    }
+    0
+}
+
+fn run_kdm_template(templates_file: Option<String>, action: TemplateAction) -> i32 {
+    let path = templates_db_path(templates_file);
+    let mut store = match dcpwizard_core::kdm_template::TemplateStore::load(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
+    use dcpwizard_core::kdm_template::Template;
+    let mutated: Result<bool, String> = match action {
+        TemplateAction::Add {
+            name,
+            start_offset,
+            duration,
+            tz_offset,
+        } => {
+            let t = Template {
+                name,
+                start_offset,
+                duration,
+                tz_offset,
+            };
+            // validate the window parses before persisting
+            match t.expand() {
+                Ok(_) => store.add(t).map(|_| true),
+                Err(e) => Err(e),
+            }
+        }
+        TemplateAction::Remove { name } => store.remove(&name).map(|_| true),
+        TemplateAction::List => {
+            for t in &store.templates {
+                let tz = if t.tz_offset.is_empty() {
+                    "UTC"
+                } else {
+                    &t.tz_offset
+                };
+                println!(
+                    "{}: start +[{}] duration {} ({})",
+                    t.name,
+                    if t.start_offset.is_empty() {
+                        "now"
+                    } else {
+                        &t.start_offset
+                    },
+                    t.duration,
+                    tz
+                );
+            }
+            Ok(false)
+        }
+    };
+    match mutated {
+        Ok(true) => {
+            if let Err(e) = store.save(&path) {
+                tracing::error!("{e}");
+                return 1;
+            }
+            0
+        }
+        Ok(false) => 0,
+        Err(e) => {
+            tracing::error!("{e}");
+            1
+        }
+    }
+}
+
+fn run_cert_fetch(
+    vendor: String,
+    serial: String,
+    device_type: Option<String>,
+    output: String,
+) -> i32 {
+    let v = match dcpwizard_core::cert_fetch::parse_vendor(&vendor) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
+    match dcpwizard_core::cert_fetch::fetch(
+        v,
+        &serial,
+        device_type.as_deref(),
+        &PathBuf::from(&output),
+    ) {
+        Ok(summary) => {
+            println!("downloaded {summary} -> {output}");
+            0
+        }
+        Err(e) => {
+            tracing::error!("{e}");
+            1
         }
     }
 }
@@ -959,6 +1996,10 @@ fn run() {
             audio_input_order,
             hdr_to_dci_lut,
             allow_generic_hdr_tonemap,
+            hdr_dci,
+            hdr_already_pq,
+            sign_language_video,
+            sign_language_lang,
             subtitle,
             versions,
             subtitle_language,
@@ -981,6 +2022,11 @@ fn run() {
             vi_channel,
             pad_head,
             pad_tail,
+            pad_color,
+            container_dims,
+            split_at,
+            split_chapters,
+            input_range,
         } => {
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
@@ -1043,6 +2089,12 @@ fn run() {
             let video_bit_rate =
                 video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps));
 
+            // DCI HDR Addendum: validate + report the raised codestream cap, then
+            // fail loud (the jp2k writer cannot set the ST 2084 TransferCharacteristic).
+            if hdr_dci {
+                reject_hdr_dci(&hdr_to_dci_lut, hdr_already_pq, frame_rate, video_bit_rate);
+            }
+
             // Detect if input is a video file (not a J2K directory)
             let is_video_file = video_path.is_file()
                 && video_path
@@ -1061,6 +2113,7 @@ fn run() {
                                 | "mpg"
                                 | "mpeg"
                                 | "webm"
+                                | "apv"
                         )
                     })
                     .unwrap_or(false);
@@ -1071,12 +2124,39 @@ fn run() {
                 use std::sync::Arc;
                 use std::sync::atomic::AtomicBool;
 
+                // fail loud if ffmpeg cannot decode the source codec (e.g. APV on
+                // an older ffmpeg); the whole pipeline decodes through ffmpeg
+                if let Err(e) = dcpwizard_core::probe::ensure_video_decodable(&video_path) {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+
                 let _ = std::fs::create_dir_all(&output_dir);
                 let j2k_dir = output_dir.join("j2k");
                 let _ = std::fs::create_dir_all(&j2k_dir);
 
-                let mut encode_video_path = video_path.clone();
-                let hdr_type = dcpwizard_core::dolby_vision::detect_hdr_type(&video_path);
+                // optional decode-range correction: re-decode the source at a
+                // forced range into a lossless intermediate the encode reads from
+                let range_src = if let Some(range) = input_range.as_deref() {
+                    match normalize_input_range(&video_path, range, &output_dir) {
+                        Ok(p) => {
+                            tracing::info!("Forcing {range}-range decode of the source");
+                            p
+                        }
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    }
+                } else {
+                    video_path.clone()
+                };
+
+                let mut encode_video_path = range_src.clone();
+                // the hdr-lut branch outputs x'y'z' already; every other source is
+                // display rgb and needs grok's dcdm transform at encode time
+                let mut content_already_xyz = false;
+                let hdr_type = dcpwizard_core::dolby_vision::detect_hdr_type(&range_src);
                 if hdr_type != postkit::dolby_vision::HdrType::Sdr {
                     let converted = output_dir.join("hdr_to_dci_source.mov");
                     if let Some(lut) = hdr_to_dci_lut.as_ref() {
@@ -1086,7 +2166,7 @@ fn run() {
                             return;
                         }
                         let opts = postkit::colour::ColourConvertOptions {
-                            input: video_path.clone(),
+                            input: range_src.clone(),
                             output: converted.clone(),
                             source_space: postkit::colour::ColourSpace::Rec2020,
                             target_space: postkit::colour::ColourSpace::Xyz,
@@ -1096,12 +2176,13 @@ fn run() {
                             tracing::error!("HDR-to-DCI LUT conversion failed: {e}");
                             return;
                         }
+                        content_already_xyz = true;
                     } else if allow_generic_hdr_tonemap {
                         tracing::warn!(
                             "Using generic FFmpeg HDR tone mapping. It is not suitable as a default delivery transform."
                         );
                         if dcpwizard_core::dolby_vision::convert_hdr(
-                            &video_path,
+                            &range_src,
                             postkit::dolby_vision::HdrType::Sdr,
                             &converted,
                         ) != 0
@@ -1188,6 +2269,7 @@ fn run() {
                 let params = CompressParams {
                     compression_ratio,
                     frame_rate: fps as u16,
+                    apply_xyz_transform: !content_already_xyz,
                     ..CompressParams::default()
                 };
 
@@ -1317,6 +2399,27 @@ fn run() {
                     audio_path
                 };
 
+                // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15,
+                // overriding the sound track with the combined 16-channel WAV
+                let (audio_path, sl_main_channels) = if let Some(slv) = sign_language_video.as_ref()
+                {
+                    match build_sign_language_audio(
+                        slv,
+                        audio_path.as_deref(),
+                        total_frames as u64,
+                        fps,
+                        &output_dir,
+                    ) {
+                        Ok((wav, ch)) => (Some(wav), Some(ch)),
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    }
+                } else {
+                    (audio_path, None)
+                };
+
                 let resolution = if fourk {
                     dcpwizard_core::Resolution::FourK
                 } else {
@@ -1327,18 +2430,28 @@ fn run() {
                     .and_then(dcpwizard_core::ContentType::from_abbrev)
                     .unwrap_or_default();
 
-                let (container_width, container_height) = match container.as_deref() {
-                    Some("2k-scope") => (2048, 858),
-                    Some("2k-flat") => (1998, 1080),
-                    Some("2k-full") => (2048, 1080),
-                    Some("4k-scope") => (4096, 1716),
-                    Some("4k-flat") => (3996, 2160),
-                    Some("4k-full") => (4096, 2160),
-                    Some(value) => {
-                        tracing::error!("Unknown container: {value}");
+                let (container_width, container_height) =
+                    match resolve_container(container.as_deref(), container_dims.as_deref(), fourk)
+                    {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    };
+
+                // reel-split boundaries from --split-at / --split-chapters
+                let reel_split_frames = match resolve_reel_splits(
+                    split_at.as_deref(),
+                    split_chapters,
+                    Some(&video_path),
+                    fps,
+                ) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::error!("{e}");
                         return;
                     }
-                    None => (0, 0),
                 };
 
                 let config = dcpwizard_core::dcp::DcpConfig {
@@ -1367,6 +2480,10 @@ fn run() {
                     stereo_3d: right_eye_dir.is_some(),
                     pad_head: pad_head.clone(),
                     pad_tail: pad_tail.clone(),
+                    pad_color: pad_color.clone(),
+                    reel_split_frames,
+                    sign_language_lang: sign_language_lang.clone(),
+                    sign_language_main_channels: sl_main_channels,
                 };
                 let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
@@ -1386,6 +2503,7 @@ fn run() {
                 {
                     let _ = std::fs::remove_file(wav);
                 }
+                let _ = std::fs::remove_file(output_dir.join("range_corrected.mkv"));
                 code
             } else {
                 // Input is a J2K directory or image sequence
@@ -1399,43 +2517,76 @@ fn run() {
                     .and_then(dcpwizard_core::ContentType::from_abbrev)
                     .unwrap_or_default();
 
+                if input_range.is_some() {
+                    tracing::error!(
+                        "--input-range applies to a video input; a J2K/image sequence carries no decode range"
+                    );
+                    return;
+                }
+
+                let (container_width, container_height) =
+                    match resolve_container(container.as_deref(), container_dims.as_deref(), fourk)
+                    {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    };
+
+                let fps = frame_rate.unwrap_or(24);
+                let reel_split_frames =
+                    match resolve_reel_splits(split_at.as_deref(), split_chapters, None, fps) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    };
+
+                // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15.
+                // Cover at least the J2K frame count so the sound spans the picture.
+                let (audio_path, sl_main_channels) = if let Some(slv) = sign_language_video.as_ref()
+                {
+                    let frames = std::fs::read_dir(&video_path)
+                        .map(|rd| {
+                            rd.filter_map(|e| e.ok())
+                                .filter(|e| e.path().is_file())
+                                .count()
+                        })
+                        .unwrap_or(0) as u64;
+                    match build_sign_language_audio(
+                        slv,
+                        audio.as_deref().map(Path::new),
+                        frames,
+                        fps,
+                        &output_dir,
+                    ) {
+                        Ok((wav, ch)) => (Some(wav), Some(ch)),
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    }
+                } else {
+                    (audio.map(PathBuf::from), None)
+                };
+
                 let config = dcpwizard_core::dcp::DcpConfig {
                     title,
                     standard: std_val,
                     encrypt,
                     key_out: key_out.map(PathBuf::from),
                     output_dir,
-                    frame_rate_num: frame_rate.unwrap_or(24),
+                    frame_rate_num: fps,
                     frame_rate_den: 1,
                     resolution,
                     content_type: ct,
-                    container_width: match container.as_deref() {
-                        Some("2k-scope") => 2048,
-                        Some("2k-flat") => 1998,
-                        Some("2k-full") => 2048,
-                        Some("4k-scope") => 4096,
-                        Some("4k-flat") => 3996,
-                        Some("4k-full") => 4096,
-                        Some(value) => {
-                            tracing::error!("Unknown container: {value}");
-                            return;
-                        }
-                        None => 0,
-                    },
-                    container_height: match container.as_deref() {
-                        Some("2k-scope") => 858,
-                        Some("2k-flat") | Some("2k-full") => 1080,
-                        Some("4k-scope") => 1716,
-                        Some("4k-flat") | Some("4k-full") => 2160,
-                        Some(value) => {
-                            tracing::error!("Unknown container: {value}");
-                            return;
-                        }
-                        None => 0,
-                    },
+                    container_width,
+                    container_height,
                     max_bitrate_mbps: video_bit_rate.unwrap_or(0),
                     j2k_dir: Some(video_path),
-                    audio_path: audio.map(PathBuf::from),
+                    audio_path,
                     audio_input_order,
                     subtitle_path: subtitle.map(PathBuf::from),
                     subtitle_language,
@@ -1447,6 +2598,10 @@ fn run() {
                     vi_channel,
                     pad_head,
                     pad_tail,
+                    pad_color,
+                    reel_split_frames,
+                    sign_language_lang,
+                    sign_language_main_channels: sl_main_channels,
                 };
                 match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
@@ -1476,6 +2631,8 @@ fn run() {
             audio,
             ratio,
             fps,
+            input_range,
+            split_chapters,
         } => {
             use postkit::encode::{StreamEncodeOptions, stream_encode_subprocess};
             use std::sync::Arc;
@@ -1495,6 +2652,35 @@ fn run() {
 
             tracing::info!("Pipeline (subprocess Grok): {} -> {}", input, output);
 
+            // reel-split boundaries from the source's chapter marks
+            let reel_split_frames = if split_chapters {
+                match video_chapter_boundaries(&input_path, fps) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+            // optional decode-range correction into a lossless intermediate
+            let encode_input = if let Some(range) = input_range.as_deref() {
+                match normalize_input_range(&input_path, range, &output_dir) {
+                    Ok(p) => {
+                        tracing::info!("Forcing {range}-range decode of the source");
+                        p
+                    }
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                input_path.clone()
+            };
+
             let grk_bin = std::env::var("GRK_COMPRESS_BIN")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| {
@@ -1503,7 +2689,7 @@ fn run() {
                 });
 
             let opts = StreamEncodeOptions {
-                input: input_path.clone(),
+                input: encode_input.clone(),
                 output_dir: j2k_dir.clone(),
                 compression_ratio: ratio,
                 num_resolutions: 6,
@@ -1583,6 +2769,7 @@ fn run() {
                     j2k_dir: Some(j2k_dir.clone()),
                     audio_path: audio_path.clone(),
                     audio_input_order: dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51,
+                    reel_split_frames: reel_split_frames.clone(),
                     ..Default::default()
                 };
                 let code = dcpwizard_core::dcp::create_dcp(&config);
@@ -1594,6 +2781,7 @@ fn run() {
                 {
                     let _ = std::fs::remove_file(wav);
                 }
+                let _ = std::fs::remove_file(output_dir.join("range_corrected.mkv"));
                 code
             }
         }
@@ -1629,6 +2817,9 @@ fn run() {
             video_bit_rate,
             width,
             height,
+            kdm,
+            recipient_key,
+            keys,
         } => {
             let config = dcpwizard_core::j2k_transcode::DcpTranscodeConfig {
                 input_dir: PathBuf::from(input),
@@ -1636,8 +2827,28 @@ fn run() {
                 target_bitrate_mbps: video_bit_rate,
                 target_width: width.unwrap_or(0),
                 target_height: height.unwrap_or(0),
+                kdm: kdm.map(PathBuf::from),
+                recipient_key: recipient_key.map(PathBuf::from),
+                keys: keys.map(PathBuf::from),
             };
             dcpwizard_core::j2k_transcode::transcode_dcp(&config)
+        }
+
+        Commands::Decrypt {
+            input,
+            output,
+            kdm,
+            recipient_key,
+            keys,
+        } => {
+            let config = dcpwizard_core::decrypt::DcpDecryptConfig {
+                input_dir: PathBuf::from(input),
+                output_dir: PathBuf::from(output),
+                kdm: kdm.map(PathBuf::from),
+                recipient_key: recipient_key.map(PathBuf::from),
+                keys: keys.map(PathBuf::from),
+            };
+            dcpwizard_core::decrypt::decrypt_dcp(&config)
         }
 
         Commands::Verify {
@@ -1712,6 +2923,11 @@ fn run() {
             output,
             valid_from,
             valid_to,
+            template,
+            templates_file,
+            history_file,
+            email_to,
+            smtp_config,
             keys,
             format,
         } => {
@@ -1722,6 +2938,14 @@ fn run() {
                     std::process::exit(1);
                 }
             };
+            let (valid_from, valid_to) =
+                match resolve_window(valid_from, valid_to, template, templates_file) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
             let content_keys = match keys {
                 Some(path) => {
                     match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &cpl_id) {
@@ -1734,7 +2958,9 @@ fn run() {
                 }
                 None => Vec::new(),
             };
-            dcpwizard_core::kdm::generate_kdm(
+            let out_path = PathBuf::from(&output);
+            let title = content_title.clone();
+            let code = dcpwizard_core::kdm::generate_kdm(
                 cpl_id,
                 content_title,
                 PathBuf::from(cert),
@@ -1744,9 +2970,25 @@ fn run() {
                 valid_from,
                 valid_to,
                 content_keys,
-                PathBuf::from(output),
+                out_path.clone(),
                 format,
-            )
+                Some(history_path(history_file)),
+            );
+            if code == 0 {
+                if let Some(cfg_path) = smtp_config {
+                    match send_kdm_email(&cfg_path, "", &title, &email_to, &[out_path]) {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            1
+                        }
+                    }
+                } else {
+                    0
+                }
+            } else {
+                code
+            }
         }
 
         Commands::KdmRewrap {
@@ -1773,6 +3015,55 @@ fn run() {
 
         Commands::Copy { src, dst } => {
             dcpwizard_core::copy_drive::copy_to_drive(&PathBuf::from(src), &PathBuf::from(dst))
+        }
+
+        Commands::FormatDrive {
+            target,
+            fs,
+            label,
+            yes,
+            image,
+        } => {
+            let fs = match dcpwizard_core::disk::ExtFs::parse(&fs) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return;
+                }
+            };
+            match dcpwizard_core::disk::format_drive(
+                &PathBuf::from(&target),
+                fs,
+                label.as_deref(),
+                yes,
+                image,
+            ) {
+                Ok(()) => {
+                    tracing::info!("Formatted {target} as {fs:?}");
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("{e}");
+                    1
+                }
+            }
+        }
+
+        Commands::CheckDrive { target } => {
+            match dcpwizard_core::disk::check_drive(&PathBuf::from(&target)) {
+                Ok(info) => {
+                    tracing::info!(
+                        "{target}: fs={} label={}",
+                        info.fstype.as_deref().unwrap_or("unknown"),
+                        info.label.as_deref().unwrap_or("(none)")
+                    );
+                    0
+                }
+                Err(e) => {
+                    tracing::error!("{e}");
+                    1
+                }
+            }
         }
 
         Commands::Loudness { audio_file } => {
@@ -2360,64 +3651,68 @@ fn run() {
             content_title,
             certs,
             cert_dir,
+            cinemas,
+            screens,
+            db,
             signer_cert,
             signer_key,
             signer_chain,
             output_dir,
             valid_from,
             valid_to,
+            template,
+            templates_file,
+            history_file,
+            email_to,
+            smtp_config,
+            email_only_additional,
             keys,
             format,
-        } => {
-            let format = match dcpwizard_core::kdm::parse_format(&format) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
-            let mut certs: Vec<String> = certs;
-            if let Some(dir) = cert_dir {
-                match dcpwizard_core::kdm::certs_in_dir(&PathBuf::from(&dir)) {
-                    Ok(found) => certs.extend(found),
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-            if certs.is_empty() {
-                tracing::error!(
-                    "No recipient certificates provided (use --cert and/or --cert-dir)"
-                );
-                std::process::exit(1);
-            }
-            let content_keys = match keys {
-                Some(path) => {
-                    match dcpwizard_core::kdm::load_content_keys(&PathBuf::from(path), &cpl_id) {
-                        Ok(k) => k,
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                None => Vec::new(),
-            };
-            dcpwizard_core::kdm::generate_kdm_batch(
-                cpl_id,
-                content_title,
-                certs.into_iter().map(PathBuf::from).collect(),
-                PathBuf::from(signer_cert),
-                PathBuf::from(signer_key),
-                signer_chain.into_iter().map(PathBuf::from).collect(),
-                valid_from,
-                valid_to,
-                content_keys,
-                PathBuf::from(output_dir),
-                format,
-            )
-        }
+        } => run_kdm_batch(KdmBatchArgs {
+            cpl_id,
+            content_title,
+            certs,
+            cert_dir,
+            cinemas,
+            screens,
+            db,
+            signer_cert,
+            signer_key,
+            signer_chain,
+            output_dir,
+            valid_from,
+            valid_to,
+            template,
+            templates_file,
+            history_file,
+            email_to,
+            smtp_config,
+            email_only_additional,
+            keys,
+            format,
+        }),
+
+        Commands::Cinema { db, action } => run_cinema(db, action),
+
+        Commands::KdmHistory {
+            history_file,
+            title,
+            recipient,
+            since,
+            until,
+        } => run_kdm_history(history_file, title, recipient, since, until),
+
+        Commands::KdmTemplate {
+            templates_file,
+            action,
+        } => run_kdm_template(templates_file, action),
+
+        Commands::CertFetch {
+            vendor,
+            serial,
+            device_type,
+            output,
+        } => run_cert_fetch(vendor, serial, device_type, output),
 
         Commands::Trailer {
             content,
@@ -2750,12 +4045,27 @@ fn run() {
             title,
             replace_picture,
             replace_sound,
+            replace_subtitle,
+            add_subtitle,
+            subtitle_language,
         } => {
-            // Parse REEL=PATH into a per-reel map, picture and sound sharing reels.
+            // Parse REEL=PATH into a per-reel map. picture/sound/subtitle share
+            // reels; --add-subtitle and --replace-subtitle both set the subtitle.
+            #[derive(Clone, Copy)]
+            enum Track {
+                Picture,
+                Sound,
+                Subtitle,
+            }
             let mut reels: std::collections::BTreeMap<u32, dcpwizard_core::vf::ReplacementReel> =
                 std::collections::BTreeMap::new();
             let mut parse_ok = true;
-            for (specs, is_picture) in [(&replace_picture, true), (&replace_sound, false)] {
+            for (specs, track) in [
+                (&replace_picture, Track::Picture),
+                (&replace_sound, Track::Sound),
+                (&replace_subtitle, Track::Subtitle),
+                (&add_subtitle, Track::Subtitle),
+            ] {
                 for spec in specs {
                     let Some((reel_str, path)) = spec.split_once('=') else {
                         tracing::error!("bad --replace spec '{spec}', expected REEL=PATH");
@@ -2775,10 +4085,10 @@ fn run() {
                                 ..Default::default()
                             });
                     let p = Some(PathBuf::from(path.trim()));
-                    if is_picture {
-                        entry.picture = p;
-                    } else {
-                        entry.sound = p;
+                    match track {
+                        Track::Picture => entry.picture = p,
+                        Track::Sound => entry.sound = p,
+                        Track::Subtitle => entry.subtitle = p,
                     }
                 }
             }
@@ -2790,6 +4100,7 @@ fn run() {
                     ov_dir: PathBuf::from(&ov),
                     vf_dir: PathBuf::from(&output),
                     title,
+                    subtitle_language,
                     replacement_reels: reels.into_values().collect(),
                 };
                 let code = dcpwizard_core::vf::create_vf(&config);
@@ -2798,6 +4109,118 @@ fn run() {
                 }
                 code
             }
+        }
+
+        Commands::Assemble {
+            input,
+            output,
+            title,
+        } => {
+            let config = dcpwizard_core::assemble::AssembleConfig {
+                inputs: input.iter().map(PathBuf::from).collect(),
+                output_dir: PathBuf::from(&output),
+                title,
+            };
+            let code = dcpwizard_core::assemble::assemble(&config);
+            if code == 0 {
+                println!("Assembled OV at {output}");
+            }
+            code
+        }
+
+        Commands::Edit {
+            input,
+            output,
+            title,
+            annotation,
+            content_kind,
+            issuer,
+        } => {
+            let config = dcpwizard_core::edit::EditConfig {
+                input: PathBuf::from(&input),
+                output: output.as_ref().map(PathBuf::from),
+                title,
+                annotation,
+                content_kind,
+                issuer,
+            };
+            let code = dcpwizard_core::edit::edit_dcp(&config);
+            if code == 0 {
+                println!(
+                    "Edited DCP CPL metadata ({})",
+                    output.as_deref().unwrap_or(&input)
+                );
+            }
+            code
+        }
+
+        Commands::CreateMulti {
+            compositions,
+            output,
+            standard,
+            frame_rate,
+            fourk,
+            container,
+            subtitle_language,
+            content_type,
+            encrypt,
+            key_out,
+        } => {
+            let comps =
+                match dcpwizard_core::multi_cpl::load_compositions(&PathBuf::from(&compositions)) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        return;
+                    }
+                };
+            let std_val = if standard == "interop" {
+                dcpwizard_core::Standard::Interop
+            } else {
+                dcpwizard_core::Standard::Smpte
+            };
+            let resolution = if fourk {
+                dcpwizard_core::Resolution::FourK
+            } else {
+                dcpwizard_core::Resolution::TwoK
+            };
+            let (container_width, container_height) = match container.as_deref() {
+                Some("2k-scope") => (2048, 858),
+                Some("2k-flat") => (1998, 1080),
+                Some("2k-full") => (2048, 1080),
+                Some("4k-scope") => (4096, 1716),
+                Some("4k-flat") => (3996, 2160),
+                Some("4k-full") => (4096, 2160),
+                Some(value) => {
+                    tracing::error!("Unknown container: {value}");
+                    return;
+                }
+                None => (0, 0),
+            };
+            let ct = content_type
+                .as_deref()
+                .and_then(dcpwizard_core::ContentType::from_abbrev)
+                .unwrap_or_default();
+            let config = dcpwizard_core::dcp::DcpConfig {
+                title: String::new(),
+                standard: std_val,
+                resolution,
+                content_type: ct,
+                frame_rate_num: frame_rate,
+                frame_rate_den: 1,
+                encrypt,
+                key_out: key_out.map(PathBuf::from),
+                container_width,
+                container_height,
+                output_dir: PathBuf::from(&output),
+                subtitle_language,
+                ..Default::default()
+            };
+            let code = dcpwizard_core::multi_cpl::create_multi_composition(&config, &comps);
+            if code == 0 {
+                println!("Created multi-composition DCP at {output}");
+            }
+            code
         }
     };
 

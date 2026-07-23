@@ -53,22 +53,17 @@ Feature requests from the DCP-o-matic Mantis tracker (dom#N =
 https://dcpomatic.com/bugs/view.php?id=N) that dcpwizard lacks. Shared DSP/parsers
 belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface is here.
 
-- KDM distribution: screen/cinema database with search by cert serial (dom#776,
-  dom#2707), KDM email sending (dom#2515, dom#2516, dom#3076), KDM history log
-  (dom#1014), certificate download from manufacturers (dom#2705, dom#2706), FLMx
-  cinema data import (dom#239), validity templates (dom#2424). We only generate
-  KDMs from cert files on disk.
-- Disk writer: format drives ext2/3 for cinema delivery, check an existing drive's
-  format, set volume name (dom#2095, dom#2112). copy_drive.rs only does a verified
-  copy to a mounted target.
+- Certificate download for credentialed vendors (dom#2705, dom#2706): cert-fetch
+  covers only the credential-free public endpoints (dolby/doremi, qube). Christie
+  (`ftp://certificates.christiedigital.com`), GDC (`ftp://ftp.gdc-tech.com`) and
+  Barco (`sftp://certificates.barco.com`) have known URL patterns and reachable
+  hosts but need vendor-account credentials threaded through before their
+  endpoints can be used; they currently error telling the user to get the cert
+  from the vendor.
 - Distributed encoding across machines (dom#155, dom#1635, dom#2605). Job queue is
   single-machine.
-- Package surgery: OV assembled from existing DCPs (dom#1675), subtitle-only VF
-  from cpl/pkl/assetmap (dom#1062), decrypt a DCP keeping structure (dom#2845,
-  ties into "Encrypted DCP derivatives" below), edit a DCP in place (dom#1127).
-- Creation: background colour other than black (dom#1042), custom containers
-  (dom#159), reel split by chapter markers (dom#2964), sign-language video track
-  (dom#1602), DCI HDR addendum DCPs (dom#2374, dom#2799), APV codec (dom#3159).
+- Creation: sign-language video track (dom#1602), DCI HDR addendum DCPs (dom#2374,
+  dom#2799), APV codec (dom#3159).
 - Audio: loudness adjustment to a target, not just measurement (dom#1382), upmix
   (dom#921, dom#1080), crossfades (dom#374), mid-side decode (dom#3020),
   filename-based channel auto-routing (dom#2134).
@@ -82,16 +77,9 @@ belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface 
 
 ## Planned features
 
-- multi-CPL timelines (multi_cpl.rs create_multi_cpl) still unbuilt.
-- Encrypted DCP derivatives: accept an external KDM plus recipient certificate
-  and private key, decrypt the source, then permit supported transcode and
-  burn-in workflows. Keep key material out of logs and temporary output.
 - Subtitle authoring controls: supplied SMPTE subtitle XML keeps its placement
   and styling, but SRT always becomes centred bottom text. Add SRT placement
   controls and closed-caption packaging. 3D subtitle depth remains separate.
-- Input video range: expose an explicit full-range or legal-range override, or
-  verify the decoded range before conversion. The current ffmpeg raw-RGB path
-  leaves users no way to correct wrong or absent source metadata.
 - DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
   DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
   the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is
@@ -273,9 +261,10 @@ before production use.
 
 ## Dedup (remaining)
 
-- multi_cpl.rs kept: list_cpls/get_timeline are load-bearing for VF (vf.rs) and the
-  GUI timeline panel (gui timeline.rs). Its create_multi_cpl (multi-CPL timeline
-  feature) is still unbuilt.
+- multi_cpl.rs: list_cpls/get_timeline are load-bearing for VF (vf.rs) and the GUI
+  timeline panel (gui timeline.rs). create_multi_composition builds the
+  multi-composition package (`create-multi`), reusing the versions.rs wrap helpers
+  (now pub(crate)).
 - Deleted (zero callers): dcp_diff, plugin, preferences, geometry, prores shim.
 
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)

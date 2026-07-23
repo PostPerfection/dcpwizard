@@ -20,6 +20,14 @@ pub struct DcpTranscodeConfig {
     /// optional target resolution; 0 keeps the source dimensions
     pub target_width: u32,
     pub target_height: u32,
+    /// KDM XML for an encrypted source (with `recipient_key`). Each source frame
+    /// is decrypted in memory before grk_decompress; the re-encoded output is
+    /// cleartext. The J2K temp frames written during transcode are plaintext.
+    pub kdm: Option<PathBuf>,
+    /// Recipient RSA private key (PEM) matching `kdm`.
+    pub recipient_key: Option<PathBuf>,
+    /// dcpwizard KEYS.json, an alternative key source to `kdm`.
+    pub keys: Option<PathBuf>,
 }
 
 /// One MXF that ships in the output DCP (declared in CPL/PKL/ASSETMAP).
@@ -73,10 +81,21 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         return -1;
     }
 
-    // fail loud on encryption: the CPL carries KeyId elements and every essence
-    // MXF reports encrypted_essence. We cannot re-encode what we cannot decode.
-    if cpl_content.contains("<KeyId>") {
-        tracing::error!("input DCP is encrypted; transcode requires plaintext essence");
+    // encrypted input needs key material: with a KDM+recipient key or KEYS.json
+    // each source frame is decrypted in memory before decode; without it we
+    // cannot re-encode what we cannot decode, so fail loud.
+    let key_source =
+        match crate::decrypt::key_source_opt(&config.keys, &config.kdm, &config.recipient_key) {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        };
+    if cpl_content.contains("<KeyId>") && key_source.is_none() {
+        tracing::error!(
+            "input DCP is encrypted; supply --kdm + --recipient-key or --keys to transcode it"
+        );
         return -1;
     }
 
@@ -111,20 +130,25 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
             tracing::error!("reel {} picture MXF not found", entry.reel_number);
             return -1;
         }
-        if is_encrypted(&src_pic) {
-            tracing::error!("reel {} picture essence is encrypted", entry.reel_number);
-            return -1;
-        }
-
-        let Some(pic) = transcode_picture(&src_pic, config, &grk_decompress, &lib_path) else {
+        let Some(pic) = transcode_picture(
+            &src_pic,
+            config,
+            key_source.as_ref(),
+            &grk_decompress,
+            &lib_path,
+        ) else {
             return -1;
         };
 
-        // copy audio verbatim, keeping its asset id (byte-identical essence)
-        let sound = match copy_track(
+        // sound/subtitle: cleartext tracks copy verbatim (asset id preserved);
+        // with a key source, an encrypted sound is decrypted and rewrapped so the
+        // cleartext output stays coherent (an encrypted subtitle fails loud).
+        let fps_snd = (pic.edit_rate_num as f64 / pic.edit_rate_den as f64).round() as u32;
+        let sound = match sound_track(
             &entry.sound_file,
             &entry.sound_asset_id,
-            "sound",
+            key_source.as_ref(),
+            fps_snd,
             &config.output_dir,
         ) {
             Ok(s) => s,
@@ -133,11 +157,10 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
                 return -1;
             }
         };
-        // copy subtitle verbatim, if present
-        let subtitle = match copy_track(
+        let subtitle = match subtitle_track(
             &entry.subtitle_file,
             &entry.subtitle_asset_id,
-            "subtitle",
+            key_source.is_some(),
             &config.output_dir,
         ) {
             Ok(s) => s,
@@ -208,6 +231,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         reels: cpl_reels,
         standard,
         main_sound: None,
+        sign_language: None,
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &out_cpl_path) != 0 {
         tracing::error!("Failed to generate CPL");
@@ -282,6 +306,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
 fn transcode_picture(
     src_mxf: &Path,
     config: &DcpTranscodeConfig,
+    key_source: Option<&crate::decrypt::KeySource>,
     grk_decompress: &Path,
     lib_path: &str,
 ) -> Option<NewPicture> {
@@ -296,6 +321,27 @@ fn transcode_picture(
             tracing::error!("Failed to read picture descriptor: {e}");
             return None;
         }
+    };
+    // encrypted source: build the AES/HMAC contexts from the key source, keyed by
+    // this MXF's own KeyId, so every read_frame below decrypts in memory.
+    let info = match reader.writer_info() {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!("Failed to read picture writer info: {e}");
+            return None;
+        }
+    };
+    let mut crypto = if info.encrypted_essence {
+        let ks = key_source?;
+        match ks.contexts(&info, "picture") {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::error!("{e}");
+                return None;
+            }
+        }
+    } else {
+        None
     };
     let frame_count = desc.container_duration;
     if frame_count == 0 {
@@ -330,10 +376,14 @@ fn transcode_picture(
     // decode every frame to a TIFF (grk_decompress emits raw XYZ components)
     let mut buf = vec![0u8; MAX_FRAME_BUF];
     for i in 0..frame_count {
-        let n = match reader.read_frame(i, &mut buf, None, None) {
+        let (dec, hmac) = match crypto.as_mut() {
+            Some((d, h)) => (Some(d), Some(h)),
+            None => (None, None),
+        };
+        let n = match reader.read_frame(i, &mut buf, dec, hmac) {
             Ok(n) => n,
             Err(e) => {
-                tracing::error!("Failed to read frame {i}: {e}");
+                tracing::error!("Failed to read frame {i} (wrong key or MIC mismatch): {e}");
                 let _ = std::fs::remove_dir_all(&work);
                 return None;
             }
@@ -467,16 +517,50 @@ fn copy_track(
     }))
 }
 
-/// True when the MXF reports encrypted essence.
-fn is_encrypted(mxf: &Path) -> bool {
-    let mut reader = MxfReader::new();
-    if reader.open_read(&mxf.to_string_lossy()).is_err() {
-        return false;
+/// Resolve the sound track for the output: without a key source, copy verbatim
+/// (asset id preserved); with one, an encrypted sound is decrypted and rewrapped
+/// as cleartext (via the shared decrypt path) so the output CPL stays coherent.
+fn sound_track(
+    src_file: &str,
+    asset_id: &str,
+    key_source: Option<&crate::decrypt::KeySource>,
+    fps: u32,
+    out_dir: &Path,
+) -> Result<Option<ShippedAsset>, String> {
+    match key_source {
+        Some(ks) => Ok(
+            crate::decrypt::process_sound(src_file, asset_id, ks, fps, out_dir)?.map(from_decrypt),
+        ),
+        None => copy_track(src_file, asset_id, "sound", out_dir),
     }
-    reader
-        .writer_info()
-        .map(|w| w.encrypted_essence)
-        .unwrap_or(false)
+}
+
+/// Resolve the subtitle track: copy verbatim (asset id preserved). With a key
+/// source, an encrypted timed-text track fails loud rather than copying encrypted.
+fn subtitle_track(
+    src_file: &str,
+    asset_id: &str,
+    have_keys: bool,
+    out_dir: &Path,
+) -> Result<Option<ShippedAsset>, String> {
+    if have_keys {
+        Ok(
+            crate::decrypt::process_cleartext_copy(src_file, asset_id, "subtitle", out_dir)?
+                .map(from_decrypt),
+        )
+    } else {
+        copy_track(src_file, asset_id, "subtitle", out_dir)
+    }
+}
+
+/// Map a shared decrypt-path asset onto this module's ShippedAsset.
+fn from_decrypt(s: crate::decrypt::ShippedAsset) -> ShippedAsset {
+    ShippedAsset {
+        id: s.id,
+        filename: s.filename,
+        hash: s.hash,
+        size: s.size,
+    }
 }
 
 /// Decode a single J2K codestream to a TIFF with grk_decompress.

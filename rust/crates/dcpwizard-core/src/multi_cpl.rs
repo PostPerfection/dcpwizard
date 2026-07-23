@@ -1,13 +1,9 @@
+use crate::ContentType;
+use crate::dcp::DcpConfig;
+use crate::encrypt::ContentKey;
+use crate::reel::{collect_frames, plan_reel_ranges, register_asset};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-
-/// Configuration for multi-CPL DCP operations.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MultiCplConfig {
-    pub dcp_dir: PathBuf,
-    pub output_dir: PathBuf,
-    pub selected_cpls: Vec<String>,
-}
 
 /// A CPL entry found in a DCP.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -285,96 +281,443 @@ fn parse_assetmap(dcp_dir: &Path) -> std::collections::HashMap<String, String> {
     map
 }
 
-/// Create a multi-CPL DCP by copying selected CPLs and their referenced assets.
-pub fn create_multi_cpl(config: &MultiCplConfig) -> i32 {
+/// One composition in a multi-CPL package. Unlike `--versions` (which shares one
+/// essence set across CPLs), each composition here has its OWN picture/audio/
+/// subtitle, written as its own CPL, over a single shared PKL/ASSETMAP.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompositionSpec {
+    /// CPL title / ContentTitleText. Required, non-empty, unique in the manifest.
+    pub title: String,
+    /// Directory of J2K codestreams for this composition's picture.
+    pub j2k_dir: PathBuf,
+    /// Sound track (WAV) for this composition.
+    #[serde(default)]
+    pub audio: Option<PathBuf>,
+    /// Subtitle track (SRT or supplied SMPTE timed-text XML).
+    #[serde(default)]
+    pub subtitle: Option<PathBuf>,
+    /// Subtitle language code; falls back to the base `--subtitle-language`.
+    #[serde(default)]
+    pub subtitle_language: Option<String>,
+    /// Content kind abbreviation (FTR, TLR, ...); falls back to the base `--kind`.
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+/// Parse and validate a compositions manifest (JSON array of [`CompositionSpec`]).
+pub fn load_compositions(path: &Path) -> Result<Vec<CompositionSpec>, String> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read compositions manifest {}: {e}", path.display()))?;
+    let comps: Vec<CompositionSpec> = serde_json::from_str(&json)
+        .map_err(|e| format!("bad compositions manifest {}: {e}", path.display()))?;
+    validate_compositions(&comps)?;
+    Ok(comps)
+}
+
+/// Fail loud on an empty manifest, duplicate/empty titles, missing j2k dir or
+/// referenced files, or an unknown content kind.
+fn validate_compositions(comps: &[CompositionSpec]) -> Result<(), String> {
+    if comps.is_empty() {
+        return Err("compositions manifest is empty".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for c in comps {
+        if c.title.trim().is_empty() {
+            return Err("composition title must not be empty".into());
+        }
+        if !seen.insert(c.title.as_str()) {
+            return Err(format!("duplicate composition title: {}", c.title));
+        }
+        if !c.j2k_dir.is_dir() {
+            return Err(format!(
+                "j2k_dir not found for composition '{}': {}",
+                c.title,
+                c.j2k_dir.display()
+            ));
+        }
+        if let Some(p) = c.audio.as_ref().filter(|p| !p.exists()) {
+            return Err(format!(
+                "audio not found for composition '{}': {}",
+                c.title,
+                p.display()
+            ));
+        }
+        if let Some(p) = c.subtitle.as_ref().filter(|p| !p.exists()) {
+            return Err(format!(
+                "subtitle not found for composition '{}': {}",
+                c.title,
+                p.display()
+            ));
+        }
+        if let Some(k) = c.kind.as_ref()
+            && ContentType::from_abbrev(k).is_none()
+        {
+            return Err(format!(
+                "unknown content kind '{k}' for composition '{}'",
+                c.title
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Build a multi-composition package: one CPL per composition, each with its own
+/// picture/audio/subtitle, over one shared PKL/ASSETMAP. Called only when
+/// `create --compositions` is set. Reuses the shared wrap primitives (mxf_wrap,
+/// versions helpers) rather than duplicating the pipeline; single reel per
+/// composition (no reel splitting / 3D / atmos here).
+pub fn create_multi_composition(config: &DcpConfig, comps: &[CompositionSpec]) -> i32 {
+    use crate::encrypt::KeyType;
+    use crate::versions::{cleanup, key_file_path, mint_key, wrap_sound_reel};
+
+    if let Err(e) = validate_compositions(comps) {
+        tracing::error!("{e}");
+        return -1;
+    }
     if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
         tracing::error!("Failed to create output directory: {e}");
         return -1;
     }
-
-    let all_cpls = list_cpls(&config.dcp_dir);
-    let selected: Vec<&CplEntry> = if config.selected_cpls.is_empty() {
-        all_cpls.iter().collect()
-    } else {
-        all_cpls
-            .iter()
-            .filter(|c| config.selected_cpls.contains(&c.id))
-            .collect()
-    };
-
-    if selected.is_empty() {
-        tracing::error!("No matching CPLs found");
+    if config.encrypt && config.key_out.is_none() {
+        tracing::error!(
+            "--key-out is required when encrypting; keys are never written next to the DCP"
+        );
         return -1;
     }
 
-    // Copy each selected CPL and referenced assets
-    for cpl in &selected {
-        let src = config.dcp_dir.join(&cpl.file_path);
-        let dst = config.output_dir.join(&cpl.file_path);
-        if let Some(parent) = dst.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::copy(&src, &dst) {
-            tracing::error!("Failed to copy CPL {}: {e}", cpl.id);
+    let fps = if config.frame_rate_num > 0 {
+        config.frame_rate_num
+    } else {
+        24
+    };
+    let is_4k = config.resolution == crate::Resolution::FourK;
+    if let Err(e) =
+        crate::hfr::validate_fps_resolution(fps, is_4k, config.standard == crate::Standard::Smpte)
+    {
+        tracing::error!("{e}");
+        return -1;
+    }
+
+    let (pic_w, pic_h) = if config.container_width > 0 && config.container_height > 0 {
+        (config.container_width, config.container_height)
+    } else {
+        (config.resolution.width(), config.resolution.height())
+    };
+
+    let mut pkl_entries: Vec<crate::pkl::PklEntry> = Vec::new();
+    let mut am_entries: Vec<crate::assetmap::AssetMapEntry> = Vec::new();
+    let mut temps: Vec<PathBuf> = Vec::new();
+    // (cpl_id, title, bundle keys) for per-CPL key files
+    let mut cpl_bundles: Vec<(String, String, Vec<ContentKey>)> = Vec::new();
+
+    for comp in comps {
+        let frames = collect_frames(&comp.j2k_dir);
+        if frames.is_empty() {
+            tracing::error!(
+                "composition '{}' j2k_dir has no codestreams: {}",
+                comp.title,
+                comp.j2k_dir.display()
+            );
+            cleanup(&temps);
             return -1;
         }
-    }
+        let total = frames.len() as u64;
+        // single reel per composition
+        let range = plan_reel_ranges(total, fps, 0)[0];
+        let mut bundle_keys: Vec<ContentKey> = Vec::new();
 
-    // Copy ASSETMAP and VOLINDEX
-    for name in &["ASSETMAP", "ASSETMAP.xml", "VOLINDEX", "VOLINDEX.xml"] {
-        let src = config.dcp_dir.join(name);
-        if src.exists() {
-            let _ = std::fs::copy(&src, config.output_dir.join(name));
-        }
-    }
-
-    // Copy PKL files
-    let pkl_files: Vec<PathBuf> = std::fs::read_dir(&config.dcp_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("PKL") && n.ends_with(".xml"))
-        })
-        .collect();
-
-    for pkl in &pkl_files {
-        if let Some(name) = pkl.file_name() {
-            let _ = std::fs::copy(pkl, config.output_dir.join(name));
-        }
-    }
-
-    // Copy MXF files referenced by selected CPLs
-    let mxf_files: Vec<PathBuf> = std::fs::read_dir(&config.dcp_dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("mxf"))
-        })
-        .collect();
-
-    for mxf in &mxf_files {
-        if let Some(name) = mxf.file_name() {
-            let dst = config.output_dir.join(name);
-            if !dst.exists()
-                && let Err(e) = std::fs::copy(mxf, &dst)
-            {
-                tracing::error!("Failed to copy MXF {}: {e}", mxf.display());
+        // ── picture ──
+        let picture_uuid = uuid::Uuid::new_v4().to_string();
+        let picture_name = format!("picture_{picture_uuid}.mxf");
+        let picture_path = config.output_dir.join(&picture_name);
+        let picture_key = match mint_key(config, KeyType::Mdik, &picture_uuid) {
+            Ok(k) => k,
+            Err(()) => {
+                cleanup(&temps);
                 return -1;
             }
+        };
+        if crate::mxf_wrap::wrap_mxf_files(
+            frames,
+            &picture_path,
+            crate::mxf_wrap::MxfType::J2kPicture,
+            fps,
+            picture_key.as_ref().map(crate::reel::mxf_enc),
+            None,
+        )
+        .is_none()
+        {
+            tracing::error!(
+                "Failed to wrap picture MXF for composition '{}'",
+                comp.title
+            );
+            cleanup(&temps);
+            return -1;
+        }
+        register_asset(
+            &mut pkl_entries,
+            &mut am_entries,
+            &picture_uuid,
+            &picture_name,
+            &picture_path,
+        );
+        let picture_key_id = picture_key.as_ref().map(|k| k.info.key_id.clone());
+        if let Some(k) = picture_key {
+            bundle_keys.push(k.info);
+        }
+
+        // ── audio ──
+        let mut sound_id = None;
+        let mut sound_key_id = None;
+        let mut main_sound = None;
+        if let Some(audio) = comp.audio.as_ref() {
+            let prepared = match crate::versions::prepare_audio(config, audio, &mut temps) {
+                Ok(p) => p,
+                Err(()) => {
+                    cleanup(&temps);
+                    return -1;
+                }
+            };
+            let info = match crate::reel::parse_wav(&prepared) {
+                Ok(i) => i,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    cleanup(&temps);
+                    return -1;
+                }
+            };
+            if !info.sample_rate.is_multiple_of(fps) {
+                tracing::error!(
+                    "audio {} Hz is not an integer number of samples per {fps} fps frame",
+                    info.sample_rate
+                );
+                cleanup(&temps);
+                return -1;
+            }
+            let sr = match wrap_sound_reel(
+                config,
+                &prepared,
+                &info,
+                range,
+                fps,
+                &mut pkl_entries,
+                &mut am_entries,
+                &mut temps,
+            ) {
+                Ok(sr) => sr,
+                Err(()) => {
+                    cleanup(&temps);
+                    return -1;
+                }
+            };
+            sound_id = Some(sr.uuid);
+            sound_key_id = sr.key_id;
+            if let Some(k) = sr.key_info {
+                bundle_keys.push(k);
+            }
+            if let Ok(ch) = crate::mxf_wrap::wav_channels(&prepared)
+                && let Some(configuration) = crate::cpl::main_sound_configuration(
+                    ch as u32,
+                    config.hi_channel,
+                    config.vi_channel,
+                )
+            {
+                let sample_rate = crate::mxf_wrap::wav_sample_rate(&prepared).unwrap_or(48000);
+                main_sound = Some(crate::cpl::MainSound {
+                    configuration,
+                    sample_rate,
+                });
+            }
+        }
+
+        // ── subtitle ──
+        let sub_lang = comp
+            .subtitle_language
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if config.subtitle_language.is_empty() {
+                    "en".to_string()
+                } else {
+                    config.subtitle_language.clone()
+                }
+            });
+        let mut subtitle_id = None;
+        let mut subtitle_duration = 0u64;
+        if let Some(sub) = comp.subtitle.as_ref() {
+            let is_xml = sub
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
+            let wrapped = if is_xml {
+                crate::versions::wrap_subtitle_xml(
+                    sub,
+                    config,
+                    fps,
+                    &mut pkl_entries,
+                    &mut am_entries,
+                )
+            } else {
+                let cues = match crate::subtitle::parse_srt_frames(sub, fps) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("subtitle parse failed for '{}': {e}", comp.title);
+                        cleanup(&temps);
+                        return -1;
+                    }
+                };
+                crate::versions::wrap_subtitle_cues(
+                    &cues,
+                    &sub_lang,
+                    config,
+                    fps,
+                    &mut pkl_entries,
+                    &mut am_entries,
+                    &mut temps,
+                )
+            };
+            match wrapped {
+                Ok((id, dur)) => {
+                    subtitle_id = Some(id);
+                    subtitle_duration = dur;
+                }
+                Err(()) => {
+                    cleanup(&temps);
+                    return -1;
+                }
+            }
+        }
+
+        // ── CPL ──
+        let content_kind = comp
+            .kind
+            .as_deref()
+            .and_then(ContentType::from_abbrev)
+            .unwrap_or(config.content_type)
+            .as_cpl_kind()
+            .to_string();
+        let reel = crate::cpl::CplReel {
+            reel_id: uuid::Uuid::new_v4().to_string(),
+            picture_id: picture_uuid,
+            picture_width: pic_w,
+            picture_height: pic_h,
+            picture_edit_rate_num: fps,
+            picture_edit_rate_den: 1,
+            picture_duration: total,
+            picture_entry_point: 0,
+            picture_key_id,
+            sound_id,
+            sound_edit_rate_num: fps,
+            sound_edit_rate_den: 1,
+            sound_duration: total,
+            sound_entry_point: 0,
+            sound_key_id,
+            subtitle_id,
+            subtitle_edit_rate_num: fps,
+            subtitle_edit_rate_den: 1,
+            subtitle_duration,
+            subtitle_entry_point: 0,
+            subtitle_language: (subtitle_duration > 0).then(|| sub_lang.clone()),
+            stereoscopic: false,
+            aux_data: None,
+        };
+        let cpl_uuid = uuid::Uuid::new_v4().to_string();
+        let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
+        let cpl_config = crate::cpl::CplConfig {
+            title: comp.title.clone(),
+            content_kind,
+            reels: vec![reel],
+            standard: config.standard,
+            main_sound,
+            ..Default::default()
+        };
+        if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
+            tracing::error!("Failed to generate CPL for composition '{}'", comp.title);
+            cleanup(&temps);
+            return -1;
+        }
+        pkl_entries.push(crate::pkl::PklEntry {
+            id: cpl_uuid.clone(),
+            asset_type: "text/xml".into(),
+            file: cpl_path.clone(),
+            hash: crate::hash::hash_file(&cpl_path).unwrap_or_default(),
+            size: std::fs::metadata(&cpl_path).map(|m| m.len()).unwrap_or(0),
+        });
+        am_entries.push(crate::assetmap::AssetMapEntry {
+            id: cpl_uuid.clone(),
+            path: cpl_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            packing_list: false,
+        });
+        cpl_bundles.push((cpl_uuid, comp.title.clone(), bundle_keys));
+    }
+
+    // ── one PKL, one ASSETMAP over every asset ──
+    let pkl_uuid = uuid::Uuid::new_v4().to_string();
+    let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
+    if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, &pkl_path) != 0 {
+        tracing::error!("Failed to generate PKL");
+        cleanup(&temps);
+        return -1;
+    }
+    am_entries.insert(
+        0,
+        crate::assetmap::AssetMapEntry {
+            id: pkl_uuid,
+            path: pkl_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            packing_list: true,
+        },
+    );
+    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, config.standard) != 0 {
+        tracing::error!("Failed to generate ASSETMAP");
+        cleanup(&temps);
+        return -1;
+    }
+
+    // ── per-CPL key bundles ──
+    if config.encrypt {
+        let Some(base) = config.key_out.as_ref() else {
+            tracing::error!("--key-out is required when encrypting");
+            cleanup(&temps);
+            return -1;
+        };
+        if let Some(parent) = base.parent().filter(|p| !p.as_os_str().is_empty())
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::error!("Failed to create key-out directory: {e}");
+            cleanup(&temps);
+            return -1;
+        }
+        for (i, (cpl_id, title, keys)) in cpl_bundles.iter().enumerate() {
+            let out = key_file_path(base, i + 1, title);
+            let bundle = crate::encrypt::KeyBundle {
+                cpl_id: cpl_id.clone(),
+                keys: keys.clone(),
+            };
+            if let Err(e) = bundle.write(&out) {
+                tracing::error!("Failed to write keys file: {e}");
+                cleanup(&temps);
+                return -1;
+            }
+            tracing::warn!(
+                "Wrote content keys for CPL {cpl_id} ('{title}') to {}: plaintext AES keys; keep secret, do not ship in the DCP.",
+                out.display()
+            );
         }
     }
 
+    cleanup(&temps);
     tracing::info!(
-        "Created multi-CPL DCP with {} CPLs at {}",
-        selected.len(),
+        "Multi-composition DCP created ({} CPLs): {}",
+        cpl_bundles.len(),
         config.output_dir.display()
     );
     0
