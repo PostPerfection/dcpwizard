@@ -337,10 +337,16 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         None => None,
     };
 
-    // subtitle cues (re-split per reel), parsed once up front
-    let subtitle_cues = match config.subtitle_path.as_ref().filter(|p| p.exists()) {
-        Some(path) => match crate::subtitle::parse_srt_frames(path, fps) {
-            Ok(c) => Some(c),
+    // subtitle cues (re-split per reel), parsed once up front. Any supported
+    // format; wrap/RTL applied once and the embedded font shared across reels.
+    let subtitle_plan = match config.subtitle_path.as_ref().filter(|p| p.exists()) {
+        Some(path) => match crate::subtitle::plan_reel_subtitles(
+            path,
+            fps,
+            &config.subtitle_opts,
+            &config.output_dir,
+        ) {
+            Ok(p) => Some(p),
             Err(e) => {
                 tracing::error!("subtitle parse failed: {e}");
                 return -1;
@@ -448,29 +454,29 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
 
         // ── subtitle ──────────────────────────────────────────────────
         let mut sub = None;
-        if let Some(cues) = &subtitle_cues {
-            let rebased = rebase_cues_for_reel(cues, *range);
+        if let Some(plan) = &subtitle_plan {
+            let rebased =
+                crate::subtitle::rebase_styled_for_reel(&plan.cues, range.start, range.end, fps);
             if !rebased.is_empty() {
                 let subtitle_uuid = uuid::Uuid::new_v4().to_string();
                 let dcst = config
                     .output_dir
                     .join(format!("subtitle_{subtitle_uuid}.xml"));
-                if let Err(e) =
-                    crate::subtitle::write_dcst_frames(&rebased, subtitle_lang, fps, &dcst)
-                {
+                let (xml, resources) = crate::subtitle::render_reel_dcst(
+                    &rebased,
+                    subtitle_lang,
+                    fps,
+                    &config.subtitle_opts,
+                    plan.font.as_ref(),
+                );
+                if let Err(e) = std::fs::write(&dcst, xml) {
                     tracing::error!("subtitle write failed for reel {}: {e}", i + 1);
                     return -1;
                 }
                 let sub_name = format!("subtitle_{subtitle_uuid}.mxf");
                 let sub_path = config.output_dir.join(&sub_name);
-                let wrapped = crate::mxf_wrap::wrap_mxf_result(&crate::mxf_wrap::MxfWrapConfig {
-                    input_path: dcst.clone(),
-                    output_mxf: sub_path.clone(),
-                    mxf_type: crate::mxf_wrap::MxfType::TimedText,
-                    frame_rate: fps,
-                    encryption: None,
-                    mca_config: None,
-                });
+                let wrapped =
+                    crate::mxf_wrap::wrap_timed_text_resources(&dcst, &resources, &sub_path, fps);
                 temps.push(dcst);
                 let Some(track) = wrapped else {
                     tracing::error!("Failed to wrap subtitle MXF for reel {}", i + 1);
@@ -519,6 +525,13 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             stereoscopic: false,
             aux_data: None,
         });
+    }
+
+    // the shared embedded font is now inside each reel's MXF
+    if let Some(plan) = &subtitle_plan
+        && let Some((font_file, _)) = &plan.font
+    {
+        let _ = std::fs::remove_file(font_file);
     }
 
     // sound layout for the SMPTE CompositionMetadataAsset, from the packaged audio

@@ -332,6 +332,7 @@ pub fn wrap_mxf_files(
         partition_size: 0,
         encryption,
         mca_config,
+        resource_ids: vec![],
     };
 
     let result = postkit::mxf_wrap::mxf_wrap(&opts);
@@ -340,6 +341,44 @@ pub fn wrap_mxf_files(
         Some(result)
     } else {
         tracing::error!("MXF wrap failed: {}", result.error);
+        None
+    }
+}
+
+/// Wrap a DCST XML plus its ancillary resources (embedded font, bitmap PNGs)
+/// into a timed-text MXF. Each `(file, id)` resource is embedded under `id`, so
+/// a `urn:uuid` reference in the DCST matches the stored resource. The XML is
+/// the first input file; resources follow in order.
+pub fn wrap_timed_text_resources(
+    dcst: &std::path::Path,
+    resources: &[(PathBuf, [u8; 16])],
+    output_mxf: &std::path::Path,
+    frame_rate: u32,
+) -> Option<postkit::mxf_wrap::MxfTrackFile> {
+    let mut input_files = vec![dcst.to_path_buf()];
+    let mut resource_ids = Vec::new();
+    for (path, id) in resources {
+        input_files.push(path.clone());
+        resource_ids.push(*id);
+    }
+    let fps = if frame_rate == 0 { 24 } else { frame_rate };
+    let opts = postkit::mxf_wrap::MxfWrapOptions {
+        input_files,
+        output: output_mxf.to_path_buf(),
+        essence_type: postkit::mxf_wrap::EssenceType::TimedText,
+        standard: postkit::mxf_wrap::MxfStandard::AsDcp,
+        fps_num: fps,
+        fps_den: 1,
+        partition_size: 0,
+        encryption: None,
+        mca_config: None,
+        resource_ids,
+    };
+    let result = postkit::mxf_wrap::mxf_wrap(&opts);
+    if result.success {
+        Some(result)
+    } else {
+        tracing::error!("timed-text wrap failed: {}", result.error);
         None
     }
 }

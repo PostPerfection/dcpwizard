@@ -102,6 +102,14 @@ smoke "create split-chapters" create --title x --video "$C" --output "$C" --spli
 smoke "create input-range" create --title x --video "$C" --output "$C" --input-range full
 smoke "create sign-language" create --title x --video "$C" --output "$C" --sign-language-video "$C" --sign-language-lang sgn-ase
 smoke "create hdr-dci flags" create --title x --video "$C" --output "$C" --hdr-dci --hdr-already-pq
+# W6 subtitle wiring: placement / RTL / wrap / 3D depth / font embed
+smoke "create subtitle placement" create --title x --video "$C" --output "$C" --subtitle "$C" \
+                            --subtitle-halign left --subtitle-valign top --subtitle-vposition 10 \
+                            --subtitle-zposition 2.0 --subtitle-rtl on --subtitle-wrap 42 \
+                            --subtitle-font "$C" --subtitle-no-subset
+smoke "subtitle-edit list"  subtitle-edit -i "$C" --list
+smoke "subtitle-edit shift" subtitle-edit -i "$C" -o "$C" --shift-ms 500 --index 1 --text hi \
+                            --set-start-ms 0 --set-end-ms 1000 --fps 25
 # W5 audio + encode QoL. --start-at +0s returns immediately; dummy input fails
 # the J2K branch before any shutdown, so --shutdown-when-done never fires.
 smoke "create loudness+upmix" create --title x --video "$C" --output "$C" \

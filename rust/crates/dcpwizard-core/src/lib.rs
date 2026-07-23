@@ -58,6 +58,7 @@ pub mod shell_completion;
 pub mod sign_language;
 pub mod store;
 pub mod subtitle;
+pub mod subtitle_edit;
 pub mod subtitle_extract;
 pub mod subtitle_retime;
 pub mod trailer;

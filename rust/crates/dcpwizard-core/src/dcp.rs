@@ -33,6 +33,10 @@ pub struct DcpConfig {
     pub subtitle_path: Option<PathBuf>,
     /// Subtitle language code (default "en").
     pub subtitle_language: String,
+    /// Placement / RTL / wrap / font options for the subtitle conversion. Ignored
+    /// for a supplied SMPTE DCST XML (wrapped unchanged).
+    #[serde(default)]
+    pub subtitle_opts: crate::subtitle::SubtitleOptions,
     /// Split the DCP into reels of at most this many minutes each. Zero (default)
     /// keeps the single-reel path.
     pub reel_length_minutes: u32,
@@ -241,15 +245,19 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
             );
             return -1;
         }
-        // supplied SMPTE XML carries authored timing we will not rewrite; only SRT
-        // (which we regenerate) can be shifted for head padding.
+        // supplied SMPTE XML carries authored timing we will not rewrite; every
+        // parsed format (SRT/ASS/PAC/... ) is regenerated so it can be shifted.
         let supplied_xml = config
             .subtitle_path
             .as_ref()
             .filter(|p| p.exists())
-            .and_then(|p| p.extension())
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("xml"));
+            .map(|p| {
+                matches!(
+                    crate::subtitle::detect_subtitle_kind(p),
+                    Ok(crate::subtitle::SubtitleInputKind::SmpteDcstPassthrough)
+                )
+            })
+            .unwrap_or(false);
         if head_frames > 0 && supplied_xml {
             tracing::error!(
                 "head padding cannot re-time supplied SMPTE subtitle XML; supply SRT to shift, or pad only the tail"
@@ -541,49 +549,72 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     if let Some(subtitle_path) = config.subtitle_path.as_ref()
         && subtitle_path.exists()
     {
-        let is_xml = subtitle_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"));
-        // Preserve authored SMPTE XML, including its placement and styling. SRT
-        // remains a centered-bottom conversion because it carries no placement.
-        let dcst_path = if is_xml {
-            subtitle_path.clone()
+        let kind = match crate::subtitle::detect_subtitle_kind(subtitle_path) {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        };
+        let track = if kind == crate::subtitle::SubtitleInputKind::SmpteDcstPassthrough {
+            // preserve authored SMPTE XML unchanged (placement, styling, timing)
+            let wrap_config = crate::mxf_wrap::MxfWrapConfig {
+                input_path: subtitle_path.clone(),
+                output_mxf: subtitle_mxf_path.clone(),
+                mxf_type: crate::mxf_wrap::MxfType::TimedText,
+                frame_rate: fps,
+                encryption: None,
+                mca_config: None,
+            };
+            match crate::mxf_wrap::wrap_mxf_result(&wrap_config) {
+                Some(t) => t,
+                None => {
+                    tracing::error!("Failed to wrap subtitle MXF");
+                    return -1;
+                }
+            }
         } else {
-            let path = config
+            // SRT and the styled formats: convert to DCST with placement/RTL/wrap/
+            // font options, shifting cues by head_frames, and embed any font/PNGs.
+            let dcst_path = config
                 .output_dir
                 .join(format!("subtitle_{subtitle_uuid}.xml"));
-            // head padding shifts the program, so slide SRT cues by head_frames
-            if let Err(e) = crate::subtitle::srt_to_shifted_dcst(
+            let prepared = match crate::subtitle::prepare_subtitle_track(
                 subtitle_path,
                 head_frames,
                 subtitle_lang,
                 fps,
-                &path,
+                &config.subtitle_opts,
+                &dcst_path,
             ) {
-                tracing::error!("Subtitle conversion failed: {e}");
-                return -1;
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("Subtitle conversion failed: {e}");
+                    return -1;
+                }
+            };
+            let wrapped = crate::mxf_wrap::wrap_timed_text_resources(
+                &prepared.dcst_path,
+                &prepared.resources,
+                &subtitle_mxf_path,
+                fps,
+            );
+            // the DCST and any staged font now live inside the MXF
+            let _ = std::fs::remove_file(&dcst_path);
+            for (p, _) in &prepared.resources {
+                if p.starts_with(&config.output_dir) {
+                    let _ = std::fs::remove_file(p);
+                }
             }
-            path
-        };
-        let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-            input_path: dcst_path.clone(),
-            output_mxf: subtitle_mxf_path.clone(),
-            mxf_type: crate::mxf_wrap::MxfType::TimedText,
-            frame_rate: fps,
-            encryption: None,
-            mca_config: None,
-        };
-        let Some(track) = crate::mxf_wrap::wrap_mxf_result(&wrap_config) else {
-            tracing::error!("Failed to wrap subtitle MXF");
-            return -1;
+            match wrapped {
+                Some(t) => t,
+                None => {
+                    tracing::error!("Failed to wrap subtitle MXF");
+                    return -1;
+                }
+            }
         };
         subtitle_duration = track.duration;
-        // The generated DCST now lives inside the MXF. Never remove a supplied
-        // subtitle XML file.
-        if !is_xml {
-            let _ = std::fs::remove_file(&dcst_path);
-        }
         has_subtitle = true;
         tracing::info!("Subtitle MXF: {subtitle_mxf_name}");
     }

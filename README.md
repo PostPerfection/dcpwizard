@@ -50,6 +50,13 @@ Free and open-source alternative to easyDCP Creator+ (€2,998).
 ### Subtitles & Captions
 - **SRT → SMPTE / Interop subtitle XML** conversion, anchored near the bottom with configurable `--vposition` (percent from the bottom, default 8%)
 - **Subtitle packaging** into a DCP timed-text track (ST 428-7 DCST wrapped as an MXF, registered in the CPL) via `create --subtitle`
+- **Input formats** beyond SRT: `create --subtitle` accepts `.ass`/`.ssa` (styling + alignment), `.pac` (EBU binary, Latin codepage), `.mks`/`.mkv` (Matroska subtitle stream via ffmpeg), `.fcpxml` (captions/titles) and an Interop `DCSubtitle` XML carrying PNG bitmap subs. Styling (italic/bold/underline/colour) and per-cue alignment/position are carried into the DCST; supplied SMPTE DCST XML is still wrapped unchanged.
+- **Placement controls** on `create`: `--subtitle-halign left|center|right`, `--subtitle-valign top|center|bottom` (top-anchored subtitles grow downward), `--subtitle-vposition <pct>`, so SRT is no longer always centred-bottom
+- **3D subtitle depth** via `create --subtitle-zposition <v>` (SMPTE ST 428-7 Zposition emitted on every cue). Note: the timed-text descriptor's "Z-Position In Use" flag is not set by the current asdcplib writer.
+- **RTL subtitles** (`create --subtitle-rtl auto|on|off`, default auto): Hebrew/Arabic is reshaped and reordered to visual order so servers that skip the bidi algorithm render it correctly
+- **Auto line-wrap** via `create --subtitle-wrap <chars>`: long lines wrap on whitespace (never mid-word), preserving styling
+- **Font embedding + subsetting** via `create --subtitle-font <ttf/otf>`: the font is subset to the used glyphs (SMPTE 640 KB limit, fails loud if exceeded) and embedded in the timed-text MXF, referenced by a `LoadFont`; `--subtitle-no-subset` embeds the whole font. Under reel splitting the font is referenced by one shared asset id in every reel.
+- **Subtitle editing** on standalone files via `subtitle-edit`: `--list` cues, `--shift-ms` all cues, or `--index N` with `--text` / `--set-start-ms`+`--set-end-ms`, written back as SRT (it edits source files, never subtitles inside a finished DCP)
 - **Subtitle extraction** from a DCP or subtitle asset back to `.srt` (timed) or `.txt` (text only) via `subtitle-extract`; reads MXF-wrapped ST 428-7 and loose SMPTE/Interop XML, concatenating reels with their timeline offsets
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Subtitle burn-in**, permanently render into video frames (for festivals)

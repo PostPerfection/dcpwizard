@@ -64,17 +64,12 @@ belong in postkit (see postkit DESIGN_TODO, same date); the user-facing surface 
   single-machine.
 - Creation: sign-language video track (dom#1602), DCI HDR addendum DCPs (dom#2374,
   dom#2799), APV codec (dom#3159).
-- Subtitles: editor (dom#828, dom#2071), auto line-wrap (dom#1626), RTL (dom#860),
-  vertical alignment (dom#1729, dom#2796), 3D Z position (dom#1359), more input
-  formats: ASS styling (dom#1462), PAC (dom#1719), MKS (dom#3131), FCPXML
-  (dom#2909), XML+PNG bitmap (dom#1376); font subsetting (dom#1023) and de-dup
-  across reels (dom#2533).
 
 ## Planned features
 
-- Subtitle authoring controls: supplied SMPTE subtitle XML keeps its placement
-  and styling, but SRT always becomes centred bottom text. Add SRT placement
-  controls and closed-caption packaging. 3D subtitle depth remains separate.
+- Closed-caption (CCAP) packaging: subtitle placement/styling/RTL/wrap/font/3D-Z
+  and the ASS/PAC/MKS/FCPXML/Interop-PNG input formats are wired (W6). Remaining:
+  closed-caption (accessibility CCAP) track packaging, distinct from open subtitles.
 - DTS:X: BLOCKED. postkit declined a generic DCData wrap because the DTS:X
   DataEssenceCoding UL could not be confirmed. dcpwizard used to map DTS:X onto
   the Atmos (IAB) essence UL, which is wrong. The `MxfType::DtsX` variant is

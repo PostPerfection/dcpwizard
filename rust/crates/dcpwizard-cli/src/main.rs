@@ -30,6 +30,36 @@ struct CreateAudioQol {
     shutdown_when_done: bool,
 }
 
+/// W6 subtitle placement / RTL / wrap / font options, boxed into the Create
+/// variant so it stays under the clippy large-variant threshold.
+#[derive(Args)]
+struct CreateSubtitleOpts {
+    /// Subtitle horizontal alignment: left, center, or right (default center)
+    #[arg(long, value_parser = ["left", "center", "right"])]
+    subtitle_halign: Option<String>,
+    /// Subtitle vertical anchor: top, center, or bottom (default bottom)
+    #[arg(long, value_parser = ["top", "center", "bottom"])]
+    subtitle_valign: Option<String>,
+    /// Subtitle vertical position: percent from the valign edge (default 8)
+    #[arg(long)]
+    subtitle_vposition: Option<f64>,
+    /// 3D subtitle depth: SMPTE Zposition emitted on every cue (stereoscopic)
+    #[arg(long)]
+    subtitle_zposition: Option<f64>,
+    /// RTL subtitle reordering: auto, on, or off (default auto)
+    #[arg(long, default_value = "auto", value_parser = ["auto", "on", "off"])]
+    subtitle_rtl: String,
+    /// Auto-wrap subtitle lines longer than this many characters
+    #[arg(long)]
+    subtitle_wrap: Option<usize>,
+    /// TTF/OTF font to embed in the subtitle track (subset to used glyphs)
+    #[arg(long)]
+    subtitle_font: Option<String>,
+    /// Embed the whole font instead of subsetting it to the used glyphs
+    #[arg(long)]
+    subtitle_no_subset: bool,
+}
+
 #[derive(Parser)]
 #[command(
     name = "dcpwizard",
@@ -174,6 +204,8 @@ enum Commands {
         // boxed so the Create variant stays small (clippy large_enum_variant).
         #[command(flatten)]
         audio_qol: Box<CreateAudioQol>,
+        #[command(flatten)]
+        subtitle_qol: Box<CreateSubtitleOpts>,
     },
     /// Rebuild ASSETMAP and PKL to cover every asset file present (metadata-only
     /// repackaging; no re-wrap or re-encode). For re-ingesting exported OV/VF
@@ -657,6 +689,38 @@ enum Commands {
         /// Output file; .srt keeps timing, .txt is text only
         #[arg(short, long)]
         output: String,
+    },
+    /// Edit a standalone subtitle file: list cues, shift timing, or change a
+    /// cue's text/timing, writing SRT back out (dom#828, dom#2071). It edits
+    /// source subtitle files, never subtitles inside a finished DCP.
+    SubtitleEdit {
+        /// Input subtitle file (SRT/ASS/PAC/MKS/FCPXML/interop XML)
+        #[arg(short, long)]
+        input: String,
+        /// Output SRT path (required for edits; omit with --list)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// List cues and exit without writing output
+        #[arg(long)]
+        list: bool,
+        /// Shift every cue by this many milliseconds (may be negative)
+        #[arg(long, allow_hyphen_values = true)]
+        shift_ms: Option<i64>,
+        /// 1-based cue index to edit with --text / --set-start-ms / --set-end-ms
+        #[arg(long)]
+        index: Option<usize>,
+        /// New text for the --index cue
+        #[arg(long)]
+        text: Option<String>,
+        /// New start time (ms) for the --index cue (with --set-end-ms)
+        #[arg(long)]
+        set_start_ms: Option<u64>,
+        /// New end time (ms) for the --index cue (with --set-start-ms)
+        #[arg(long)]
+        set_end_ms: Option<u64>,
+        /// Timecode rate for frame-based inputs (interop/PAC), default 24
+        #[arg(long, default_value_t = 24)]
+        fps: u32,
     },
     /// Burn subtitles into video
     #[command(alias = "burn-in")]
@@ -2121,6 +2185,7 @@ fn run() {
             subtitle,
             versions,
             subtitle_language,
+            subtitle_qol,
             output,
             standard,
             encrypt,
@@ -2268,6 +2333,32 @@ fn run() {
                         )
                     })
                     .unwrap_or(false);
+
+            let CreateSubtitleOpts {
+                subtitle_halign,
+                subtitle_valign,
+                subtitle_vposition,
+                subtitle_zposition,
+                subtitle_rtl,
+                subtitle_wrap,
+                subtitle_font,
+                subtitle_no_subset,
+            } = *subtitle_qol;
+            let subtitle_rtl_mode = match subtitle_rtl.as_str() {
+                "on" => dcpwizard_core::subtitle::RtlMode::On,
+                "off" => dcpwizard_core::subtitle::RtlMode::Off,
+                _ => dcpwizard_core::subtitle::RtlMode::Auto,
+            };
+            let subtitle_opts = dcpwizard_core::subtitle::SubtitleOptions {
+                halign: subtitle_halign,
+                valign: subtitle_valign,
+                vposition: subtitle_vposition,
+                zposition: subtitle_zposition,
+                rtl: subtitle_rtl_mode,
+                wrap_cols: subtitle_wrap,
+                font_path: subtitle_font.map(PathBuf::from),
+                no_subset: subtitle_no_subset,
+            };
 
             let code = if is_video_file {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
@@ -2675,6 +2766,7 @@ fn run() {
                     audio_input_order,
                     subtitle_path: subtitle.clone().map(PathBuf::from),
                     subtitle_language: subtitle_language.clone(),
+                    subtitle_opts: subtitle_opts.clone(),
                     reel_length_minutes: reel_length.unwrap_or(0),
                     right_eye_dir: right_eye_dir.clone(),
                     atmos_path: atmos.clone().map(PathBuf::from),
@@ -2812,6 +2904,7 @@ fn run() {
                     audio_input_order,
                     subtitle_path: subtitle.map(PathBuf::from),
                     subtitle_language,
+                    subtitle_opts,
                     reel_length_minutes: reel_length.unwrap_or(0),
                     stereo_3d: right_eye.is_some(),
                     right_eye_dir: right_eye.map(PathBuf::from),
@@ -3495,6 +3588,77 @@ fn run() {
                 Err(e) => {
                     tracing::error!("Subtitle extraction failed: {e}");
                     1
+                }
+            }
+        }
+        Commands::SubtitleEdit {
+            input,
+            output,
+            list,
+            shift_ms,
+            index,
+            text,
+            set_start_ms,
+            set_end_ms,
+            fps,
+        } => {
+            use dcpwizard_core::subtitle_edit as se;
+            let input_path = PathBuf::from(&input);
+            let mut cues = match se::load(&input_path, fps) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to load subtitles: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if list {
+                for (i, c) in cues.iter().enumerate() {
+                    println!("{}", se::summary_line(i + 1, c));
+                }
+                0
+            } else {
+                if let Some(delta) = shift_ms {
+                    se::shift_all(&mut cues, delta);
+                }
+                if let Some(idx) = index {
+                    if let Some(t) = text.as_deref()
+                        && let Err(e) = se::set_text(&mut cues, idx, t)
+                    {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                    match (set_start_ms, set_end_ms) {
+                        (Some(s), Some(e)) => {
+                            if let Err(err) = se::set_timing(&mut cues, idx, s, e) {
+                                tracing::error!("{err}");
+                                std::process::exit(1);
+                            }
+                        }
+                        (None, None) => {}
+                        _ => {
+                            tracing::error!(
+                                "--set-start-ms and --set-end-ms must be given together"
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                } else if text.is_some() || set_start_ms.is_some() || set_end_ms.is_some() {
+                    tracing::error!("--text / --set-start-ms / --set-end-ms need --index");
+                    std::process::exit(1);
+                }
+                let Some(out) = output else {
+                    tracing::error!("--output is required to write edits (use --list to inspect)");
+                    std::process::exit(1);
+                };
+                match std::fs::write(&out, se::format_srt(&cues)) {
+                    Ok(()) => {
+                        tracing::info!("Wrote {} cues -> {out}", cues.len());
+                        0
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to write {out}: {e}");
+                        1
+                    }
                 }
             }
         }
