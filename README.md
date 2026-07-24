@@ -666,7 +666,7 @@ docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --port 8080
 | Camera format detection (ARRI/RED/BRAW) | ✅ | ❌ |
 | Timeline conform (EDL/FCP7 XML) | ✅ | ❌ |
 | Version dashboard & distribution matrix | ✅ | ❌ |
-| Open source | ✅ (GPL-3.0) | ❌ |
+| Open source | ✅ (AGPL-3.0) | ❌ |
 | **Price** | **Free** | **€2,998 or €138/mo** |
 
 ## Architecture
@@ -690,4 +690,4 @@ job queue, preferences, REST API, watch folders, and more).
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE).
+AGPL-3.0-or-later. Copyright (C) 2026 Grok Image Compression Inc. See [LICENSE](LICENSE).
