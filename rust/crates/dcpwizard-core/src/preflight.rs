@@ -153,7 +153,7 @@ pub fn check_before_encode(plan: &CreatePlan) -> Result<(), String> {
     check_audio_map(plan)?;
     check_audio_channels(plan)?;
     check_active_area(plan)?;
-    check_audio_frame_alignment(plan)?;
+    check_sound(plan)?;
     check_atmos(plan)?;
     check_timed_text(plan)
 }
@@ -332,11 +332,36 @@ fn check_active_area(plan: &CreatePlan) -> Result<(), String> {
     )
 }
 
-fn check_audio_frame_alignment(plan: &CreatePlan) -> Result<(), String> {
+fn check_sound(plan: &CreatePlan) -> Result<(), String> {
     let Some(wav) = plan.packaged_wav() else {
         return Ok(());
     };
-    crate::pad::check_frame_aligned_sample_rate(read_wav_spec(wav)?.sample_rate, plan.fps)
+    let spec = read_wav_spec(wav)?;
+    check_dci_sound(spec.bits_per_sample, spec.sample_rate, wav)?;
+    crate::pad::check_frame_aligned_sample_rate(spec.sample_rate, plan.fps)
+}
+
+// SMPTE ST 429-2 sound essence
+const DCI_SOUND_BITS_PER_SAMPLE: u16 = 24;
+const DCI_SOUND_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
+
+/// The sound is wrapped as it stands, so a WAV DCI does not allow packages into
+/// a DCP that fails its own verification once the whole picture is encoded.
+pub fn check_dci_sound(bits_per_sample: u16, sample_rate: u32, wav: &Path) -> Result<(), String> {
+    if bits_per_sample != DCI_SOUND_BITS_PER_SAMPLE {
+        return Err(format!(
+            "{} carries {bits_per_sample}-bit sound; DCI requires {DCI_SOUND_BITS_PER_SAMPLE}-bit \
+             PCM. Convert it, for example with ffmpeg -i in.wav -c:a pcm_s24le out.wav",
+            wav.display()
+        ));
+    }
+    if !DCI_SOUND_SAMPLE_RATES.contains(&sample_rate) {
+        return Err(format!(
+            "{} is sampled at {sample_rate} Hz; DCI allows 48000 or 96000 Hz",
+            wav.display()
+        ));
+    }
+    Ok(())
 }
 
 fn check_atmos(plan: &CreatePlan) -> Result<(), String> {
