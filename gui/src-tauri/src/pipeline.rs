@@ -323,6 +323,11 @@ pub struct JobConfig {
     content_kind: String,
     encrypt: bool,
     key_out: Option<String>,
+    // signer leaf certificate and its private key, empty when the panel names none
+    signing_cert: Option<String>,
+    signing_key: Option<String>,
+    #[serde(default)]
+    signing_chain: Vec<String>,
     channels: String,
     // right-eye video for a stereoscopic 3D DCP (main input is the left eye)
     right_eye: Option<String>,
@@ -530,6 +535,9 @@ pub async fn submit_job(
     content_kind: Option<String>,
     encrypt: Option<bool>,
     key_out: Option<String>,
+    signing_cert: Option<String>,
+    signing_key: Option<String>,
+    signing_chain: Option<Vec<String>>,
     channels: Option<String>,
     right_eye: Option<String>,
     atmos: Option<String>,
@@ -897,6 +905,9 @@ pub async fn submit_job(
         content_kind: content_kind.unwrap_or_else(|| DEFAULT_CONTENT_KIND.into()),
         encrypt: encrypt.unwrap_or(false),
         key_out: key_out.filter(|k| !k.is_empty()),
+        signing_cert: signing_cert.filter(|c| !c.is_empty()),
+        signing_key: signing_key.filter(|k| !k.is_empty()),
+        signing_chain: signing_chain.unwrap_or_default(),
         channels: channels.unwrap_or_else(|| DEFAULT_CHANNELS.into()),
         right_eye,
         atmos: atmos.filter(|s| !s.is_empty()),
@@ -1003,6 +1014,19 @@ fn probe_job_source(
         .flatten()
 }
 
+/// The signer, or None when the panel named no cert or key. An empty string is
+/// the panel's unset default, so it never becomes a signer path: a mistyped or
+/// unreadable cert instead fails loudly at check_usable before anything writes.
+fn job_signer(job: &JobConfig) -> Option<dcpwizard_core::package_signature::PackageSigner> {
+    let cert = job.signing_cert.as_deref().filter(|c| !c.is_empty())?;
+    let key = job.signing_key.as_deref().filter(|k| !k.is_empty())?;
+    Some(dcpwizard_core::package_signature::PackageSigner {
+        signer_cert: PathBuf::from(cert),
+        signer_key: PathBuf::from(key),
+        signer_chain: job.signing_chain.iter().map(PathBuf::from).collect(),
+    })
+}
+
 /// One description of the job for the checks and the hints, from the same
 /// values the build itself runs on.
 fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
@@ -1052,8 +1076,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         standard: standard_of(&job.standard),
         content_type: content_type_of(&job.content_kind),
         encrypt: job.encrypt,
-        // the panel has nowhere to name a signer, so a build here signs nothing
-        signed: false,
+        signed: job_signer(job).is_some(),
         hdr_dci: job.hdr_dci,
         video_bit_rate_mbps: job.bandwidth,
         right_eye: job.right_eye.as_ref().map(PathBuf::from),
@@ -2135,6 +2158,7 @@ fn build_dcp_config(
         content_versions: content_versions_of(job.naming.content_versions.as_deref()),
         head_items: job.head_items.clone(),
         tail_items: job.tail_items.clone(),
+        signer: job_signer(job),
         ..Default::default()
     }
 }
@@ -2737,6 +2761,9 @@ mod tests {
             content_kind: "feature".into(),
             encrypt: false,
             key_out: None,
+            signing_cert: None,
+            signing_key: None,
+            signing_chain: Vec::new(),
             channels: "5.1".into(),
             right_eye: None,
             atmos: None,
@@ -2778,6 +2805,96 @@ mod tests {
             head_items: Vec::new(),
             tail_items: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_named_signer_makes_the_plan_signed_and_the_config_carry_it() {
+        let job = JobConfig {
+            encrypt: true,
+            key_out: Some("/out/keys.xml".into()),
+            signing_cert: Some("/certs/signer.pem".into()),
+            signing_key: Some("/certs/signer.key".into()),
+            signing_chain: vec!["/certs/intermediate.pem".into(), "/certs/root.pem".into()],
+            ..test_job()
+        };
+        assert!(
+            job_plan(&job).signed,
+            "a named signer makes the plan signed"
+        );
+        let config = build_dcp_config(
+            &job,
+            PathBuf::from("/out/j2k"),
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+        let signer = config.signer.expect("the config must carry the signer");
+        assert_eq!(signer.signer_cert, PathBuf::from("/certs/signer.pem"));
+        assert_eq!(signer.signer_key, PathBuf::from("/certs/signer.key"));
+        assert_eq!(signer.signer_chain.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_or_missing_cert_or_key_names_no_signer() {
+        assert!(
+            job_signer(&test_job()).is_none(),
+            "test_job names no signer"
+        );
+
+        let empty = JobConfig {
+            signing_cert: Some(String::new()),
+            signing_key: Some(String::new()),
+            ..test_job()
+        };
+        assert!(
+            job_signer(&empty).is_none(),
+            "empty strings are the unset default"
+        );
+
+        let cert_only = JobConfig {
+            signing_cert: Some("/certs/signer.pem".into()),
+            signing_key: None,
+            ..test_job()
+        };
+        assert!(
+            job_signer(&cert_only).is_none(),
+            "a cert with no key names no signer"
+        );
+        assert!(
+            !job_plan(&cert_only).signed,
+            "an incomplete signer leaves the plan unsigned"
+        );
+
+        let key_only = JobConfig {
+            signing_key: Some("/certs/signer.key".into()),
+            ..test_job()
+        };
+        assert!(
+            job_signer(&key_only).is_none(),
+            "a key with no cert names no signer"
+        );
+    }
+
+    #[test]
+    fn a_wired_signer_reaches_a_usable_package_signer() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            postkit::certificate::generate_chain("Acme", dir.path()),
+            0,
+            "chain generation failed"
+        );
+        let at = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
+        let job = JobConfig {
+            signing_cert: Some(at("signer.pem")),
+            signing_key: Some(at("signer.key")),
+            signing_chain: vec![at("intermediate.pem"), at("root.pem")],
+            ..test_job()
+        };
+        job_signer(&job)
+            .expect("a wired cert and key must build a signer")
+            .check_usable()
+            .expect("the wired signer must be usable end to end");
     }
 
     fn attached(name: &str) -> dcpwizard_core::library::AttachedItem {
