@@ -290,6 +290,7 @@ fn an_encrypted_dcp_keys_every_essence_and_the_kdm_carries_them_all() {
             ov: None,
             kdm: Some(kdm_path.clone()),
             recipient_key: Some(recipient_key.clone()),
+            photon: None,
         },
     );
     let errors: Vec<String> = report
