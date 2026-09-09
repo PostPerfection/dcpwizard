@@ -81,7 +81,7 @@ pub(crate) fn collect_inputs(path: &std::path::Path) -> Result<Vec<PathBuf>, Str
 /// wraps the real channel count / bit depth / sample rate it reads from the WAV,
 /// but happily wraps any rate; a DCP with 44.1 kHz sound is illegal, so reject
 /// non-DCP rates here instead of shipping a mislabeled MXF.
-const DCP_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
+pub const DCP_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
 
 /// Read the `fmt ` chunk body (channels at +2, sample rate at +4) from a WAV.
 /// Reads a bounded prefix since the fmt chunk sits near the file start.
@@ -164,11 +164,29 @@ pub fn check_source_fits_packaged_channels(
 const WAV_HEADER_BYTES: usize = 44;
 const WAV_IO_BUFFER_BYTES: usize = 1 << 20;
 
-/// Lay a WAV out the way the packaged sound track carries it: a six-channel
-/// source is reordered to canonical DCP 5.1, then silent channels fill the track
-/// up to `packaged_channels`. None keeps the wrap's own rule, where 5.1 is
-/// widened to 16 and every other source is left as it is. Returns false when the
-/// source was left untouched and no file was written.
+/// What the packaged sound essence carries, SMPTE ST 429-2.
+pub const PACKAGED_BITS_PER_SAMPLE: u16 = 24;
+
+/// Depths this widens to [`PACKAGED_BITS_PER_SAMPLE`] by shifting the samples
+/// into the top bytes, which loses nothing.
+pub const PROMOTABLE_BITS_PER_SAMPLE: [u16; 2] = [8, 16];
+
+// 8-bit PCM is unsigned with silence at 128, every deeper depth is signed
+// little-endian, so widening is a shift and 8-bit flips its offset first
+fn write_packaged_sample(packaged: &mut [u8], source: &[u8]) {
+    match source.len() {
+        1 => packaged.copy_from_slice(&[0, 0, source[0] ^ 0x80]),
+        2 => packaged.copy_from_slice(&[0, source[0], source[1]]),
+        _ => packaged.copy_from_slice(source),
+    }
+}
+
+/// Lay a WAV out the way the packaged sound track carries it: 8 and 16-bit
+/// samples are widened to 24-bit, a six-channel source is reordered to canonical
+/// DCP 5.1, then silent channels fill the track up to `packaged_channels`. None
+/// keeps the wrap's own rule, where 5.1 is widened to 16 and every other source
+/// keeps its channel count. Returns false when the source was left untouched and
+/// no file was written.
 pub fn prepare_packaged_channels(
     input: &Path,
     output: &Path,
@@ -223,15 +241,6 @@ pub fn prepare_packaged_channels(
     };
     let format = u16::from_le_bytes(fmt[0..2].try_into().unwrap());
     let channels = u32::from(u16::from_le_bytes(fmt[2..4].try_into().unwrap()));
-    let target_channels = match packaged_channels {
-        Some(count) => {
-            check_packaged_channel_count(count)?;
-            check_source_fits_packaged_channels(channels, count)?;
-            count
-        }
-        None if channels == CANONICAL_51_CHANNELS => DEFAULT_PACKAGED_51_CHANNELS,
-        None => return Ok(false),
-    };
     // ffmpeg writes >2ch pcm as WAVE_FORMAT_EXTENSIBLE (0xFFFE); the real
     // format code is the first two bytes of the SubFormat guid
     let is_pcm = format == 1
@@ -243,9 +252,26 @@ pub fn prepare_packaged_channels(
     }
     let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
     let bits = u16::from_le_bytes(fmt[14..16].try_into().unwrap());
-    if bits == 0 || !bits.is_multiple_of(8) {
-        return Err(format!("{} has unsupported PCM bit depth", input.display()));
+    let promoting = PROMOTABLE_BITS_PER_SAMPLE.contains(&bits);
+    if bits != PACKAGED_BITS_PER_SAMPLE && !promoting {
+        return Err(format!(
+            "{} carries {bits}-bit PCM, which cannot be widened to \
+             {PACKAGED_BITS_PER_SAMPLE}-bit without losing samples: convert it with \
+             ffmpeg -c:a pcm_s24le",
+            input.display()
+        ));
     }
+    let target_channels = match packaged_channels {
+        Some(count) => {
+            check_packaged_channel_count(count)?;
+            check_source_fits_packaged_channels(channels, count)?;
+            count
+        }
+        None if channels == CANONICAL_51_CHANNELS => DEFAULT_PACKAGED_51_CHANNELS,
+        // nothing to reorder, widen or promote
+        None if !promoting => return Ok(false),
+        None => channels,
+    };
     let sample_bytes = (bits / 8) as usize;
     let source_frame_bytes = sample_bytes * channels as usize;
     if payload_len % source_frame_bytes as u64 != 0 {
@@ -261,7 +287,8 @@ pub fn prepare_packaged_channels(
     } else {
         (0..channels as usize).collect()
     };
-    let output_frame_bytes = sample_bytes * target_channels as usize;
+    let packaged_sample_bytes = (PACKAGED_BITS_PER_SAMPLE / 8) as usize;
+    let output_frame_bytes = packaged_sample_bytes * target_channels as usize;
     let data_size = frame_count * output_frame_bytes as u64;
     let riff_size = WAV_HEADER_BYTES as u64 - 8 + data_size;
     if riff_size > u64::from(u32::MAX) {
@@ -286,7 +313,7 @@ pub fn prepare_packaged_channels(
     header.extend_from_slice(&sample_rate.to_le_bytes());
     header.extend_from_slice(&(sample_rate * output_frame_bytes as u32).to_le_bytes());
     header.extend_from_slice(&(output_frame_bytes as u16).to_le_bytes());
-    header.extend_from_slice(&bits.to_le_bytes());
+    header.extend_from_slice(&PACKAGED_BITS_PER_SAMPLE.to_le_bytes());
     header.extend_from_slice(b"data");
     header.extend_from_slice(&(data_size as u32).to_le_bytes());
     sink.write_all(&header).map_err(cannot_write)?;
@@ -301,9 +328,11 @@ pub fn prepare_packaged_channels(
         source.read_exact(&mut source_frame).map_err(cannot_read)?;
         for (slot, channel) in order.iter().enumerate() {
             let from = channel * sample_bytes;
-            let to = slot * sample_bytes;
-            output_frame[to..to + sample_bytes]
-                .copy_from_slice(&source_frame[from..from + sample_bytes]);
+            let to = slot * packaged_sample_bytes;
+            write_packaged_sample(
+                &mut output_frame[to..to + packaged_sample_bytes],
+                &source_frame[from..from + sample_bytes],
+            );
         }
         sink.write_all(&output_frame).map_err(cannot_write)?;
     }
@@ -775,8 +804,24 @@ mod tests {
 
     /// A WAV with `channels` interleaved 8-bit samples, one sample per channel
     /// per frame, counting up so a reorder or a fill is visible byte by byte.
+    /// A WAV at the packaged depth whose nth sample is the value n, so a test can
+    /// say which source sample landed in which channel slot.
     fn write_counting_wav(path: &std::path::Path, channels: u16, frames: usize) {
-        let block_align = channels;
+        write_wav_at_depth(
+            path,
+            channels,
+            PACKAGED_BITS_PER_SAMPLE,
+            &(1..=(channels as usize * frames) as i32).collect::<Vec<_>>(),
+        );
+    }
+
+    fn write_wav_at_depth(path: &std::path::Path, channels: u16, bits: u16, samples: &[i32]) {
+        let sample_bytes = (bits / 8) as usize;
+        let block_align = channels * (bits / 8);
+        let payload: Vec<u8> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes()[..sample_bytes].to_vec())
+            .collect();
         let mut wav = Vec::new();
         wav.extend_from_slice(b"RIFF");
         wav.extend_from_slice(&0u32.to_le_bytes());
@@ -787,14 +832,25 @@ mod tests {
         wav.extend_from_slice(&48_000u32.to_le_bytes());
         wav.extend_from_slice(&(48_000 * block_align as u32).to_le_bytes());
         wav.extend_from_slice(&block_align.to_le_bytes());
-        wav.extend_from_slice(&8u16.to_le_bytes());
+        wav.extend_from_slice(&bits.to_le_bytes());
         wav.extend_from_slice(b"data");
-        let payload: Vec<u8> = (1..=(channels as usize * frames) as u8).collect();
         wav.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         wav.extend_from_slice(&payload);
         let riff_size = wav.len() as u32 - 8;
         wav[4..8].copy_from_slice(&riff_size.to_le_bytes());
         std::fs::write(path, wav).unwrap();
+    }
+
+    /// One frame of the packaged track, as the signed values its samples carry.
+    fn packaged_frame(wav: &[u8], channels: usize, frame: usize) -> Vec<i32> {
+        let sample_bytes = (PACKAGED_BITS_PER_SAMPLE / 8) as usize;
+        let start = WAV_HEADER_BYTES + frame * channels * sample_bytes;
+        (0..channels)
+            .map(|channel| {
+                let at = start + channel * sample_bytes;
+                i32::from_le_bytes([0, wav[at], wav[at + 1], wav[at + 2]]) >> 8
+            })
+            .collect()
     }
 
     /// Stereo filled to a wider track keeps its samples where they were and pays
@@ -806,8 +862,8 @@ mod tests {
         write_counting_wav(&input, 2, 2);
 
         for (target, expected_frame) in [
-            (6u32, vec![1u8, 2, 0, 0, 0, 0]),
-            (16, vec![1u8, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            (6u32, vec![1i32, 2, 0, 0, 0, 0]),
+            (16, vec![1i32, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
         ] {
             let output = dir.path().join(format!("filled_{target}.wav"));
             assert!(
@@ -822,9 +878,9 @@ mod tests {
             assert_eq!(wav_channels(&output).unwrap(), target as u16);
             let written = std::fs::read(&output).unwrap();
             let width = target as usize;
-            assert_eq!(&written[44..44 + width], expected_frame.as_slice());
-            // the second frame's source samples land bit-exact too
-            assert_eq!(&written[44 + width..44 + width + 2], &[3, 4]);
+            assert_eq!(packaged_frame(&written, width, 0), expected_frame);
+            // the second frame's source samples land in the same two slots
+            assert_eq!(packaged_frame(&written, width, 1)[..2], [3, 4]);
         }
     }
 
@@ -841,7 +897,7 @@ mod tests {
         );
         assert_eq!(wav_channels(&output).unwrap(), 8);
         let written = std::fs::read(&output).unwrap();
-        assert_eq!(&written[44..52], &[1, 2, 3, 4, 5, 6, 0, 0]);
+        assert_eq!(packaged_frame(&written, 8, 0), [1, 2, 3, 4, 5, 6, 0, 0]);
     }
 
     /// Asking for the count the source already has leaves the track that wide.
@@ -858,8 +914,8 @@ mod tests {
         );
         assert_eq!(wav_channels(&output).unwrap(), 6);
         assert_eq!(
-            &std::fs::read(&output).unwrap()[44..50],
-            &[1, 2, 3, 4, 5, 6]
+            packaged_frame(&std::fs::read(&output).unwrap(), 6, 0),
+            [1, 2, 3, 4, 5, 6]
         );
     }
 
@@ -891,26 +947,66 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("source.wav");
         let output = dir.path().join("dcp.wav");
-        let mut wav = Vec::new();
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&54u32.to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes());
-        wav.extend_from_slice(&6u16.to_le_bytes());
-        wav.extend_from_slice(&48_000u32.to_le_bytes());
-        wav.extend_from_slice(&288_000u32.to_le_bytes());
-        wav.extend_from_slice(&6u16.to_le_bytes());
-        wav.extend_from_slice(&8u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&6u32.to_le_bytes());
-        wav.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
-        std::fs::write(&input, wav).unwrap();
+        write_counting_wav(&input, 6, 1);
 
         prepare_packaged_channels(&input, &output, AudioInputOrder::LrcLsRsLfe, None).unwrap();
         let wav = std::fs::read(output).unwrap();
-        assert_eq!(&wav[44..50], &[1, 2, 3, 6, 4, 5]);
-        assert!(wav[50..60].iter().all(|sample| *sample == 0));
+        assert_eq!(packaged_frame(&wav, 16, 0)[..6], [1, 2, 3, 6, 4, 5]);
+        assert!(packaged_frame(&wav, 16, 0)[6..].iter().all(|s| *s == 0));
+    }
+
+    /// 8 and 16-bit samples are widened by a shift, so silence stays silent and
+    /// full scale stays full scale.
+    #[test]
+    fn eight_and_sixteen_bit_sound_is_widened_to_the_packaged_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        for (bits, samples, expected) in [
+            // 8-bit PCM is unsigned: 128 is silence, 255 and 0 are the extremes
+            (
+                8u16,
+                vec![128i32, 255, 0],
+                vec![0i32, 127 << 16, -128 << 16],
+            ),
+            (
+                16,
+                vec![0i32, 32767, -32768],
+                vec![0i32, 32767 << 8, -32768 << 8],
+            ),
+        ] {
+            let input = dir.path().join(format!("source_{bits}.wav"));
+            let output = dir.path().join(format!("packaged_{bits}.wav"));
+            write_wav_at_depth(&input, 1, bits, &samples);
+
+            assert!(
+                prepare_packaged_channels(&input, &output, AudioInputOrder::Canonical51, None)
+                    .unwrap(),
+                "{bits}-bit sound has to be rewritten"
+            );
+            let written = std::fs::read(&output).unwrap();
+            assert_eq!(
+                u16::from_le_bytes(written[34..36].try_into().unwrap()),
+                PACKAGED_BITS_PER_SAMPLE,
+                "{bits}-bit sound has to be packaged at {PACKAGED_BITS_PER_SAMPLE}-bit"
+            );
+            let read_back: Vec<i32> = (0..samples.len())
+                .map(|frame| packaged_frame(&written, 1, frame)[0])
+                .collect();
+            assert_eq!(read_back, expected, "{bits}-bit sound");
+        }
+    }
+
+    #[test]
+    fn a_depth_that_cannot_be_widened_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("thirty_two.wav");
+        let output = dir.path().join("packaged.wav");
+        write_wav_at_depth(&input, 2, 32, &[1, 2, 3, 4]);
+
+        let error = prepare_packaged_channels(&input, &output, AudioInputOrder::Canonical51, None)
+            .unwrap_err();
+        assert!(error.contains("32-bit"), "{error}");
+        assert!(error.contains("pcm_s24le"), "{error}");
+        assert!(!output.exists());
     }
 
     // Wrap a real DCI J2K frame with --hdr-dci signaling, then read the picture

@@ -341,28 +341,37 @@ fn check_sound(plan: &CreatePlan) -> Result<(), String> {
         return Ok(());
     };
     let spec = read_wav_spec(wav)?;
-    check_dci_sound(spec.bits_per_sample, spec.sample_rate, wav)?;
+    check_packageable_sound(&spec, wav)?;
     crate::pad::check_frame_aligned_sample_rate(spec.sample_rate, plan.fps)
 }
 
-// SMPTE ST 429-2 sound essence
-const DCI_SOUND_BITS_PER_SAMPLE: u16 = 24;
-const DCI_SOUND_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
-
-/// The sound is wrapped as it stands, so a WAV DCI does not allow packages into
-/// a DCP that fails its own verification once the whole picture is encoded.
-pub fn check_dci_sound(bits_per_sample: u16, sample_rate: u32, wav: &Path) -> Result<(), String> {
-    if bits_per_sample != DCI_SOUND_BITS_PER_SAMPLE {
+/// The wrap widens 8 and 16-bit samples to the 24-bit the essence carries, which
+/// loses nothing. Nothing converts a deeper or floating point master, so it would
+/// package into a DCP that fails its own verification after the whole encode.
+fn check_packageable_sound(spec: &hound::WavSpec, wav: &Path) -> Result<(), String> {
+    let widens = spec.sample_format == hound::SampleFormat::Int
+        && (spec.bits_per_sample == crate::mxf_wrap::PACKAGED_BITS_PER_SAMPLE
+            || crate::mxf_wrap::PROMOTABLE_BITS_PER_SAMPLE.contains(&spec.bits_per_sample));
+    if !widens {
+        let carried = match spec.sample_format {
+            hound::SampleFormat::Float => "float",
+            hound::SampleFormat::Int => "integer",
+        };
         return Err(format!(
-            "{} carries {bits_per_sample}-bit sound; DCI requires {DCI_SOUND_BITS_PER_SAMPLE}-bit \
-             PCM. Convert it, for example with ffmpeg -i in.wav -c:a pcm_s24le out.wav",
-            wav.display()
+            "{} carries {}-bit {carried} sound, which cannot be widened to {}-bit without \
+             losing samples: convert it with ffmpeg -c:a pcm_s24le",
+            wav.display(),
+            spec.bits_per_sample,
+            crate::mxf_wrap::PACKAGED_BITS_PER_SAMPLE,
         ));
     }
-    if !DCI_SOUND_SAMPLE_RATES.contains(&sample_rate) {
+    if !crate::mxf_wrap::DCP_SAMPLE_RATES.contains(&spec.sample_rate) {
         return Err(format!(
-            "{} is sampled at {sample_rate} Hz; DCI allows 48000 or 96000 Hz",
-            wav.display()
+            "{} is sampled at {} Hz; DCI allows {} or {} Hz",
+            wav.display(),
+            spec.sample_rate,
+            crate::mxf_wrap::DCP_SAMPLE_RATES[0],
+            crate::mxf_wrap::DCP_SAMPLE_RATES[1],
         ));
     }
     Ok(())

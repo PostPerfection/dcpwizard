@@ -12,6 +12,24 @@ const FRAMES: u32 = 3;
 const NON_DCI_SAMPLE_RATE: u32 = 44_100;
 const NON_DCI_SAMPLE_RATE_FPS: u32 = 25;
 
+const PACKAGED_BITS_PER_SAMPLE: u32 = 24;
+
+fn only_file_starting_with(directory: &Path, prefix: &str) -> PathBuf {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(directory)
+        .expect("the package directory has to be readable")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+        .collect();
+    found.sort();
+    assert_eq!(found.len(), 1, "one {prefix}* in {}", directory.display());
+    found.remove(0)
+}
+
 fn dcpwizard(config_home: &Path) -> Command {
     let mut command = Command::cargo_bin("dcpwizard").unwrap();
     command.env("XDG_CONFIG_HOME", config_home);
@@ -91,15 +109,15 @@ fn create_is_refused(command: &mut Command, out: &Path, naming: &[&str]) {
 }
 
 #[test]
-fn a_sixteen_bit_wav_is_refused_before_any_frame_is_encoded() {
+fn a_sixteen_bit_wav_is_packaged_at_the_dci_depth() {
     let directory = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();
     let source = write_source(directory.path());
     let wav = write_wav(directory.path(), "sixteen.wav", "pcm_s16le", 48_000);
     let out = directory.path().join("dcp");
 
-    create_is_refused(
-        dcpwizard(config_home.path()).args([
+    dcpwizard(config_home.path())
+        .args([
             "create",
             "--title",
             "Sixteen Bit",
@@ -110,9 +128,76 @@ fn a_sixteen_bit_wav_is_refused_before_any_frame_is_encoded() {
             "-o",
             out.to_str().unwrap(),
             "--twok",
+        ])
+        .assert()
+        .success();
+
+    let sound = only_file_starting_with(&out, "sound_");
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader
+        .open_read(&sound.to_string_lossy())
+        .expect("the sound MXF has to open");
+    assert_eq!(
+        reader
+            .audio_descriptor()
+            .expect("audio descriptor")
+            .quantization_bits,
+        PACKAGED_BITS_PER_SAMPLE,
+        "a 16-bit master has to be widened, not wrapped as it stands"
+    );
+    let verified = dcpwizard_core::verify::verify_dcp(&out);
+    assert!(verified.valid, "dcpdoctor errors: {:?}", verified.errors);
+}
+
+#[test]
+fn a_float_wav_is_refused_before_any_frame_is_encoded() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let wav = write_wav(directory.path(), "float.wav", "pcm_f32le", 48_000);
+    let out = directory.path().join("dcp");
+
+    create_is_refused(
+        dcpwizard(config_home.path()).args([
+            "create",
+            "--title",
+            "Float",
+            "--video",
+            source.to_str().unwrap(),
+            "--audio",
+            wav.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--twok",
         ]),
         &out,
-        &["16-bit", "24-bit PCM", "sixteen.wav"],
+        &["32-bit float", "pcm_s24le", "float.wav"],
+    );
+}
+
+#[test]
+fn a_thirty_two_bit_integer_wav_is_refused_before_any_frame_is_encoded() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let wav = write_wav(directory.path(), "thirty_two.wav", "pcm_s32le", 48_000);
+    let out = directory.path().join("dcp");
+
+    create_is_refused(
+        dcpwizard(config_home.path()).args([
+            "create",
+            "--title",
+            "Thirty Two Bit",
+            "--video",
+            source.to_str().unwrap(),
+            "--audio",
+            wav.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--twok",
+        ]),
+        &out,
+        &["32-bit integer", "pcm_s24le", "thirty_two.wav"],
     );
 }
 
