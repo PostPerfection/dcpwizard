@@ -12,41 +12,60 @@ pub enum ExportFormat {
     ImageSequence,
 }
 
+/// The formats that come out as one movie file. An image sequence has no
+/// container, no pixel format of its own and no sound track, so it answers none
+/// of these and is written by [`export_image_sequence`] instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MovieFormat {
+    ProRes,
+    H264,
+    H265,
+    DnxHr,
+}
+
 impl ExportFormat {
-    fn ffmpeg_codec(&self) -> &'static str {
+    fn movie(self) -> Option<MovieFormat> {
         match self {
-            ExportFormat::ProRes => "prores_ks",
-            ExportFormat::H264 => "libx264",
-            ExportFormat::H265 => "libx265",
-            ExportFormat::DnxHr => "dnxhd",
-            ExportFormat::ImageSequence => "png",
+            ExportFormat::ProRes => Some(MovieFormat::ProRes),
+            ExportFormat::H264 => Some(MovieFormat::H264),
+            ExportFormat::H265 => Some(MovieFormat::H265),
+            ExportFormat::DnxHr => Some(MovieFormat::DnxHr),
+            ExportFormat::ImageSequence => None,
+        }
+    }
+}
+
+impl MovieFormat {
+    fn ffmpeg_codec(self) -> &'static str {
+        match self {
+            MovieFormat::ProRes => "prores_ks",
+            MovieFormat::H264 => "libx264",
+            MovieFormat::H265 => "libx265",
+            MovieFormat::DnxHr => "dnxhd",
         }
     }
 
-    fn file_extension(&self) -> &'static str {
+    fn file_extension(self) -> &'static str {
         match self {
-            ExportFormat::ProRes => "mov",
-            ExportFormat::H264 => "mp4",
-            ExportFormat::H265 => "mp4",
-            ExportFormat::DnxHr => "mxf",
-            ExportFormat::ImageSequence => "png",
+            MovieFormat::ProRes => "mov",
+            MovieFormat::H264 | MovieFormat::H265 => "mp4",
+            MovieFormat::DnxHr => "mxf",
         }
     }
 
-    fn pixel_format(&self) -> &'static str {
+    fn pixel_format(self) -> &'static str {
         match self {
-            ExportFormat::ProRes => "yuv422p10le",
-            ExportFormat::DnxHr => "yuv422p",
-            ExportFormat::H264 | ExportFormat::H265 => "yuv420p",
-            ExportFormat::ImageSequence => "rgb48le",
+            MovieFormat::ProRes => "yuv422p10le",
+            MovieFormat::DnxHr => "yuv422p",
+            MovieFormat::H264 | MovieFormat::H265 => "yuv420p",
         }
     }
 
     // a ProRes or DNxHR master for approval carries PCM, only the delivery codecs take AAC
-    fn audio_codec(&self) -> &'static str {
+    fn audio_codec(self) -> &'static str {
         match self {
-            ExportFormat::ProRes | ExportFormat::DnxHr => "pcm_s24le",
-            ExportFormat::H264 | ExportFormat::H265 | ExportFormat::ImageSequence => "aac",
+            MovieFormat::ProRes | MovieFormat::DnxHr => "pcm_s24le",
+            MovieFormat::H264 | MovieFormat::H265 => "aac",
         }
     }
 }
@@ -76,14 +95,12 @@ pub fn export_dcp(config: &ExportConfig) -> Result<(), String> {
         config.quality_crf
     };
 
-    if config.format == ExportFormat::ImageSequence {
+    let Some(movie) = config.format.movie() else {
         return export_image_sequence(&config.input_mxf, &config.output_path);
-    }
+    };
 
     let output = if config.output_path.extension().is_none() {
-        config
-            .output_path
-            .with_extension(config.format.file_extension())
+        config.output_path.with_extension(movie.file_extension())
     } else {
         config.output_path.clone()
     };
@@ -98,26 +115,23 @@ pub fn export_dcp(config: &ExportConfig) -> Result<(), String> {
         cmd.arg("-i").arg(audio);
     }
 
-    cmd.arg("-vf").arg(rec709_filter(config.format));
-    cmd.arg("-c:v").arg(config.format.ffmpeg_codec());
+    cmd.arg("-vf").arg(rec709_filter(movie));
+    cmd.arg("-c:v").arg(movie.ffmpeg_codec());
 
-    match config.format {
-        ExportFormat::H264 | ExportFormat::H265 => {
+    match movie {
+        MovieFormat::H264 | MovieFormat::H265 => {
             cmd.arg("-crf").arg(crf.to_string());
             cmd.arg("-preset").arg("medium");
         }
-        ExportFormat::ProRes => {
+        MovieFormat::ProRes => {
             cmd.arg("-profile:v").arg("3"); // ProRes HQ
         }
-        ExportFormat::DnxHr => {
+        MovieFormat::DnxHr => {
             cmd.arg("-profile:v").arg("dnxhr_hq");
         }
-        ExportFormat::ImageSequence => unreachable!(),
     }
 
-    cmd.arg("-c:a")
-        .arg(config.format.audio_codec())
-        .arg(&output);
+    cmd.arg("-c:a").arg(movie.audio_codec()).arg(&output);
 
     run_ffmpeg(cmd, &format!("export to {}", output.display()))?;
     tracing::info!("Exported DCP to {}", output.display());
@@ -126,11 +140,11 @@ pub fn export_dcp(config: &ExportConfig) -> Result<(), String> {
 
 // a DCP picture is X'Y'Z' at DCI gamma 2.6: swscale undoes that, out_color_matrix picks the
 // Rec.709 matrix over swscale's 601 default, and setparams tags what the player has to assume
-fn rec709_filter(format: ExportFormat) -> String {
+fn rec709_filter(movie: MovieFormat) -> String {
     format!(
         "scale=out_color_matrix=bt709:out_range=tv,format={},\
          setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
-        format.pixel_format()
+        movie.pixel_format()
     )
 }
 
