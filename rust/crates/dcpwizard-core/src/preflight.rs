@@ -66,6 +66,8 @@ pub struct CreatePlan {
     pub standard: Standard,
     pub content_type: ContentType,
     pub encrypt: bool,
+    /// Whether a signer was named, so the CPL and PKL will carry a signature.
+    pub signed: bool,
     pub hdr_dci: bool,
     pub video_bit_rate_mbps: u32,
     pub right_eye: Option<PathBuf>,
@@ -107,6 +109,7 @@ impl Default for CreatePlan {
             standard: Standard::default(),
             content_type: ContentType::default(),
             encrypt: false,
+            signed: false,
             hdr_dci: false,
             video_bit_rate_mbps: 0,
             right_eye: None,
@@ -154,6 +157,7 @@ pub fn check_before_encode(plan: &CreatePlan) -> Result<(), String> {
     check_audio_channels(plan)?;
     check_active_area(plan)?;
     check_sound(plan)?;
+    check_signed_when_encrypted(plan)?;
     check_atmos(plan)?;
     check_timed_text(plan)
 }
@@ -362,6 +366,19 @@ pub fn check_dci_sound(bits_per_sample: u16, sample_rate: u32, wav: &Path) -> Re
         ));
     }
     Ok(())
+}
+
+/// A KDM binds to a signed CPL, so an encrypted package with nothing to sign it
+/// is one no projector can be given keys for.
+fn check_signed_when_encrypted(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.encrypt || plan.signed {
+        return Ok(());
+    }
+    Err(
+        "an encrypted package needs a signed CPL and PKL: name a signer with --signer-cert and \
+         --signer-key, or build it without --encrypt"
+            .into(),
+    )
 }
 
 fn check_atmos(plan: &CreatePlan) -> Result<(), String> {

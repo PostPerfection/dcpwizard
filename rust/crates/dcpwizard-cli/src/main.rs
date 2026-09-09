@@ -4579,6 +4579,7 @@ fn run() {
                     .and_then(dcpwizard_core::ContentType::from_abbrev)
                     .unwrap_or_default(),
                 encrypt,
+                signed: package_signer.is_some(),
                 hdr_dci,
                 video_bit_rate_mbps: video_bit_rate.unwrap_or(0),
                 right_eye: right_eye.as_deref().map(PathBuf::from),

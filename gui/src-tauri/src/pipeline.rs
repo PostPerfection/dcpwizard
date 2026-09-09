@@ -1052,6 +1052,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         standard: standard_of(&job.standard),
         content_type: content_type_of(&job.content_kind),
         encrypt: job.encrypt,
+        // the panel has nowhere to name a signer, so a build here signs nothing
+        signed: false,
         hdr_dci: job.hdr_dci,
         video_bit_rate_mbps: job.bandwidth,
         right_eye: job.right_eye.as_ref().map(PathBuf::from),

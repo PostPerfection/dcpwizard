@@ -152,3 +152,76 @@ fn a_sample_rate_dci_does_not_allow_is_refused_before_any_frame_is_encoded() {
         ],
     );
 }
+
+#[test]
+fn encrypting_without_a_signer_is_refused_before_any_frame_is_encoded() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+
+    create_is_refused(
+        dcpwizard(config_home.path()).args([
+            "create",
+            "--title",
+            "No Signer",
+            "--video",
+            source.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--twok",
+            "--encrypt",
+            "--key-out",
+            directory.path().join("KEYS.json").to_str().unwrap(),
+        ]),
+        &out,
+        &["signed CPL and PKL", "--signer-cert"],
+    );
+}
+
+// the same job with a signer gets past the check and packages
+#[test]
+fn encrypting_with_a_signer_still_builds() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let certificates = directory.path().join("certs");
+    dcpwizard(config_home.path())
+        .args([
+            "certificate",
+            "chain",
+            "--organization",
+            "Prebuild Test",
+            "-o",
+            certificates.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let out = directory.path().join("dcp");
+    dcpwizard(config_home.path())
+        .args([
+            "create",
+            "--title",
+            "Signed",
+            "--video",
+            source.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--twok",
+            "--encrypt",
+            "--key-out",
+            directory.path().join("KEYS.json").to_str().unwrap(),
+            "--signer-cert",
+            certificates.join("signer.pem").to_str().unwrap(),
+            "--signer-key",
+            certificates.join("signer.key").to_str().unwrap(),
+            "--signer-chain",
+            certificates.join("intermediate.pem").to_str().unwrap(),
+            "--signer-chain",
+            certificates.join("root.pem").to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(out.join("ASSETMAP.xml").exists());
+}
