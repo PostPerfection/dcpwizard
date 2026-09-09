@@ -12,7 +12,11 @@ const DEVICE_WARNING: &str =
 
 fn dcpwizard(config_home: &Path) -> Command {
     let mut command = Command::cargo_bin("dcpwizard").unwrap();
+    // dirs::config_dir reads XDG on Linux but HOME on macOS and APPDATA on Windows,
+    // so all three point at the temp dir or a sibling test's gpu preference leaks in
     command.env("XDG_CONFIG_HOME", config_home);
+    command.env("HOME", config_home);
+    command.env("APPDATA", config_home);
     // no accelerator plugin loads, so every run here encodes on the CPU
     command.env("GRK_NO_PLUGIN", "1");
     command
