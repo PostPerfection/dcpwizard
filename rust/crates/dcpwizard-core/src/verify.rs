@@ -79,6 +79,8 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
             ov: None,
             kdm: None,
             recipient_key: None,
+            // a DCP gets no IMF pass
+            photon: None,
         }
     };
 
