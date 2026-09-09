@@ -1,3 +1,7 @@
+// dirs::config_dir on windows reads the win32 known-folder api, not an env var,
+// so a sibling test's gpu preference cannot be isolated from these create runs
+#![cfg(unix)]
+
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
