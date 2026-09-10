@@ -298,6 +298,107 @@ mod tests {
         assert!(out.contains("kdms.zip"));
     }
 
+    #[derive(Default)]
+    struct SmtpTranscript {
+        commands: String,
+        body: String,
+    }
+
+    // advertises no extensions after EHLO so lettre attempts neither STARTTLS nor AUTH
+    fn serve_one_message(
+        listener: std::net::TcpListener,
+        transcript: std::sync::Arc<std::sync::Mutex<SmtpTranscript>>,
+    ) {
+        use std::io::{BufRead, BufReader};
+
+        const GREETING: &[u8] = b"220 test ESMTP\r\n";
+        const EHLO_REPLY: &[u8] = b"250-test\r\n250 OK\r\n";
+        const OK: &[u8] = b"250 OK\r\n";
+        const START_DATA: &[u8] = b"354 end with a dot\r\n";
+        const BYE: &[u8] = b"221 bye\r\n";
+        const END_OF_DATA: &str = ".";
+
+        let (stream, _) = listener.accept().unwrap();
+        let mut writer = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+        writer.write_all(GREETING).unwrap();
+
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            transcript.lock().unwrap().commands.push_str(&line);
+            let command = line.trim_end().to_string();
+            line.clear();
+
+            if command.starts_with("EHLO") || command.starts_with("HELO") {
+                writer.write_all(EHLO_REPLY).unwrap();
+            } else if command.starts_with("DATA") {
+                writer.write_all(START_DATA).unwrap();
+                while reader.read_line(&mut line).unwrap() > 0 {
+                    if line.trim_end() == END_OF_DATA {
+                        line.clear();
+                        break;
+                    }
+                    transcript.lock().unwrap().body.push_str(&line);
+                    line.clear();
+                }
+                writer.write_all(OK).unwrap();
+            } else if command.starts_with("QUIT") {
+                writer.write_all(BYE).unwrap();
+                break;
+            } else {
+                writer.write_all(OK).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn kdm_email_reaches_the_smtp_server() {
+        const CINEMA: &str = "Odeon";
+        const TITLE: &str = "Big Feature";
+        const RECIPIENT: &str = "a@odeon.test";
+        const SENDER: &str = "kdm@dist.test";
+
+        let dir = tempfile::tempdir().unwrap();
+        let kdm = dir.path().join("001_screen.kdm.xml");
+        std::fs::write(&kdm, b"<kdm/>").unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let transcript = std::sync::Arc::new(std::sync::Mutex::new(SmtpTranscript::default()));
+        let server_transcript = std::sync::Arc::clone(&transcript);
+        std::thread::spawn(move || serve_one_message(listener, server_transcript));
+
+        let cfg = SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            security: Security::None,
+            username: None,
+            password: None,
+            from: SENDER.to_string(),
+            subject_template: Some("Keys for {title} at {cinema}".to_string()),
+            body_template: None,
+        };
+        send_kdms(&cfg, CINEMA, TITLE, &[RECIPIENT.to_string()], &[kdm]).unwrap();
+
+        // the 250 to the final dot came back before send_kdms returned
+        let delivered = transcript.lock().unwrap();
+        assert!(
+            delivered
+                .commands
+                .contains(&format!("RCPT TO:<{RECIPIENT}>")),
+            "{}",
+            delivered.commands
+        );
+        assert!(
+            delivered
+                .body
+                .contains(&format!("Subject: Keys for {TITLE} at {CINEMA}")),
+            "{}",
+            delivered.body
+        );
+        assert!(delivered.body.contains("kdms.zip"), "{}", delivered.body);
+    }
+
     #[test]
     fn message_requires_a_recipient() {
         let r = build_message(

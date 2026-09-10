@@ -181,4 +181,46 @@ mod tests {
             vec![7u8; 4096]
         );
     }
+
+    #[test]
+    fn free_space_check_refuses_a_requirement_no_volume_can_hold() {
+        // u64::MAX rendered by the check's own byte formatter
+        const REQUIRED_TEXT: &str = "need 16777216.0 TiB";
+
+        let dir = tempfile::tempdir().unwrap();
+        let err = postkit::free_space::check_destination_space(dir.path(), u64::MAX).unwrap_err();
+        assert!(err.contains(&dir.path().display().to_string()), "{err}");
+        assert!(err.contains(REQUIRED_TEXT), "{err}");
+        assert!(err.contains("but only ") && err.ends_with(" free"), "{err}");
+    }
+
+    #[test]
+    fn free_space_check_allows_a_zero_requirement() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(postkit::free_space::check_destination_space(dir.path(), 0).is_ok());
+    }
+
+    // a sparse file counts its apparent size while staying a few bytes on disk
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_dcp_larger_than_the_free_space() {
+        const SPARSE_PICTURE_BYTES: u64 = 1 << 60;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("MyDCP");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("ASSETMAP.xml"), b"a").unwrap();
+        File::create(src.join("picture.mxf"))
+            .unwrap()
+            .set_len(SPARSE_PICTURE_BYTES)
+            .unwrap();
+
+        let target = dir.path().join("drive");
+        assert_eq!(copy_to_drive(&src, &target), -1);
+
+        let copied = std::fs::read_dir(target.join("MyDCP"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(copied, 0, "nothing copied");
+    }
 }
