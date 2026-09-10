@@ -1562,7 +1562,6 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
   const from = document.getElementById("kdm-from").value;
   const to = document.getElementById("kdm-to").value;
   const template = document.getElementById("kdm-template")?.value.trim();
-  const format = document.getElementById("kdm-format")?.value || "smpte";
   const formulation = document.getElementById("kdm-formulation")?.value || "";
   const noForensicPicture = document.getElementById("kdm-no-forensic-picture")?.checked || false;
   const audioMarking = document.getElementById("kdm-audio-marking")?.value || "on";
@@ -1571,7 +1570,7 @@ document.getElementById("run-kdm")?.addEventListener("click", async () => {
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating KDM...";
   const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert,
-    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output, "--format", format];
+    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output];
   if (keys) args.push("--keys", keys);
   if (template) args.push("--template", template);
   if (from) args.push("-f", from);

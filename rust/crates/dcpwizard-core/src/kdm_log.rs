@@ -18,11 +18,9 @@ pub struct Record {
     pub valid_from: String,
     pub valid_to: String,
     pub output_path: String,
-    pub format: String,
 }
 
 impl Record {
-    #[allow(clippy::too_many_arguments)]
     pub fn now(
         cpl_id: &str,
         content_title: &str,
@@ -31,7 +29,6 @@ impl Record {
         valid_from: &str,
         valid_to: &str,
         output_path: &str,
-        format: &str,
     ) -> Self {
         Record {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -42,7 +39,6 @@ impl Record {
             valid_from: valid_from.to_string(),
             valid_to: valid_to.to_string(),
             output_path: output_path.to_string(),
-            format: format.to_string(),
         }
     }
 }
@@ -130,7 +126,6 @@ mod tests {
             valid_from: "a".into(),
             valid_to: "b".into(),
             output_path: "/out.kdm.xml".into(),
-            format: "smpte".into(),
         }
     }
 
@@ -140,7 +135,7 @@ mod tests {
         let p = dir.path().join("sub").join("h.jsonl");
         append(
             &p,
-            &Record::now("cpl", "Feature", "CN=S", "4ca4", "f", "t", "/o", "smpte"),
+            &Record::now("cpl", "Feature", "CN=S", "4ca4", "f", "t", "/o"),
         )
         .unwrap();
         append(&p, &rec("Other", "abcd", "2026-07-23T10:00:00+00:00")).unwrap();
@@ -153,7 +148,7 @@ mod tests {
     fn record_never_contains_key_material() {
         // the type simply has no field for keys; assert the serialized json
         // carries only metadata keys.
-        let r = Record::now("cpl", "Feature", "CN=S", "4ca4", "f", "t", "/o", "smpte");
+        let r = Record::now("cpl", "Feature", "CN=S", "4ca4", "f", "t", "/o");
         let j = serde_json::to_string(&r).unwrap();
         for banned in ["key", "cipher", "secret", "private"] {
             assert!(
@@ -181,6 +176,21 @@ mod tests {
         // date range july only
         let july = filter(recs.clone(), None, None, Some("2026-07"), Some("2026-07"));
         assert_eq!(july.len(), 2);
+    }
+
+    #[test]
+    fn record_written_before_the_format_field_was_dropped_still_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("h.jsonl");
+        std::fs::write(
+            &p,
+            r#"{"timestamp":"2026-07-01T00:00:00+00:00","cpl_id":"cpl","content_title":"Feature","recipient_subject":"CN=S","recipient_serial":"4ca4","valid_from":"f","valid_to":"t","output_path":"/o","format":"smpte"}
+"#,
+        )
+        .unwrap();
+        let all = read_all(&p).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].content_title, "Feature");
     }
 
     #[test]

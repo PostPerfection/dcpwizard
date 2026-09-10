@@ -80,7 +80,6 @@ fn make_kdm(
         tomorrow_for_seven_days().1,
         content_keys,
         out.to_path_buf(),
-        dcpwizard_core::kdm::KdmFormat::Smpte,
         None,
         None,
         Vec::new(),

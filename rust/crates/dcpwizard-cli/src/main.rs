@@ -669,6 +669,41 @@ impl CreateBurnAppearance {
     }
 }
 
+/// How an HDR master reaches the package: the grade it carries, the peak
+/// luminance the DCI roll-off starts from, and the conversion to run. Boxed into
+/// the Create variant.
+#[derive(Args)]
+struct CreateHdr {
+    /// HDR-to-DCI 3D LUT. Required for HDR source video unless generic tone mapping is enabled.
+    #[arg(long)]
+    hdr_to_dci_lut: Option<String>,
+    /// Allow generic FFmpeg HDR tone mapping. It is not a delivery transform.
+    #[arg(long, conflicts_with = "hdr_dci")]
+    allow_generic_hdr_tonemap: bool,
+    /// Author a DCI HDR Addendum DCP (ST 2084 PQ stamped on the picture MXF
+    /// and the CPL). The master's own colour tags name the grade; pass
+    /// --hdr-source, --hdr-to-dci-lut or --hdr-already-pq to override that.
+    /// Not supported with 3D or reel splitting.
+    #[arg(long)]
+    hdr_dci: bool,
+    /// HDR grade the master carries, when its colour tags do not say.
+    #[arg(
+        long,
+        value_enum,
+        requires = "hdr_dci",
+        conflicts_with_all = ["hdr_to_dci_lut", "hdr_already_pq"]
+    )]
+    hdr_source: Option<HdrSourceArg>,
+    /// Peak luminance of the grade in cd/m², where the DCI HDR roll-off
+    /// starts. Defaults to the master's MaxCLL or mastering display maximum.
+    #[arg(long, requires = "hdr_dci")]
+    hdr_peak_nits: Option<f32>,
+    /// Acknowledge the source is already ST 2084 PQ (DCI HDR), so --hdr-dci
+    /// needs no LUT conversion.
+    #[arg(long, requires = "hdr_dci", conflicts_with = "hdr_to_dci_lut")]
+    hdr_already_pq: bool,
+}
+
 /// Source-shaping options: what colour the source carries, how much of it to
 /// keep, and how long to hold a still. Boxed into the Create variant.
 #[derive(Args)]
@@ -948,34 +983,8 @@ enum Commands {
         /// Six-channel WAV order: dcp (L,R,C,LFE,Ls,Rs) or lrc-ls-rs-lfe
         #[arg(long, default_value = "dcp")]
         audio_input_order: String,
-        /// HDR-to-DCI 3D LUT. Required for HDR source video unless generic tone mapping is enabled.
-        #[arg(long)]
-        hdr_to_dci_lut: Option<String>,
-        /// Allow generic FFmpeg HDR tone mapping. It is not a delivery transform.
-        #[arg(long, conflicts_with = "hdr_dci")]
-        allow_generic_hdr_tonemap: bool,
-        /// Author a DCI HDR Addendum DCP (ST 2084 PQ stamped on the picture MXF
-        /// and the CPL). The master's own colour tags name the grade; pass
-        /// --hdr-source, --hdr-to-dci-lut or --hdr-already-pq to override that.
-        /// Not supported with 3D or reel splitting.
-        #[arg(long)]
-        hdr_dci: bool,
-        /// HDR grade the master carries, when its colour tags do not say.
-        #[arg(
-            long,
-            value_enum,
-            requires = "hdr_dci",
-            conflicts_with_all = ["hdr_to_dci_lut", "hdr_already_pq"]
-        )]
-        hdr_source: Option<HdrSourceArg>,
-        /// Peak luminance of the grade in cd/m², where the DCI HDR roll-off
-        /// starts. Defaults to the master's MaxCLL or mastering display maximum.
-        #[arg(long, requires = "hdr_dci")]
-        hdr_peak_nits: Option<f32>,
-        /// Acknowledge the source is already ST 2084 PQ (DCI HDR), so --hdr-dci
-        /// needs no LUT conversion.
-        #[arg(long, requires = "hdr_dci", conflicts_with = "hdr_to_dci_lut")]
-        hdr_already_pq: bool,
+        #[command(flatten)]
+        hdr_opts: Box<CreateHdr>,
         /// Sign-language video (ISDCF Doc 13): encoded to VP9 and packed onto
         /// channel 15 of the sound track. Requires --sign-language-lang.
         #[arg(long, requires = "sign_language_lang")]
@@ -1430,9 +1439,6 @@ enum Commands {
         /// this KDM should carry. Required to unlock an encrypted DCP.
         #[arg(long)]
         keys: Option<String>,
-        /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
-        #[arg(long, default_value = "smpte")]
-        format: String,
         /// AnnotationText override (default: "<title> KDM for <recipient>")
         #[arg(long)]
         annotation: Option<String>,
@@ -1994,9 +2000,6 @@ enum Commands {
         /// every generated KDM should carry.
         #[arg(long)]
         keys: Option<String>,
-        /// KDM format: smpte (default) or interop (legacy, needs real-gear validation)
-        #[arg(long, default_value = "smpte")]
-        format: String,
         #[command(flatten)]
         kdm_options: KdmOptionArgs,
     },
@@ -3116,7 +3119,6 @@ struct KdmBatchArgs {
     smtp_config: Option<String>,
     email_only_additional: bool,
     keys: Option<String>,
-    format: String,
     options: dcpwizard_core::kdm::KdmOptions,
 }
 
@@ -3133,13 +3135,6 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
         );
         return 1;
     }
-    let format = match dcpwizard_core::kdm::parse_format(&a.format) {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::error!("{e}");
-            return 1;
-        }
-    };
     let (valid_from, valid_to) =
         match resolve_window(a.valid_from, a.valid_to, a.template, a.templates_file) {
             Ok(w) => w,
@@ -3243,7 +3238,6 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
             valid_to,
             content_keys,
             output_root,
-            format,
             None,
             history,
             // no --device-cert here: a batch spans cinemas, and one device list
@@ -3280,7 +3274,6 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
             valid_to.clone(),
             content_keys.clone(),
             out_dir.clone(),
-            format,
             None,
             history.clone(),
             Vec::new(),
@@ -3431,9 +3424,8 @@ fn run_kdm_history(
     }
     for r in recs {
         println!(
-            "{}  {}  {}  serial={}  {}..{}  {}",
+            "{}  {}  serial={}  {}..{}  {}",
             r.timestamp,
-            r.format,
             r.content_title,
             r.recipient_serial,
             r.valid_from,
@@ -3921,12 +3913,7 @@ fn run() {
             video,
             audio,
             audio_input_order,
-            hdr_to_dci_lut,
-            allow_generic_hdr_tonemap,
-            hdr_dci,
-            hdr_source,
-            hdr_peak_nits,
-            hdr_already_pq,
+            hdr_opts,
             sign_language_video,
             sign_language_lang,
             subtitle,
@@ -4013,6 +4000,14 @@ fn run() {
                     std::process::exit(1);
                 }
             };
+            let CreateHdr {
+                hdr_to_dci_lut,
+                allow_generic_hdr_tonemap,
+                hdr_dci,
+                hdr_source,
+                hdr_peak_nits,
+                hdr_already_pq,
+            } = *hdr_opts;
             let CreateCompositionMetadata {
                 content_type,
                 release_territory,
@@ -5967,18 +5962,10 @@ fn run() {
             email_to,
             smtp_config,
             keys,
-            format,
             annotation,
             device_cert,
             kdm_options,
         } => {
-            let format = match dcpwizard_core::kdm::parse_format(&format) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
             let (valid_from, valid_to) =
                 match resolve_window(valid_from, valid_to, template, templates_file) {
                     Ok(w) => w,
@@ -6012,7 +5999,6 @@ fn run() {
                 valid_to,
                 content_keys,
                 out_path.clone(),
-                format,
                 annotation,
                 Some(history_path(history_file)),
                 device_cert.into_iter().map(PathBuf::from).collect(),
@@ -7088,7 +7074,6 @@ fn run() {
             smtp_config,
             email_only_additional,
             keys,
-            format,
             kdm_options,
         } => run_kdm_batch(KdmBatchArgs {
             cpl_id,
@@ -7111,7 +7096,6 @@ fn run() {
             smtp_config,
             email_only_additional,
             keys,
-            format,
             options: kdm_options.into(),
         }),
 

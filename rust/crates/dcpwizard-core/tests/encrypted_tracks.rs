@@ -257,7 +257,6 @@ fn an_encrypted_dcp_keys_every_essence_and_the_kdm_carries_them_all() {
             end.format("%Y-%m-%dT%H:%M:%S+00:00").to_string(),
             content_keys.clone(),
             kdm_path.clone(),
-            dcpwizard_core::kdm::KdmFormat::Smpte,
             None,
             None,
             Vec::new(),

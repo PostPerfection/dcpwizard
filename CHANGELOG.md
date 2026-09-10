@@ -3,7 +3,11 @@
 ## Unreleased
 
 ### Added
+- **The `kdm` subcommand has a CLI test**: `kdm_cli.rs` runs the command over a generated signer chain and recipient certificate, checks the file it writes carries the SMPTE ST 430-1 namespace and the CPL id and content title it was given, verifies the signature with xmlsec1, and unwraps the KDM with the recipient's private key to get back one 16-byte content key under the key id the document lists.
 - **`kdm-email` and the drive copy's free-space check run in tests**: `kdm_email_reaches_the_smtp_server` starts an SMTP listener, sends through `send_kdms` with `Security::None`, and finds the recipient, the subject and the zip in what arrived. `refuses_a_dcp_larger_than_the_free_space` hands `copy_to_drive` a sparse 1 EiB picture file and checks nothing is copied, and the check itself is asserted to name the destination and the shortfall.
+
+### Removed
+- **`kdm --format` and `kdm-batch --format` are gone**: every KDM is a SMPTE ST 430-1 ETM now, which is what DCP-o-matic writes for an Interop DCP as well. The `interop` setting produced a SMPTE ETM with its KDMRequiredExtensions renamed into the digicine namespace while it kept the SMPTE MessageType and the SMPTE-only elements, so it was not the digicine 2004 document real Interop gear reads. Reading is unchanged: `decrypt --kdm` takes the layout from the decrypted block length, so a 134-byte legacy KDM still unwraps.
 
 ### Changed
 - **An encrypted package with no signer is refused before the encode**: `create --encrypt` without `--signer-cert` wrote a package dcpdoctor reports `dcp_not_signed` over twice, and a KDM binds to a signed CPL, so the result was an encrypted DCP no projector could be given keys for. `CreatePlan` carries whether a signer was named, and the pre-build check both front ends share refuses the pair, naming `--signer-cert` and `--signer-key`. The GUI panel has nowhere to name a signer and never set one, so its encrypt checkbox was refused at submit until its stored `signingCert` and `signingKey` were wired into the job, covered in Fixed below. `prebuild_refusals.rs` asserts the refusal writes nothing under `--output` and that the same job with a generated chain still packages.

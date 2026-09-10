@@ -6,7 +6,6 @@
 
 use std::path::{Path, PathBuf};
 
-pub use postkit::certificate::KdmFormat;
 use postkit::certificate::{AudioForensicMarking, KdmFormulation, PictureForensicMarking};
 
 /// The KDM choices beyond the certificates and the validity window: which
@@ -55,17 +54,6 @@ pub fn resolve_formulation(
              given: pass --device-cert, or use --formulation {counterpart}"
         )
     })
-}
-
-/// Parse the `--format` flag ("smpte" default, or "interop").
-pub fn parse_format(s: &str) -> Result<KdmFormat, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "smpte" | "" => Ok(KdmFormat::Smpte),
-        "interop" => Ok(KdmFormat::Interop),
-        other => Err(format!(
-            "unknown KDM format '{other}' (use smpte or interop)"
-        )),
-    }
 }
 
 /// Load the content keys from a DCP keys file (written by `create --encrypt`)
@@ -153,18 +141,9 @@ fn resolve_validity(valid_from: &str, valid_to: &str) -> Result<(String, String)
     Ok((from, to))
 }
 
-/// SMPTE/Interop format as a stable lowercase string for the history log.
-fn format_str(f: KdmFormat) -> &'static str {
-    match f {
-        KdmFormat::Smpte => "smpte",
-        KdmFormat::Interop => "interop",
-    }
-}
-
 /// Append a history record for a KDM just written (dom#1014). Reads the
 /// recipient cert only for its subject/serial; never touches key material. A
 /// logging failure warns but does not fail the (already written) KDM.
-#[allow(clippy::too_many_arguments)]
 fn log_history(
     history: &Path,
     cpl_id: &str,
@@ -173,7 +152,6 @@ fn log_history(
     valid_from: &str,
     valid_to: &str,
     output: &Path,
-    format: KdmFormat,
 ) {
     let info = postkit::certificate::read_certificate(recipient_cert);
     let rec = crate::kdm_log::Record::now(
@@ -184,7 +162,6 @@ fn log_history(
         valid_from,
         valid_to,
         &output.display().to_string(),
-        format_str(format),
     );
     if let Err(e) = crate::kdm_log::append(history, &rec) {
         tracing::warn!("could not append KDM history: {e}");
@@ -210,7 +187,6 @@ pub fn generate_kdm(
     valid_to: String,
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output: PathBuf,
-    format: KdmFormat,
     annotation: Option<String>,
     history: Option<PathBuf>,
     device_certs: Vec<PathBuf>,
@@ -243,7 +219,6 @@ pub fn generate_kdm(
         valid_to,
         formulation,
         content_keys,
-        format,
         // the formulation above decides whether these are listed or the
         // assume-trust thumbprint is written instead
         device_cert_files: device_certs,
@@ -261,7 +236,6 @@ pub fn generate_kdm(
                     &config.valid_from,
                     &config.valid_to,
                     &config.output_file,
-                    format,
                 );
             }
             0
@@ -288,7 +262,6 @@ pub fn generate_kdm_batch(
     valid_to: String,
     content_keys: Vec<postkit::certificate::KdmContentKey>,
     output_dir: PathBuf,
-    format: KdmFormat,
     annotation: Option<String>,
     history: Option<PathBuf>,
     device_certs: Vec<PathBuf>,
@@ -318,7 +291,6 @@ pub fn generate_kdm_batch(
             valid_to.clone(),
             content_keys.clone(),
             output.clone(),
-            format,
             annotation.clone(),
             history.clone(),
             device_certs.clone(),
@@ -441,7 +413,6 @@ mod tests {
             "2 weeks".into(),
             Vec::new(),
             out.path().to_path_buf(),
-            KdmFormat::Smpte,
             None,
             None,
             Vec::new(),
@@ -524,7 +495,6 @@ mod tests {
             signable_window().1,
             Vec::new(),
             dir.path().join("out"),
-            KdmFormat::Smpte,
             None,
             None,
             Vec::new(),
@@ -660,7 +630,6 @@ mod tests {
             signable_window().1,
             content_keys,
             out.clone(),
-            KdmFormat::Smpte,
             None,
             Some(history.clone()),
             Vec::new(),
@@ -734,7 +703,6 @@ mod tests {
             signable_window().1,
             Vec::new(),
             out.clone(),
-            KdmFormat::Smpte,
             Some("Release KDM <v2> & final".into()),
             None,
             Vec::new(),
@@ -774,7 +742,6 @@ mod tests {
                 signable_window().1,
                 Vec::new(),
                 out.clone(),
-                KdmFormat::Smpte,
                 None,
                 None,
                 devices,
@@ -812,57 +779,6 @@ mod tests {
             thumbprint_of(&restricted),
             thumbprint_of(&recipient_only),
             "the device list must follow --device-cert, not the recipient"
-        );
-    }
-
-    // Interop KDM: digicine namespace, signed, xmlsec1-verifiable. The 134-byte
-    // (vs SMPTE 138) key block is inside the RSA-encrypted CipherData and is
-    // asserted in postkit's own interop_kdm_key_block_is_134_bytes test.
-    #[test]
-    fn interop_kdm_uses_digicine_namespace_and_verifies() {
-        let dir = tempfile::tempdir().unwrap();
-        let (signer_cert, signer_key, chain, recipients) = batch_fixtures(dir.path(), 1);
-        let recipient = certs_in_dir(&recipients).unwrap()[0].clone();
-
-        let key_id = uuid::Uuid::new_v4();
-        let content_keys = vec![postkit::certificate::KdmContentKey {
-            key_type: *b"MDIK",
-            key_id,
-            content_key: [3u8; 16],
-        }];
-
-        let out = dir.path().join("interop.kdm.xml");
-        let code = generate_kdm(
-            "8a2b1c3d-4e5f-6071-8293-a4b5c6d7e8f9".into(),
-            "Interop Feature".into(),
-            PathBuf::from(recipient),
-            signer_cert,
-            signer_key,
-            chain,
-            signable_window().0,
-            signable_window().1,
-            content_keys,
-            out.clone(),
-            KdmFormat::Interop,
-            None,
-            None,
-            Vec::new(),
-            Default::default(),
-        );
-        assert_eq!(code, 0, "interop KDM generation must succeed");
-
-        let xml = std::fs::read_to_string(&out).unwrap();
-        assert!(
-            xml.contains("http://www.digicine.com/PROTO-ASDCP-KDM-20040311#"),
-            "interop KDM must use the digicine namespace"
-        );
-        assert!(xml.contains("<ds:Signature"), "interop KDM must be signed");
-
-        assert_kdm_verifies(
-            &out,
-            &dir.path().join("root.pem"),
-            &dir.path().join("intermediate.pem"),
-            "interop KDM",
         );
     }
 }

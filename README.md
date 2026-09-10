@@ -496,12 +496,6 @@ dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
     --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
     --output kdm.xml --annotation "My Film - Screen 1 - June run"
 
-# Interop (legacy) KDM. --format defaults to smpte; interop uses the digicine
-# ETM. Validate against real legacy gear before production use.
-dcpwizard kdm --cpl-id <uuid> --content-title "My Film" --cert recipient.pem \
-    --signer-cert signer.pem --signer-key signer.key --keys ./secret/my_film.keys.json \
-    --output kdm.xml --format interop
-
 # Copy to cinema drive
 dcpwizard copy --src ./my_dcp --dst /mnt/cru_drive
 
@@ -822,7 +816,7 @@ not running.
 | Subtitle packaging into DCP | ✅ | ✅ |
 | Subtitle burn-in | ✅ | ✅ |
 | Integrated QC | ✅ (dcpdoctor) | ✅ (Fraunhofer) |
-| KDM (SMPTE + Interop) | ✅ | ✅ |
+| KDM (SMPTE, also for Interop DCPs) | ✅ | ✅ |
 | AES-128 essence encryption | ✅ | ✅ |
 | DKDM re-wrap | ✅ | ✅ |
 | Desktop GUI | ✅ (Tauri) | ✅ (native) |

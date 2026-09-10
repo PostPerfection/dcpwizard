@@ -88,10 +88,6 @@ user-facing surface is here.
   behind the existing IPC. GUI + CORE.
 - DCP-o-matic allows fully custom colour conversions (user chromaticities,
   white point, gamma), a flexibility we do not have anywhere.
-- Interop KDM (`kdm --format interop`) is legacy and unvalidated: no reference
-  library generates Interop (libdcp only reads it) and the suite has no reference
-  Interop KDM to diff against. Validate against real legacy gear before production.
-  This one cannot be closed by testing: it needs hardware.
 - conform gaps (the formats themselves are in DESIGN.md): AAF video is
   code-complete but untested against a real file, since libaaf's public test
   corpus has video tracks but no video clips. AAF pan and gain automation are

@@ -8,9 +8,9 @@ license = "AGPL-3.0-or-later"
 version = "1.2.0"
 
 [workspace.dependencies]
-asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "2f1617bf2ddf3121c8f1ace7adf80ae7d9678e8c" }
+asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "03834857a3995be25c884be6e8486a98c7032447" }
 clap = { version = "4", features = ["derive"] }
-dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "cabe2fd2f22de18e0ae11cb90f042b2e9d3423e7" }
+dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "c554d1af218a00974e874a2e383082e17e4e1e7f" }
 postkit = { path = "../extern/postkit", features = ["grok-ffi", "tms"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
