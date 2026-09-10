@@ -187,6 +187,29 @@ cd rust
 cargo build --release
 ```
 
+Homebrew's ffmpeg is **not** the one CI uses. It is built without libzimg, so
+the HDR decode chain has no `zscale` filter. Install the same arm64 9.0.1
+build as `.github/workflows/ci.yml` and put it first on `PATH`:
+
+```bash
+base=https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1
+mkdir -p "$HOME/ffmpeg-bin"
+for tool in ffmpeg ffprobe; do
+  curl -fsSL --retry 5 --retry-all-errors -o "$tool.zip" "$base/$tool.zip"
+  unzip -q -o "$tool.zip" -d "$HOME/ffmpeg-bin"
+  chmod +x "$HOME/ffmpeg-bin/$tool"
+done
+shasum -a 256 -c <<'SUMS'
+8287a1b2229e05eb41859f073e18e6c52c60a778f2f5e6881070fe51b79407fe  ffmpeg.zip
+102a26b8940a053298d9929bfaae71e4b6ef65ba5f19a99a88c433108560741a  ffprobe.zip
+SUMS
+export PATH="$HOME/ffmpeg-bin:$PATH"
+```
+
+`ffmpeg -version` should print `9.0.1-https://www.martin-riedl.de` and
+`ffmpeg -filters` should list `zscale`. Keep this directory ahead of
+`/opt/homebrew/bin` (`brew shellenv` prepends Homebrew).
+
 #### Windows
 
 ```powershell
@@ -203,7 +226,7 @@ cargo build --release
 
 | Dependency | Purpose | Install |
 |-----------|---------|---------|
-| `ffmpeg` | Video transcoding and import | `apt install ffmpeg` / `brew install ffmpeg` / [ffmpeg.org](https://ffmpeg.org/download.html) |
+| `ffmpeg` | Video transcoding and import. Needs ffmpeg 8+ with libzimg (`zscale`). | Linux: CI uses [BtbN n8.1 gpl](https://github.com/BtbN/FFmpeg-Builds/releases). macOS: **not Homebrew** — see the macOS install section (martin-riedl 9.0.1 arm64). Windows: BtbN n8.1 win64 gpl. |
 | `mpv` | GUI preview player for sources that are not JPEG 2000 | `apt install mpv` / `brew install mpv` / [mpv.io](https://mpv.io/installation/) |
 
 ### Docker
