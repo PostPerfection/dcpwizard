@@ -182,9 +182,16 @@ brew install pkg-config libxml2 openssl@3 xerces-c
 
 export OPENSSL_DIR=$(brew --prefix openssl@3)
 export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix xerces-c)/lib/pkgconfig"
+```
 
-cd rust
-cargo build --release
+Grok must be on `PKG_CONFIG_PATH` at build time and its shared library
+loadable at runtime. After a local grok install (see
+[Grok INSTALL.md](https://github.com/GrokImageCompression/grok/blob/master/INSTALL.md)
+GPU plugin section):
+
+```bash
+export PKG_CONFIG_PATH="/path/to/grok/install/lib/pkgconfig:$PKG_CONFIG_PATH"
+export DYLD_LIBRARY_PATH="/path/to/grok/install/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 ```
 
 Homebrew's ffmpeg is **not** the one CI uses. It is built without libzimg, so
@@ -210,6 +217,12 @@ export PATH="$HOME/ffmpeg-bin:$PATH"
 `ffmpeg -filters` should list `zscale`. Keep this directory ahead of
 `/opt/homebrew/bin` (`brew shellenv` prepends Homebrew).
 
+```bash
+cd rust
+cargo build --release
+# Binary at rust/target/release/dcpwizard
+```
+
 #### Windows
 
 ```powershell
@@ -227,7 +240,7 @@ cargo build --release
 | Dependency | Purpose | Install |
 |-----------|---------|---------|
 | `ffmpeg` | Video transcoding and import. Needs ffmpeg 8+ with libzimg (`zscale`). | Linux: CI uses [BtbN n8.1 gpl](https://github.com/BtbN/FFmpeg-Builds/releases). macOS: **not Homebrew** — see the macOS install section (martin-riedl 9.0.1 arm64). Windows: BtbN n8.1 win64 gpl. |
-| `mpv` | GUI preview player for sources that are not JPEG 2000 | `apt install mpv` / `brew install mpv` / [mpv.io](https://mpv.io/installation/) |
+| `mpv` | GUI preview player for sources that are not JPEG 2000. Required to *link* the GUI (`libmpv`). | `apt install libmpv-dev` / `brew install mpv` / [mpv.io](https://mpv.io/installation/) |
 
 ### Docker
 
@@ -263,21 +276,54 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - GPU encoding toggle (grok acceleration)
 
 ```bash
+# GUI extras: Node (pnpm) and libmpv. On macOS: brew install node pnpm mpv
 cd gui
 pnpm install
-pnpm tauri dev
-pnpm tauri build
+../scripts/setup-tauri-bin.sh          # copies rust/target/release/dcpwizard next to Tauri
+pnpm tauri dev                         # or: pnpm tauri build --no-bundle
 ```
 
-grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH` or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes on the CPU even with the GPU toggle on:
+Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
+
+grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes and previews on the CPU even with the GPU toggle on. On Metal the same directory must also contain `grok_kernels.metallib`.
 
 ```bash
+# Linux
 export LD_LIBRARY_PATH=/path/to/grok/lib64
 export GRK_PLUGIN_PATH=/path/to/grok/lib64
-./src-tauri/target/release/dcpwizard-gui
+
+# macOS (dylib + metallib live in lib/ after cmake --install)
+export DYLD_LIBRARY_PATH=/path/to/grok/install/lib
+export GRK_PLUGIN_PATH=/path/to/grok/install/lib
+export GRK_DEBUG=3                     # log the plugin load path and Metal/CUDA device
+
+# from the dcpwizard repo root
+./gui/src-tauri/target/release/dcpwizard-gui
 ```
 
-A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. `create` writes the same log beside the package it builds.
+A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
+
+**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. `create` writes the same log beside the package it builds. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
+
+```bash
+dcpwizard --gpu create \
+  --title "My Film" \
+  --video movie.mp4 \
+  --output ./dcp \
+  --twok --frame-rate 24 --content-type FTR
+```
+
+**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). Status should read `GPU encoding on`; if the plugin is missing it falls back to CPU and says `GPU encoding unavailable`.
+
+Then **Open** (Ctrl+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
+
+```
+grok player decode backend: device, colour on the device
+```
+
+`colour on the cpu` means the plugin decoded but the X'Y'Z'→sRGB (or App 2E display LUT) ran on the host. The preview surface also logs its GL renderer, e.g. `[preview] GL renderer: Apple M5 (4.1 Metal - …)`.
+
+A plugin built with the CMake default `GPUP_ENABLE_AUTH=OFF` does not ask for a licence. With auth on, fill *Grok License* and *Registration URL* in Settings (or `--license` / `--registration-url` on the CLI). See the grok-gpu-plugin README.
 
 ## CLI Usage
 
@@ -287,6 +333,9 @@ dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --o
 
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp
+
+# Same, JPEG 2000 on grok's accelerator plugin (fails if the plugin cannot load)
+dcpwizard --gpu create --title "My Film" --video movie.mov --output ./dcp --twok
 
 # Check the job before committing to the encode: every refusal, then every hint.
 # Nothing is encoded and nothing is written under --output. Exits 1 on a refusal.
