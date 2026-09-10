@@ -204,7 +204,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_a_dcp_larger_than_the_free_space() {
-        const SPARSE_PICTURE_BYTES: u64 = 1 << 60;
+        // 8 TiB: past any runner's free space and under ext4's 16 TiB file limit
+        const SPARSE_PICTURE_BYTES: u64 = 8 << 40;
 
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("MyDCP");
