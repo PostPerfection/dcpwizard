@@ -2739,6 +2739,9 @@ mod tests {
             pix_fmt: "yuv422p10le".into(),
             color_space: "bt709".into(),
             color_range: "tv".into(),
+            color_transfer: "bt709".into(),
+            color_primaries: "bt709".into(),
+            bit_rate: None,
         }
     }
 
