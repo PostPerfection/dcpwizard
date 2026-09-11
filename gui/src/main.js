@@ -733,6 +733,23 @@ document.getElementById("prop-output")?.addEventListener("input", (event) => {
 
 // === Open existing DCP ===
 async function openDcp(dir) {
+  let cpls;
+  try {
+    cpls = await invoke('list_cpls', { dcpDir: dir });
+  } catch (error) {
+    const remove = await tauriConfirm(
+      `${dir} does not exist. Remove it from recent projects?`,
+      { title: "DCP not found", kind: "warning" },
+    );
+    if (remove) {
+      removeRecentProject(dir);
+      setStatus(`Removed missing DCP: ${dir}`);
+    } else {
+      setStatus(`Open failed: ${error}`);
+    }
+    return;
+  }
+
   const name = dir.split(/[/\\]/).pop();
   document.getElementById("project-name").textContent = name;
   project.title = name;
@@ -743,14 +760,9 @@ async function openDcp(dir) {
   selectPreview("package", dir);
 
   // Load timeline from the first CPL found
-  try {
-    const cpls = await invoke('list_cpls', { dcpDir: dir });
-    if (cpls && cpls.length > 0) {
-      const cplPath = dir + '/' + cpls[0].file_path;
-      loadTimelineFromCpl(cplPath);
-    }
-  } catch (e) {
-    console.warn('[main] Could not load timeline:', e);
+  if (cpls && cpls.length > 0) {
+    const cplPath = dir + '/' + cpls[0].file_path;
+    loadTimelineFromCpl(cplPath);
   }
 }
 
@@ -2066,6 +2078,11 @@ function renderRecentProjects() {
       try {
         await invoke("delete_dcp", { path: dir });
       } catch (e) {
+        if (String(e) === `${dir} no longer exists`) {
+          removeRecentProject(dir);
+          setStatus(`Removed missing DCP: ${dir}`);
+          return;
+        }
         tauriMessage(String(e), { title: "Delete failed", kind: "error" });
         return;
       }
