@@ -307,6 +307,11 @@ export GRK_DEBUG=3                     # log the plugin load path and Metal/CUDA
 ./gui/src-tauri/target/release/dcpwizard-gui
 ```
 
+When the saved registration URL is the local development server at
+`http://127.0.0.1:8787/api/register`, the script starts that server if needed.
+It reads the standard development keys under `~/.config/gpup_license_keys` and
+finds the plugin source under the shared `Grok/grok` workspace.
+
 A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
 
 **GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. `create` writes the same log beside the package it builds. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
