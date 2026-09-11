@@ -288,6 +288,12 @@ Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes and previews on the CPU even with the GPU toggle on. On Metal the same directory must also contain `grok_kernels.metallib`.
 
 ```bash
+# rebuilds the GUI against that grok and launches it with the plugin on the
+# loader path. Linux looks in lib64/ then lib/ for libgrokj2k_plugin.so,
+# macOS in lib/ then lib64/ for the dylib plus grok_kernels.metallib, Windows
+# in bin/ then lib/ for grokj2k_plugin.dll.
+python3 run-gpu-gui.py /path/to/grok/install
+
 # Linux
 export LD_LIBRARY_PATH=/path/to/grok/lib64
 export GRK_PLUGIN_PATH=/path/to/grok/lib64
