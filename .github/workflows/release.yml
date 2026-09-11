@@ -51,6 +51,7 @@ jobs:
             libxml2-dev \
             libssl-dev \
             libxerces-c-dev \
+            libasound2-dev \
             patchelf
 
       - name: Install dependencies (macOS)

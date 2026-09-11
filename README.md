@@ -162,7 +162,7 @@ The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each arch
 #### Linux (Ubuntu/Debian)
 
 ```bash
-sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev
+sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev
 # For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
 # Grok (libgrokj2k) must be discoverable by pkg-config at build time and its

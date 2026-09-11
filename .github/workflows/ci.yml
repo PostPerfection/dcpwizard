@@ -45,6 +45,7 @@ jobs:
             libxml2-utils \
             libssl-dev \
             libxerces-c-dev \
+            libasound2-dev \
             xmlsec1 \
             fonts-dejavu-core \
             e2fsprogs
@@ -248,7 +249,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev xvfb xdotool
+          sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev xvfb xdotool
 
       - name: Setup grok
         uses: PostPerfection/setup-grok@v1
