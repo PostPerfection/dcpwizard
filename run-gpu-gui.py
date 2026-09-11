@@ -179,7 +179,7 @@ def start_local_registration_server():
 
 
 if len(sys.argv) < 2:
-    sys.exit("usage: run-gpu-gui.py <grok install root> [gui args]")
+    sys.exit("usage: run-gpu-gui.py <grok install root>")
 
 layout = platform_layout()
 grok_root = Path(sys.argv[1]).expanduser()
