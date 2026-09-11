@@ -32,6 +32,13 @@ tauri-plugin-opener = "2"
 hound = "3.5"
 tempfile = "3"
 
+# tauri's CLI turns this off for `tauri dev` so the page comes from vite;
+# production keeps it on so the webview serves the bundled frontend instead of
+# localhost:1421, which is a blank window when vite is not running
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 # dcpwizard-core pulls dcpdoctor-core, which depends on postkit by git. pointing
 # that at the submodule this build already compiles keeps postkit to one compile.
 [patch."https://github.com/PostPerfection/postkit.git"]

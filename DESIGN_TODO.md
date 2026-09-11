@@ -45,9 +45,10 @@ user-facing surface is here.
 - ISDCF naming takes free-text studio codes and territories, where it could pull
   the current ISDCF registry instead of naming from whatever the user typed.
   CORE isdcf_title.rs, GUI pipeline.rs.
-- Neither the macos nor the windows embedded-preview host has run on real
-  hardware. All three hosts are implemented in guikit and CI compiles every
-  platform, so what is left is a hand pass on a mac and on a windows box.
+- The windows embedded-preview host has not run on real hardware. All three
+  hosts are implemented in guikit and CI compiles every platform; macos has had
+  a hand pass (the layer-backed GL view needs the same Y flip as linux, or the
+  picture is upside down). Windows is still owed that pass.
 - Windows release builds are unproven until the next tag run. Watch for grok's
   msvc install dropping more dlls that grokj2k.dll depends on, in which case
   release.yml and gui-release.yml should copy bin/*.dll instead of the one file.
