@@ -2017,6 +2017,18 @@ function removeRecentProject(path) {
   renderRecentProjects();
 }
 
+// rows keep the order they were first shown in, only the stored order tracks recency
+let shownOrder = [];
+
+function rowsInShownOrder(recent) {
+  const rank = new Map(shownOrder.map((path, index) => [path, index]));
+  const fresh = recent.filter(entry => !rank.has(entry.path));
+  const known = recent.filter(entry => rank.has(entry.path)).sort((a, b) => rank.get(a.path) - rank.get(b.path));
+  const rows = [...fresh, ...known];
+  shownOrder = rows.map(entry => entry.path);
+  return rows;
+}
+
 function renderRecentProjects() {
   const section = document.getElementById("recent-projects");
   const list = document.getElementById("recent-list");
@@ -2025,7 +2037,7 @@ function renderRecentProjects() {
   const recent = getRecentProjects();
   if (recent.length === 0) { section.hidden = true; return; }
   section.hidden = false;
-  list.innerHTML = recent.map(r => `
+  list.innerHTML = rowsInShownOrder(recent).map(r => `
     <div class="recent-item" data-path="${r.path}" title="${r.path}">
       <div class="recent-item-text">
         <span class="recent-title">${r.title || r.path.split(/[/\\]/).pop()}</span>
