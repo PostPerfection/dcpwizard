@@ -296,6 +296,8 @@ def reported_duration(session):
 def window(tmp_path):
     opened = open_window(application_environment(tmp_path), tmp_path / "driver.log")
     yield opened
+    # pytest shows this only when the test failed
+    print(opened.output())
     opened.close()
 
 
