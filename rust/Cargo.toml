@@ -10,7 +10,7 @@ version = "1.2.0"
 [workspace.dependencies]
 asdcplib = { git = "https://github.com/PostPerfection/asdcplib-rs.git", rev = "03834857a3995be25c884be6e8486a98c7032447" }
 clap = { version = "4", features = ["derive"] }
-dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "c554d1af218a00974e874a2e383082e17e4e1e7f" }
+dcpdoctor-core = { git = "https://github.com/PostPerfection/dcpdoctor.git", rev = "e939f4d9cd533b15dc5cf32b5ade3ba58b452189" }
 postkit = { path = "../extern/postkit", features = ["grok-ffi", "tms"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
