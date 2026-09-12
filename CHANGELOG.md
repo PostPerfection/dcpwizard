@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.3.0] - 2026-09-12
 
 ### Fixed
 - **The Preview button greys out once the panel shows its target**: it stayed enabled after a click, so a second click reloaded the same DCP. The button is enabled only while the selected row, the first picture, the opened package or the output path differs from what the preview holds, and comes back when the panel is closed or the playlist moves on.
