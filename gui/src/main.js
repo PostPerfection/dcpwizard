@@ -11,6 +11,7 @@ import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
+import { askForText } from "../../extern/guikit/src/text-dialog.js";
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
@@ -696,8 +697,12 @@ function removeCpl(idx) {
   renderReels();
 }
 
-document.getElementById("add-cpl")?.addEventListener("click", () => {
-  const name = prompt("Composition name:", `CPL ${nextCplId}`);
+document.getElementById("add-cpl")?.addEventListener("click", async () => {
+  const name = await askForText({
+    title: "New composition",
+    label: "Composition name",
+    value: `CPL ${nextCplId}`,
+  });
   if (!name) return;
   project.compositions.push({
     id: nextCplId++,
@@ -2059,7 +2064,11 @@ function renderRecentProjects() {
     el.addEventListener('click', async (event) => {
       event.stopPropagation();
       const dir = el.dataset.path;
-      const title = prompt("New content title:", dir.split(/[/\\]/).pop());
+      const title = await askForText({
+        title: "Retitle DCP",
+        label: "New content title",
+        value: dir.split(/[/\\]/).pop(),
+      });
       if (!title?.trim()) return;
       const ok = await tauriConfirm(
         `Retitle to ${title}? The CPL gets a new composition id, so any KDM or delivery made from the old one no longer matches. A signed package loses its signature.`,

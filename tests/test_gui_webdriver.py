@@ -25,6 +25,11 @@ CREATE_TIMEOUT_SECONDS = 900
 
 REELS_CHORD = "ctrl+2"
 REELS_VIEW = "view-reels"
+PROJECT_CHORD = "ctrl+1"
+PROJECT_VIEW = "view-project"
+
+CANCEL_KEY = "Escape"
+TEXT_DIALOG = ".text-dialog"
 
 PREVIEW_DEFAULT_TITLE = "Preview"
 
@@ -271,6 +276,13 @@ def composition_seconds(reels):
     return sum(frames / fps for frames, fps in reels)
 
 
+# guikit builds the dialog on the first ask, so before that there is no element
+def text_dialog_open(session):
+    return session.find(TEXT_DIALOG) is not None and session.property(
+        TEXT_DIALOG, "open"
+    )
+
+
 def preview_title(session):
     return session.property("#preview-title", "textContent")
 
@@ -368,4 +380,27 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
         composition_seconds(reels), abs=frame_seconds
     )
     # the play button is how the package is played again from the start
+    assert session.property("#timeline-play-btn", "disabled") is False
+
+    # the retitle box is the app's own dialog, which the preview surface would
+    # cover if it were the webview's prompt
+    window.press(PROJECT_CHORD)
+    wait_for_view(session, PROJECT_VIEW)
+    window.click("#recent-header")
+    window.click(".recent-retitle")
+    wait_until(
+        "the retitle dialog never opened",
+        lambda: text_dialog_open(session) is True,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert (
+        session.property(f"{TEXT_DIALOG} input", "value") == two_reel_dcp.directory.name
+    )
+
+    window.press(CANCEL_KEY)
+    wait_until(
+        "the retitle dialog stayed open",
+        lambda: text_dialog_open(session) is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
     assert session.property("#timeline-play-btn", "disabled") is False
