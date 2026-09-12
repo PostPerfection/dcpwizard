@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **The Preview button greys out once the panel shows its target**: it stayed enabled after a click, so a second click reloaded the same DCP. The button is enabled only while the selected row, the first picture, the opened package or the output path differs from what the preview holds, and comes back when the panel is closed or the playlist moves on.
+
 ### Added
 - **The `kdm` subcommand has a CLI test**: `kdm_cli.rs` runs the command over a generated signer chain and recipient certificate, checks the file it writes carries the SMPTE ST 430-1 namespace and the CPL id and content title it was given, verifies the signature with xmlsec1, and unwraps the KDM with the recipient's private key to get back one 16-byte content key under the key id the document lists.
 - **`kdm-email` and the drive copy's free-space check run in tests**: `kdm_email_reaches_the_smtp_server` starts an SMTP listener, sends through `send_kdms` with `Security::None`, and finds the recipient, the subject and the zip in what arrived. `refuses_a_dcp_larger_than_the_free_space` hands `copy_to_drive` a sparse 1 EiB picture file and checks nothing is copied, and the check itself is asserted to name the destination and the shortfall.

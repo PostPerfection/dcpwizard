@@ -54,6 +54,12 @@ user-facing surface is here.
   release.yml and gui-release.yml should copy bin/*.dll instead of the one file.
   A local windows tauri build fails at bundle time unless the dll is staged at
   gui/src-tauri/grokj2k.dll.
+- TMS upload over sftp is untested past the transport boundary. Every test hands
+  `tms` a fake transport, so PK tms.rs `SftpTransport::connect` (the ssh2
+  session, host key check, password and key login) is never entered. Closing it
+  needs an sftp server in the test.
+- TMS vendor certificate fetch (CORE cert_fetch.rs) needs vendor credentials
+  to exercise, so the download path has no test and no recorded run.
 - Distributed encoding across machines (dom#155, dom#1635, dom#2605). Out of scope
   (user-excluded). The job queue is single-machine and its create path wraps
   pre-encoded J2K rather than running postkit::pipeline, so job progress is

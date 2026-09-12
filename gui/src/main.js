@@ -5,7 +5,8 @@ import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
+import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -1298,6 +1299,9 @@ let openedPackage = null;
 // the row picked in the asset list or the recent list
 let selectedPreview = null;
 
+// what the preview panel holds
+let previewShownPath = null;
+
 function selectPreview(kind, path) {
   selectedPreview = { kind, path };
   applyPreviewSelection();
@@ -1324,24 +1328,20 @@ function applyPreviewSelection() {
   });
 }
 
-document.getElementById("btn-preview")?.addEventListener("click", async () => {
-  if (selectedPreview?.kind === "source") {
-    previewSourcePicture(selectedPreview.path);
-    return;
-  }
-  if (selectedPreview?.kind === "package") {
-    previewPackage(selectedPreview.path);
-    return;
-  }
-  const reel = project.reels[0];
-  const output = document.getElementById("prop-output")?.value;
-  if (reel?.picture) {
-    previewSourcePicture(reel.picture.path);
-  } else if (openedPackage) {
-    previewPackage(openedPackage);
-  } else if (output) {
-    previewPackage(output);
-  }
+function previewTargetInput() {
+  return {
+    selectedPreview,
+    firstPicturePath: project.reels[0]?.picture?.path,
+    openedPackage,
+    outputPath: document.getElementById("prop-output")?.value,
+  };
+}
+
+document.getElementById("btn-preview")?.addEventListener("click", () => {
+  const target = previewTarget(previewTargetInput());
+  if (!target) return;
+  if (target.kind === PREVIEW_KIND_SOURCE) previewSourcePicture(target.path);
+  else previewPackage(target.path);
 });
 
 // The preview shows what the build will do to the picture, so a file a reel
@@ -2175,8 +2175,7 @@ function updateToolbarState() {
   const buildBtn = document.getElementById("btn-build");
   const previewBtn = document.getElementById("btn-preview");
   if (buildBtn) buildBtn.disabled = buildInFlight || !(hasVideo && hasTitle);
-  const hasOutput = !!document.getElementById("prop-output")?.value;
-  if (previewBtn) previewBtn.disabled = !selectedPreview && !hasVideo && !openedPackage && !hasOutput;
+  if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath);
 }
 
 // Keep title in sync and update toolbar state
@@ -2444,6 +2443,7 @@ renderRecentProjects();
 refreshLibrary();
 updateStatusStats();
 initPreview();
+watchPreviewShown(path => { previewShownPath = path; updateToolbarState(); });
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");

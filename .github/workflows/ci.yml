@@ -267,6 +267,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      - name: Frontend tests
+        working-directory: gui
+        run: pnpm test
+
       - name: Build CLI sidecar
         working-directory: rust
         run: |
