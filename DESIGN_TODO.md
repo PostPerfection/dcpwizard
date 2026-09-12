@@ -176,6 +176,8 @@ one side, mirror the other:
   grok-ffi as this workspace does, so a postkit change that needs grok reaches
   both wizards.
   dcpdoctor links no grok and sets it up in none of its workflows.
+- run-gpu-gui.py: identical apart from the app name, copy it across with sed
+  rather than editing one side.
 - tests/cli_flags_test.sh: NOT the same harness as imfwizard's (this one runs the
   binary and checks clap parse errors, imf parses main.js). Different CLIs, leave
   separate.
