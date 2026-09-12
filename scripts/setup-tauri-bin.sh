@@ -17,4 +17,8 @@ fi
 
 mkdir -p "${BIN_DIR}"
 cp "${RUST_DIR}/target/release/dcpwizard" "${BIN_DIR}/dcpwizard-${TARGET_TRIPLE}"
+# the deb and rpm put the sidecar in /usr/bin and libgrokj2k in /usr/lib/dcpwizard
+if [[ "$(uname)" == Linux ]]; then
+    patchelf --set-rpath '$ORIGIN/../lib/dcpwizard' "${BIN_DIR}/dcpwizard-${TARGET_TRIPLE}"
+fi
 echo "Installed: ${BIN_DIR}/dcpwizard-${TARGET_TRIPLE}"
