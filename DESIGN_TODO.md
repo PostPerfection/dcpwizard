@@ -178,6 +178,14 @@ one side, mirror the other:
   dcpdoctor links no grok and sets it up in none of its workflows.
 - run-gpu-gui.py: identical apart from the app name, copy it across with sed
   rather than editing one side.
+- scripts/relink-macos-grok.sh: identical apart from the app name, copy it across
+  with sed rather than editing one side. It runs as beforeBundleCommand and points
+  the GUI and the CLI sidecar at the libgrokj2k copy the macOS bundler puts in
+  Contents/Frameworks, which that bundler never relinks.
+- gui/src-tauri/tauri.macos.conf.json, gui/src-tauri/tauri.linux.conf.json: the
+  bundle.macOS.frameworks entry, the beforeBundleCommand and the deb and rpm
+  files maps differ only by the app name, which is also the /usr/lib directory
+  the GUI build.rs rpath names, so all three move together.
 - tests/cli_flags_test.sh: NOT the same harness as imfwizard's (this one runs the
   binary and checks clap parse errors, imf parses main.js). Different CLIs, leave
   separate.

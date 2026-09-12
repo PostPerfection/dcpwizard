@@ -151,11 +151,20 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 
 | Platform | CLI | Desktop GUI |
 |----------|-----|-------------|
-| **Linux** (x86_64) | `dcpwizard-linux-x86_64.tar.gz` | `.deb`, `.AppImage` |
+| **Linux** (x86_64) | `dcpwizard-linux-x86_64.tar.gz` | `.deb`, `.rpm`, `.AppImage` |
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
 The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits: nothing has to be installed and `LD_LIBRARY_PATH` does not have to be set.
+
+The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. They need libmpv for the preview player, which the package manager pulls in:
+
+```bash
+sudo apt install ./dcpwizard_*_amd64.deb     # Debian, Ubuntu
+sudo dnf install ./dcpwizard-*.x86_64.rpm    # Fedora, with RPM Fusion enabled for mpv-libs
+```
+
+The `.AppImage` carries libmpv as well and needs nothing installed. For the `.dmg`, install libmpv with `brew install mpv`.
 
 ### Install from source
 
