@@ -26,6 +26,8 @@ CREATE_TIMEOUT_SECONDS = 900
 REELS_CHORD = "ctrl+2"
 REELS_VIEW = "view-reels"
 
+PREVIEW_DEFAULT_TITLE = "Preview"
+
 FIXTURE_TITLE = "Two Reel Test"
 FIXTURE_SIZE = "1998x1080"
 FIXTURE_FPS = 24
@@ -269,6 +271,10 @@ def composition_seconds(reels):
     return sum(frames / fps for frames, fps in reels)
 
 
+def preview_title(session):
+    return session.property("#preview-title", "textContent")
+
+
 # what the scrubber says the player holds, in seconds
 def reported_duration(session):
     return float(session.attribute("#timeline-duration", "data-raw"))
@@ -295,6 +301,10 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     )
     assert listed_segments(session, "sound", reels) == expected_segments(reels, "sound")
 
+    assert session.property("#timeline-play-btn", "disabled") is True
+    # the panel is hidden until the first load, and a hidden element renders no text
+    assert preview_title(session) == PREVIEW_DEFAULT_TITLE
+
     window.click("#btn-preview")
     wait_until(
         "the preview panel stayed hidden",
@@ -311,6 +321,8 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
         lambda: session.property("#btn-preview", "disabled") is True,
         REACTION_TIMEOUT_SECONDS,
     )
+    assert session.property("#timeline-play-btn", "disabled") is False
+    assert preview_title(session).endswith(two_reel_dcp.directory.name)
 
     started = session.execute(PLAYHEAD_LEFT)
     assert started is not None, "the ruler has no playhead"
@@ -355,3 +367,5 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     assert reported_duration(session) == pytest.approx(
         composition_seconds(reels), abs=frame_seconds
     )
+    # the play button is how the package is played again from the start
+    assert session.property("#timeline-play-btn", "disabled") is False
