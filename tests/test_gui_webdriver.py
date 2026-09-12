@@ -344,3 +344,14 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     assert reported_duration(session) == pytest.approx(
         composition_seconds(reels), abs=frame_seconds
     )
+
+    # once playback runs out the panel holds nothing that is previewing, so the
+    # button offers the package again
+    wait_until(
+        "the Preview button never came back at the end of the composition",
+        lambda: session.property("#btn-preview", "disabled") is False,
+        composition_seconds(reels) * REEL_CROSSING_TIMEOUT_MULTIPLE,
+    )
+    assert reported_duration(session) == pytest.approx(
+        composition_seconds(reels), abs=frame_seconds
+    )
