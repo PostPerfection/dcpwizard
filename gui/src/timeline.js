@@ -1,6 +1,5 @@
 // DCP Timeline View - renders multi-reel timeline with visual reel segments and playback integration
 import { invoke } from '@tauri-apps/api/core';
-import { showEmbeddedPanel } from '../../extern/guikit/src/preview.js';
 
 let timelineData = null; // { reels: [], totalFrames, editRate }
 let currentReel = -1;
@@ -78,6 +77,7 @@ function renderEmpty() {
   if (sound) sound.innerHTML = '';
   if (subtitle) subtitle.innerHTML = '';
   timelineData = null;
+  currentReel = -1;
 }
 
 function render() {
@@ -214,39 +214,13 @@ function handleTrackSeek(e) {
   seekToPercent(pct);
 }
 
+// the player holds the whole composition, so a seek is in composition seconds
 async function seekToPercent(pct) {
   if (!timelineData) return;
   const targetFrame = Math.floor(pct * timelineData.totalFrames);
 
-  // Find which reel this frame belongs to
-  let targetReel = null;
-  for (const reel of timelineData.reels) {
-    if (targetFrame >= reel.startFrame && targetFrame < reel.startFrame + reel.duration_frames) {
-      targetReel = reel;
-      break;
-    }
-  }
-  if (!targetReel) targetReel = timelineData.reels[timelineData.reels.length - 1];
-
-  const reelIdx = targetReel.reel_number - 1;
-  const frameInReel = targetFrame - targetReel.startFrame + targetReel.entry_point;
-  const secondsInReel = frameInReel / (targetReel.fps || 24);
-
-  // If different reel, load the new file
-  if (reelIdx !== currentReel && targetReel.picture_file) {
-    currentReel = reelIdx;
-    showEmbeddedPanel();
-    try {
-      await invoke('preview_load', { filePath: targetReel.picture_file });
-    } catch (e) {
-      console.error('[timeline] Failed to load reel:', e);
-      return;
-    }
-  }
-
-  // Seek within the reel
   try {
-    await invoke('preview_seek_absolute', { seconds: secondsInReel });
+    await invoke('preview_seek_absolute', { seconds: targetFrame / (timelineData.editRate || 24) });
   } catch (e) {
     console.error('[timeline] Failed to seek:', e);
   }
@@ -255,8 +229,16 @@ async function seekToPercent(pct) {
   updatePlayheadPosition();
 }
 
+function reelAtFrame(frame) {
+  const index = timelineData.reels.findIndex(
+    reel => frame >= reel.startFrame && frame < reel.startFrame + reel.duration_frames,
+  );
+  return index === -1 ? timelineData.reels.length - 1 : index;
+}
+
 function updatePlayheadPosition() {
   if (!timelineData || timelineData.totalFrames === 0) return;
+  currentReel = reelAtFrame(playheadFrame);
   const pct = (playheadFrame / timelineData.totalFrames) * 100;
 
   const rulerPlayhead = document.getElementById('ruler-playhead');
@@ -276,25 +258,11 @@ export function startTimelinePolling() {
     try {
       const resp = await invoke('preview_get_metadata');
       const meta = JSON.parse(resp);
-      if (meta.position != null && meta.duration != null) {
-        // Calculate global frame position
-        const reel = timelineData.reels[currentReel] || timelineData.reels[0];
-        if (reel) {
-          const fps = reel.fps || 24;
-          const frameInReel = Math.floor(meta.position * fps) - reel.entry_point;
-          playheadFrame = reel.startFrame + Math.max(0, frameInReel);
-
-          // Auto-advance to next reel at end
-          if (meta.position >= meta.duration - 0.1 && currentReel < timelineData.reels.length - 1) {
-            const nextReel = timelineData.reels[currentReel + 1];
-            if (nextReel && nextReel.picture_file) {
-              currentReel++;
-              invoke('preview_load', { filePath: nextReel.picture_file }).catch(() => {});
-            }
-          }
-
-          updatePlayheadPosition();
-        }
+      if (meta.position != null) {
+        // the position is where playback sits in the composition, not in a reel
+        const fps = timelineData.editRate || 24;
+        playheadFrame = Math.min(Math.floor(meta.position * fps), timelineData.totalFrames);
+        updatePlayheadPosition();
       }
     } catch {
       // mpv not running

@@ -186,6 +186,12 @@ one side, mirror the other:
   bundle.macOS.frameworks entry, the beforeBundleCommand and the deb and rpm
   files maps differ only by the app name, which is also the /usr/lib directory
   the GUI build.rs rpath names, so all three move together.
+- tests/tauri_webdriver.py: identical apart from the process name it kills leftover
+  windows by, copy it across with sed rather than editing one side. Every fix to how
+  a native dialog is answered or a window is focused belongs on both sides at once.
+- tests/test_gui_webdriver.py: per-app, the suites drive different panels. What has
+  to stay aligned is the setup around them: the XDG directories, the dropped session
+  bus, the neutral click target and the tauri-driver steps in ci.yml.
 - tests/cli_flags_test.sh: NOT the same harness as imfwizard's (this one runs the
   binary and checks clap parse errors, imf parses main.js). Different CLIs, leave
   separate.
