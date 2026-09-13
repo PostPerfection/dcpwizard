@@ -1,6 +1,6 @@
 [package]
 name = "dcpwizard-gui"
-version = "1.3.0"
+version = "1.3.1"
 description = "DCP Wizard Desktop GUI"
 authors = ["DCP Wizard"]
 edition = "2021"
