@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2] - 2026-09-13
+
+### Changed
+- **Builds against grok v20.4.9**: the CLI archives, the desktop packages, the Docker image and CI carry grok v20.4.9.
+- **Faster CPU encodes at a bitrate**: the rate search carries its slope from the previous frame and may leave 2 percent of the byte budget unused, about 10 percent more frames a second at 4K.
+- **Verification uses dcpdoctor 1.3.2**: the ISDCF naming check warns on a missing audio language tag and a missing audio field. dcpdoctor now scans every frame by default. The wizard keeps that off unless the every-frame option is set.
+
 ## [1.3.1] - 2026-09-12
 
 ### Fixed
