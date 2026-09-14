@@ -163,7 +163,7 @@ jobs:
       - name: Setup grok
         uses: PostPerfection/setup-grok@v1
         with:
-          grok-ref: v20.4.9
+          grok-ref: v20.4.10
 
       - name: Check test tools
         shell: bash
@@ -274,7 +274,7 @@ jobs:
       - name: Setup grok
         uses: PostPerfection/setup-grok@v1
         with:
-          grok-ref: v20.4.9
+          grok-ref: v20.4.10
 
       - uses: PostPerfection/setup-libmpv@v1
         with:

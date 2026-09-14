@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "dcpwizard-cli"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "asdcplib",
  "assert_cmd",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "dcpwizard-core"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "asdcplib",
  "base64",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "libaaf-sys"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "cc",
  "cmake",
