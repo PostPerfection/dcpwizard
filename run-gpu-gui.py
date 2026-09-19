@@ -100,6 +100,28 @@ def install_sidecar():
     shutil.copy2(src, dest_dir / f"dcpwizard-{host_triple()}{exe}")
 
 
+def grok_runtime_library():
+    if sys.platform.startswith("linux"):
+        return "libgrokj2k.so.1"
+    if sys.platform == "darwin":
+        return "libgrokj2k.1.dylib"
+    if sys.platform == "win32":
+        return "grokj2k.dll"
+    return None
+
+
+def stage_grok_library(lib_dir):
+    name = grok_runtime_library()
+    if not name:
+        return
+    src = lib_dir / name
+    if not src.is_file():
+        sys.exit(f"no {name} in {lib_dir}")
+    dest = gui_dir / "src-tauri" / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
 def preferences_path():
     if config_home := os.environ.get("XDG_CONFIG_HOME"):
         return Path(config_home) / "dcpwizard" / "preferences.json"
@@ -201,6 +223,7 @@ if sys.platform == "win32":
     install_sidecar()
 else:
     run(root / "scripts" / "setup-tauri-bin.sh")
+stage_grok_library(lib_dir)
 run("cargo", "clean", "-q", "-p", "grokj2k-sys", "--manifest-path", gui_manifest)
 run("pnpm", "tauri", "build", "--no-bundle", "--ignore-version-mismatches", cwd=gui_dir)
 
