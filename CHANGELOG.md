@@ -4,7 +4,7 @@
 
 ### Changed
 - **Builds against grok v20.4.11**: the CLI archives, the desktop packages, the Docker image and CI carry grok v20.4.11.
-- **Validation after a build no longer re-hashes the track files**: the hashes in the PKL were taken from a read of the finished files moments earlier, so the second read of the picture MXF is dropped. The Verify tool still checks hashes.
+- **Validation after a build no longer reads the picture MXF back**: the hashes in the PKL were taken from a read of the finished files moments earlier, and the encoder held every codestream under the DCI per-frame byte cap as it wrote it, so both the re-hash and the bitrate measurement are dropped. Two full reads of a 23 GB picture MXF go away. The Verify tool still checks hashes and measures the bitrate.
 
 ### Fixed
 - **Progress shows for every build stage**: the audio, package and validate stages showed zeros for elapsed time and a meaningless time remaining. Every stage now shows the build's total elapsed time, the package stage names its step and counts frames with a rate while it wraps the picture, and time remaining appears only where a rate exists.

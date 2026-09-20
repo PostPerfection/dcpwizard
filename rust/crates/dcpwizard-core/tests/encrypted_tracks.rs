@@ -285,6 +285,7 @@ fn an_encrypted_dcp_keys_every_essence_and_the_kdm_carries_them_all() {
             check_signatures: true,
             check_picture_details: true,
             scan_every_frame: false,
+            skip_bitrate_measurement: false,
             strict_smpte: false,
             ov: None,
             kdm: Some(kdm_path.clone()),

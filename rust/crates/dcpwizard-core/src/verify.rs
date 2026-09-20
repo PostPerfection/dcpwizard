@@ -15,6 +15,7 @@ pub struct VerifyResult {
 pub struct VerifyCliOptions {
     pub skip_hash_check: bool,
     pub skip_picture_check: bool,
+    pub skip_bitrate_measurement: bool,
     pub strict: bool,
     /// Read every frame's codestream, which is what the QC report's forensics
     /// line is measured from.
@@ -68,6 +69,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
             o.check_picture_details = false;
         }
         o.scan_every_frame = options.scan_every_frame;
+        o.skip_bitrate_measurement = options.skip_bitrate_measurement;
         o
     } else {
         dcpdoctor_core::VerifyOptions {
@@ -75,6 +77,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
             check_signatures: true,
             check_picture_details: !options.skip_picture_check,
             scan_every_frame: options.scan_every_frame,
+            skip_bitrate_measurement: options.skip_bitrate_measurement,
             strict_smpte: false,
             ov: None,
             kdm: None,

@@ -2640,6 +2640,7 @@ fn verify_finished_package(output_dir: &Path) -> i32 {
         &dcpwizard_core::verify::VerifyCliOptions {
             skip_hash_check: false,
             skip_picture_check: false,
+            skip_bitrate_measurement: false,
             strict: false,
             scan_every_frame: false,
         },
@@ -5908,6 +5909,7 @@ fn run() {
                 &dcpwizard_core::verify::VerifyCliOptions {
                     skip_hash_check: no_hash_check,
                     skip_picture_check: no_picture_check,
+                    skip_bitrate_measurement: false,
                     strict,
                     scan_every_frame: false,
                 },

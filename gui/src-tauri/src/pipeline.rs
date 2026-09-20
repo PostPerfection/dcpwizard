@@ -2615,8 +2615,9 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         log_to(&log_file, "[VALIDATE] Running validation...");
         log_to(
             &log_file,
-            "[VALIDATE] Asset hashes were taken from the finished files at wrap time, so \
-             validation does not recompute them",
+            "[VALIDATE] Asset hashes were taken from the finished files at wrap time and every \
+             codestream was held under the byte cap as it was written, so validation recomputes \
+             neither",
         );
         let validate_started = Instant::now();
 
@@ -2624,6 +2625,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             &job.output_dir,
             &dcpwizard_core::verify::VerifyCliOptions {
                 skip_hash_check: true,
+                skip_bitrate_measurement: true,
                 ..Default::default()
             },
         );
