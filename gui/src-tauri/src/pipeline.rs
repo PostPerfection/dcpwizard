@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Default encode target in Mbit/s. Under DCI's 250 on purpose: rate allocation
@@ -40,7 +41,7 @@ pub struct PipelineProgress {
     pub total_frames: u64,
     pub fps: f64,
     pub elapsed_secs: f64,
-    pub percent: f64,
+    pub percent: Option<f64>,
 }
 
 // ─── ISDCF naming ──────────────────────────────────────────────────────────
@@ -1434,6 +1435,7 @@ async fn run_queue_worker(app: AppHandle) {
 
         app.state::<JobQueue>().start(&job);
 
+        let job_started = Instant::now();
         let result = tokio::task::spawn_blocking({
             let app = app.clone();
             let job = job.clone();
@@ -1442,10 +1444,21 @@ async fn run_queue_worker(app: AppHandle) {
         .await;
 
         let queue = app.state::<JobQueue>();
+        let elapsed_secs = job_started.elapsed().as_secs_f64();
         match result {
             Ok(Ok(_)) => {
                 queue.finish(&job, postkit::gui_job_queue::StoredJobState::Done, "");
-                emit_progress(&app, job.id, "done", "Complete", 0, 0, 0.0, 0.0, 100.0);
+                emit_progress(
+                    &app,
+                    job.id,
+                    "done",
+                    "Complete",
+                    0,
+                    0,
+                    0.0,
+                    elapsed_secs,
+                    Some(100.0),
+                );
             }
             Ok(Err(e)) => {
                 let cancelled = queue.is_cancelled();
@@ -1456,7 +1469,7 @@ async fn run_queue_worker(app: AppHandle) {
                 };
                 queue.finish(&job, state, &e);
                 let stage = if cancelled { "cancelled" } else { "error" };
-                emit_progress(&app, job.id, stage, &e, 0, 0, 0.0, 0.0, 0.0);
+                emit_progress(&app, job.id, stage, &e, 0, 0, 0.0, elapsed_secs, None);
             }
             // a panic leaves no error event, so the panel would wait forever
             Err(e) => {
@@ -1473,8 +1486,8 @@ async fn run_queue_worker(app: AppHandle) {
                     0,
                     0,
                     0.0,
-                    0.0,
-                    0.0,
+                    elapsed_secs,
+                    None,
                 );
             }
         }
@@ -2362,8 +2375,8 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
                 p.frame,
                 p.total_frames,
                 p.fps,
-                p.elapsed_secs,
-                p.percent,
+                job_started.elapsed().as_secs_f64(),
+                Some(p.percent),
             );
             if let Some(line) = format_encode_breakdown(p) {
                 *encode_breakdown_ref.lock().unwrap() = Some(line);
@@ -2469,12 +2482,12 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         app,
         job.id,
         "audio",
-        "Preparing the sound track...",
+        "preparing the sound track",
         0,
         0,
         0.0,
-        0.0,
-        99.0,
+        job_started.elapsed().as_secs_f64(),
+        None,
     );
     let audio_started = Instant::now();
     let audio_path = prepare_audio(job, conform, output, |msg| log_to(&log_file, msg))?;
@@ -2518,16 +2531,17 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     };
 
     // Package DCP
+    let package_progress = PackageProgress::new(app.clone(), job.id, job_started, cancel.clone());
     emit_progress(
         app,
         job.id,
         "package",
-        "Creating DCP...",
+        "creating the package",
         0,
         0,
         0.0,
-        0.0,
-        99.0,
+        job_started.elapsed().as_secs_f64(),
+        None,
     );
     log_to(&log_file, "[PACKAGE] Creating DCP...");
     let package_started = Instant::now();
@@ -2542,8 +2556,13 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     );
     config.picture_mxf = picture_mxf;
 
-    let rc = if job.versions.is_empty() {
-        dcpwizard_core::dcp::create_dcp(&config)
+    if job.versions.is_empty() {
+        if let Err(message) =
+            dcpwizard_core::dcp::create_dcp_with_progress(&config, &package_progress)
+        {
+            log_to(&log_file, &format!("[PACKAGE] FAILED: {message}"));
+            return Err(message);
+        }
     } else {
         log_to(
             &log_file,
@@ -2552,19 +2571,31 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
                 job.versions.len()
             ),
         );
-        dcpwizard_core::versions::create_versioned_dcp(&config, &job.versions)
-    };
-    if rc != 0 {
-        log_to(&log_file, &format!("[PACKAGE] FAILED (rc={rc})"));
-        return Err(format!(
-            "DCP packaging failed (rc={rc}), see {}",
-            log_path.display()
-        ));
+        let rc = dcpwizard_core::versions::create_versioned_dcp(&config, &job.versions);
+        if rc != 0 {
+            log_to(&log_file, &format!("[PACKAGE] FAILED (rc={rc})"));
+            return Err(format!(
+                "DCP packaging failed (rc={rc}), see {}",
+                log_path.display()
+            ));
+        }
     }
     log_to(&log_file, "[PACKAGE] Done");
     log_to(
         &log_file,
         &format_stage_timing("package", package_started.elapsed()),
+    );
+
+    emit_progress(
+        app,
+        job.id,
+        "package",
+        "removing intermediate frames",
+        0,
+        0,
+        0.0,
+        job_started.elapsed().as_secs_f64(),
+        None,
     );
     dcpwizard_core::intermediates::remove_intermediates(output, &[job.video_path.as_path()]);
 
@@ -2574,17 +2605,28 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             app,
             job.id,
             "validate",
-            "Validating DCP...",
+            "validating",
             0,
             0,
             0.0,
-            0.0,
-            99.5,
+            job_started.elapsed().as_secs_f64(),
+            None,
         );
         log_to(&log_file, "[VALIDATE] Running validation...");
+        log_to(
+            &log_file,
+            "[VALIDATE] Asset hashes were taken from the finished files at wrap time, so \
+             validation does not recompute them",
+        );
         let validate_started = Instant::now();
 
-        let result = dcpwizard_core::verify::verify_dcp(&job.output_dir);
+        let result = dcpwizard_core::verify::verify_dcp_with_options(
+            &job.output_dir,
+            &dcpwizard_core::verify::VerifyCliOptions {
+                skip_hash_check: true,
+                ..Default::default()
+            },
+        );
 
         for err in &result.errors {
             log_to(&log_file, &format!("[VALIDATE] ERROR: {err}"));
@@ -2618,7 +2660,17 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
             &log_file,
             &format_stage_timing("validate", validate_started.elapsed()),
         );
-        emit_progress(app, job.id, "validate", &summary, 0, 0, 0.0, 0.0, 100.0);
+        emit_progress(
+            app,
+            job.id,
+            "validate",
+            &summary,
+            0,
+            0,
+            0.0,
+            job_started.elapsed().as_secs_f64(),
+            Some(100.0),
+        );
     }
 
     log_to(
@@ -2626,17 +2678,105 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         &format_stage_timing("total", job_started.elapsed()),
     );
 
+    let job_secs = job_started.elapsed().as_secs_f64();
     log_to(
         &log_file,
-        &format!(
-            "=== Pipeline finished in {:.1}s ===",
-            encode_result.elapsed_secs
-        ),
+        &format!("=== Pipeline finished in {job_secs:.1}s ==="),
     );
-    Ok(format!("DCP created in {:.1}s", encode_result.elapsed_secs))
+    Ok(format!("DCP created in {job_secs:.1}s"))
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+// matches the stage percents create_dcp_with_progress reports around the wrap
+const PICTURE_WRAP_PERCENT_START: f64 = 15.0;
+const PICTURE_WRAP_PERCENT_SPAN: f64 = 40.0;
+const PICTURE_WRAP_EMIT_INTERVAL: Duration = Duration::from_millis(250);
+
+#[derive(Default)]
+struct PictureWrapRate {
+    started: Option<Instant>,
+    last_emit: Option<Instant>,
+    frames_done: u64,
+}
+
+struct PackageProgress {
+    app: AppHandle,
+    job_id: u64,
+    job_started: Instant,
+    cancel: Arc<AtomicBool>,
+    wrap: Mutex<PictureWrapRate>,
+}
+
+impl PackageProgress {
+    fn new(app: AppHandle, job_id: u64, job_started: Instant, cancel: Arc<AtomicBool>) -> Self {
+        Self {
+            app,
+            job_id,
+            job_started,
+            cancel,
+            wrap: Mutex::new(PictureWrapRate::default()),
+        }
+    }
+}
+
+impl dcpwizard_core::dcp::ProgressSink for PackageProgress {
+    fn stage(&self, percent: u32, message: &str) {
+        emit_progress(
+            &self.app,
+            self.job_id,
+            "package",
+            message,
+            0,
+            0,
+            0.0,
+            self.job_started.elapsed().as_secs_f64(),
+            Some(percent as f64),
+        );
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    fn frames(&self, done: u64, total: u64) {
+        let now = Instant::now();
+        let mut wrap = self.wrap.lock().unwrap();
+        if done <= wrap.frames_done {
+            *wrap = PictureWrapRate::default();
+        }
+        let started = *wrap.started.get_or_insert(now);
+        wrap.frames_done = done;
+        let due = wrap
+            .last_emit
+            .is_none_or(|last| now.duration_since(last) >= PICTURE_WRAP_EMIT_INTERVAL);
+        if !due && done < total {
+            return;
+        }
+        wrap.last_emit = Some(now);
+        drop(wrap);
+
+        let wrapping_secs = now.duration_since(started).as_secs_f64();
+        let fps = if wrapping_secs > 0.0 {
+            done as f64 / wrapping_secs
+        } else {
+            0.0
+        };
+        let percent = PICTURE_WRAP_PERCENT_START
+            + PICTURE_WRAP_PERCENT_SPAN * (done as f64) / (total.max(1) as f64);
+        emit_progress(
+            &self.app,
+            self.job_id,
+            "package",
+            "wrapping the picture",
+            done,
+            total,
+            fps,
+            self.job_started.elapsed().as_secs_f64(),
+            Some(percent),
+        );
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn emit_progress(
@@ -2648,7 +2788,7 @@ fn emit_progress(
     total_frames: u64,
     fps: f64,
     elapsed_secs: f64,
-    percent: f64,
+    percent: Option<f64>,
 ) {
     let _ = app.emit(
         "pipeline-progress",

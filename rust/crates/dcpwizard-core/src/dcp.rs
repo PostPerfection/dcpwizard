@@ -242,6 +242,7 @@ fn wrap_timed_text_track(
 pub trait ProgressSink {
     fn stage(&self, percent: u32, message: &str);
     fn cancelled(&self) -> bool;
+    fn frames(&self, _done: u64, _total: u64) {}
 }
 
 struct NoProgress;
@@ -604,25 +605,15 @@ pub fn create_dcp_with_progress(
             files.extend(left_frames.iter().cloned());
             files.extend(std::iter::repeat_n(black.clone(), tail_frames as usize));
             picture_duration = files.len() as u64;
-            let wrapped = if config.hdr_dci {
-                crate::mxf_wrap::wrap_j2k_hdr_files(
-                    files,
-                    &picture_mxf_path,
-                    fps,
-                    encryption,
-                    Some(*picture_uuid.as_bytes()),
-                )
-            } else {
-                crate::mxf_wrap::wrap_mxf_files(
-                    files,
-                    &picture_mxf_path,
-                    crate::mxf_wrap::MxfType::J2kPicture,
-                    fps,
-                    encryption,
-                    None,
-                    Some(*picture_uuid.as_bytes()),
-                )
-            };
+            let wrapped = crate::mxf_wrap::wrap_j2k_files(
+                files,
+                &picture_mxf_path,
+                fps,
+                encryption,
+                config.hdr_dci.then(crate::mxf_wrap::dci_hdr_metadata),
+                Some(*picture_uuid.as_bytes()),
+                &mut |done, total| progress.frames(done, total),
+            );
             let _ = std::fs::remove_file(&black);
             if wrapped.is_none() {
                 return Err("Failed to wrap padded picture MXF".into());
@@ -661,35 +652,23 @@ pub fn create_dcp_with_progress(
             tracing::info!(
                 "Stereoscopic picture MXF: {picture_mxf_name} ({picture_duration} frame pairs)"
             );
-        } else if config.hdr_dci {
+        } else {
             picture_duration = content_count;
-            if crate::mxf_wrap::wrap_j2k_hdr_files(
-                crate::reel::collect_frames(j2k_dir),
+            if crate::mxf_wrap::wrap_j2k_files(
+                left_frames,
                 &picture_mxf_path,
                 fps,
                 encryption,
+                config.hdr_dci.then(crate::mxf_wrap::dci_hdr_metadata),
                 Some(*picture_uuid.as_bytes()),
+                &mut |done, total| progress.frames(done, total),
             )
             .is_none()
             {
-                return Err("Failed to wrap DCI HDR picture MXF".into());
-            }
-            tracing::info!("Picture MXF: {picture_mxf_name} ({picture_duration} frames, DCI HDR)");
-        } else {
-            picture_duration = content_count;
-            let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-                input_path: j2k_dir.clone(),
-                output_mxf: picture_mxf_path.clone(),
-                mxf_type: crate::mxf_wrap::MxfType::J2kPicture,
-                frame_rate: fps,
-                encryption,
-                mca_config: None,
-                asset_uuid: Some(*picture_uuid.as_bytes()),
-            };
-            if crate::mxf_wrap::wrap_mxf(&wrap_config) != 0 {
                 return Err("Failed to wrap picture MXF".into());
             }
-            tracing::info!("Picture MXF: {picture_mxf_name} ({picture_duration} frames)");
+            let hdr_note = if config.hdr_dci { ", DCI HDR" } else { "" };
+            tracing::info!("Picture MXF: {picture_mxf_name} ({picture_duration} frames{hdr_note})");
         }
     }
 

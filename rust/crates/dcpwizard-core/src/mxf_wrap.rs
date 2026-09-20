@@ -560,17 +560,24 @@ pub fn dci_hdr_metadata() -> asdcplib::jp2k::HdrMetadata {
     }
 }
 
-pub fn wrap_j2k_hdr_files(
+pub fn wrap_j2k_files(
     input_files: Vec<PathBuf>,
     output_mxf: &std::path::Path,
     frame_rate: u32,
     encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+    hdr: Option<asdcplib::jp2k::HdrMetadata>,
     asset_uuid: Option<[u8; 16]>,
+    on_frame: &mut dyn FnMut(u64, u64),
 ) -> Option<postkit::mxf_wrap::MxfTrackFile> {
     if input_files.is_empty() {
         tracing::error!("no essence files to wrap into {}", output_mxf.display());
         return None;
     }
+    let description = if hdr.is_some() {
+        "DCI HDR picture MXF (ST 2084)"
+    } else {
+        "picture MXF"
+    };
     let fps = if frame_rate == 0 { 24 } else { frame_rate };
     let options = postkit::mxf_wrap::IncrementalWrapOptions {
         output: output_mxf.to_path_buf(),
@@ -578,18 +585,19 @@ pub fn wrap_j2k_hdr_files(
         fps_num: fps,
         fps_den: 1,
         encryption,
-        hdr: Some(dci_hdr_metadata()),
+        hdr,
         asset_uuid,
     };
     let mut wrap = match postkit::mxf_wrap::IncrementalJ2kWrap::new(options) {
         Ok(wrap) => wrap,
         Err(e) => {
-            tracing::error!("JP2K HDR wrap failed: {e}");
+            tracing::error!("JP2K wrap failed: {e}");
             return None;
         }
     };
+    let total = input_files.len() as u64;
     // a feature's codestreams run to tens of GB
-    for f in &input_files {
+    for (index, f) in input_files.iter().enumerate() {
         let frame = match std::fs::read(f) {
             Ok(frame) => frame,
             Err(e) => {
@@ -601,17 +609,15 @@ pub fn wrap_j2k_hdr_files(
             tracing::error!("{e}: {}", f.display());
             return None;
         }
+        on_frame(index as u64 + 1, total);
     }
     match wrap.finish() {
         Ok(track) => {
-            tracing::info!(
-                "Wrapped DCI HDR picture MXF (ST 2084): {}",
-                output_mxf.display()
-            );
+            tracing::info!("Wrapped {description}: {}", output_mxf.display());
             Some(track)
         }
         Err(e) => {
-            tracing::error!("JP2K HDR wrap failed: {e}");
+            tracing::error!("JP2K wrap failed: {e}");
             None
         }
     }
@@ -1027,7 +1033,16 @@ mod tests {
             .collect();
 
         let mxf = dir.path().join("hdr_picture.mxf");
-        let track = wrap_j2k_hdr_files(frames, &mxf, 24, None, None).expect("hdr wrap");
+        let track = wrap_j2k_files(
+            frames,
+            &mxf,
+            24,
+            None,
+            Some(dci_hdr_metadata()),
+            None,
+            &mut |_, _| {},
+        )
+        .expect("hdr wrap");
         assert_eq!(track.duration, 3);
         assert!(mxf.exists());
 
@@ -1058,6 +1073,34 @@ mod tests {
             hdr.color_primaries, None,
             "the addendum names no ColorPrimaries item, so the descriptor must carry none"
         );
+    }
+
+    #[test]
+    fn a_plain_picture_wrap_reports_every_frame_it_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = dir.path().join("seed.j2c");
+        crate::pad::generate_black_frame(2048, 1080, 24, &seed).expect("encode DCI frame");
+        let frames: Vec<PathBuf> = (0..4)
+            .map(|i| {
+                let f = dir.path().join(format!("frame_{i:05}.j2c"));
+                std::fs::copy(&seed, &f).unwrap();
+                f
+            })
+            .collect();
+        let total = frames.len() as u64;
+
+        let mxf = dir.path().join("picture.mxf");
+        let mut reported = Vec::new();
+        let track = wrap_j2k_files(frames, &mxf, 24, None, None, None, &mut |done, of| {
+            reported.push((done, of))
+        })
+        .expect("plain wrap");
+
+        assert_eq!(
+            reported,
+            (1..=total).map(|done| (done, total)).collect::<Vec<_>>()
+        );
+        assert_eq!(track.duration, total);
     }
 
     #[test]

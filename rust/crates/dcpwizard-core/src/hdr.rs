@@ -3,7 +3,7 @@
 //! The addendum (s7) requires the picture MXF's Generic Picture Essence
 //! Descriptor to carry TransferCharacteristic = ST 2084 (the UL below) plus a CPL
 //! ExtensionMetadata EOTF="ST 2084" claim. The descriptor side is written by
-//! `mxf_wrap::wrap_j2k_hdr_files`, so this module holds the numbers both the CLI
+//! `mxf_wrap::wrap_j2k_files`, so this module holds the numbers both the CLI
 //! and the GUI validate against before an HDR encode starts: the raised
 //! per-codestream byte cap and the bitrate ceiling it comes from.
 

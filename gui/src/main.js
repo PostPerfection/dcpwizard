@@ -7,6 +7,7 @@ import { open as _open, save, confirm as tauriConfirm, message as tauriMessage }
 import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
+import { progressDisplay } from "./progress-format.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -1115,18 +1116,12 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
     const p = event.payload;
     if (currentJobId && p.job_id !== currentJobId) return;
 
-    progressBar.value = p.percent;
-    stageEl.textContent = p.stage.charAt(0).toUpperCase() + p.stage.slice(1);
-    setTitleProgress(p.percent, p.stage);
-
-    const elapsed = formatTime(p.elapsed_secs);
-    let remaining = "";
-    if (p.percent > 0 && p.percent < 100) {
-      const eta = (p.elapsed_secs / p.percent) * (100 - p.percent);
-      remaining = ` ETA ${formatTime(eta)}`;
-    }
-    const fpsStr = p.fps > 0 ? ` ${p.fps.toFixed(1)}fps` : "";
-    statsEl.textContent = `${elapsed}${fpsStr}${remaining}`;
+    const display = progressDisplay(p);
+    if (display.percent === null) progressBar.removeAttribute("value");
+    else progressBar.value = display.percent;
+    stageEl.textContent = display.stage;
+    statsEl.textContent = display.stats;
+    setTitleProgress(display.percent, p.stage);
 
     if (p.stage === "done") {
       setStatus("Build complete");
@@ -1801,12 +1796,6 @@ document.getElementById("status-validation")?.addEventListener("click", () => {
   });
 });
 
-function formatTime(secs) {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return m > 0 ? `${m}m${s}s` : `${s}s`;
-}
-
 // === Free disk ===
 const DISK_REFRESH_MS = 30000;
 const DISK_LOW_PERCENT = 10;
@@ -2252,7 +2241,9 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
 
 // === Progress in Title Bar ===
 function setTitleProgress(percent, stage) {
-  if (percent >= 0 && percent < 100) {
+  if (percent === null) {
+    document.title = `DCP Wizard — ${stage}`;
+  } else if (percent >= 0 && percent < 100) {
     document.title = `DCP Wizard — ${stage} ${Math.round(percent)}%`;
   } else {
     document.title = "DCP Wizard";
