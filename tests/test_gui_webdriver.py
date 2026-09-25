@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import xml.etree.ElementTree as ElementTree
@@ -19,6 +20,7 @@ PAGE_TIMEOUT_SECONDS = 60
 OPEN_TIMEOUT_SECONDS = 60
 PREVIEW_TIMEOUT_SECONDS = 60
 PLAYHEAD_TIMEOUT_SECONDS = 60
+STATUS_TIMEOUT_SECONDS = 60
 # a click or a key press is answered in the page, not over the network
 REACTION_TIMEOUT_SECONDS = 15
 CREATE_TIMEOUT_SECONDS = 900
@@ -32,6 +34,7 @@ CANCEL_KEY = "Escape"
 TEXT_DIALOG = ".text-dialog"
 
 PREVIEW_DEFAULT_TITLE = "Preview"
+GPU_UNAVAILABLE_PREFIX = "GPU encoding unavailable"
 
 FIXTURE_TITLE = "Two Reel Test"
 FIXTURE_SIZE = "1998x1080"
@@ -287,6 +290,10 @@ def preview_title(session):
     return session.property("#preview-title", "textContent")
 
 
+def status_text(session):
+    return session.property("#status-text", "textContent")
+
+
 # what the scrubber says the player holds, in seconds
 def reported_duration(session):
     return float(session.attribute("#timeline-duration", "data-raw"))
@@ -406,3 +413,33 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
         REACTION_TIMEOUT_SECONDS,
     )
     assert session.property("#timeline-play-btn", "disabled") is False
+
+
+# the success path needs grok's plugin and a licence, hand tested
+def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window, tmp_path):
+    session = window.session
+    window.press("ctrl+7")
+    wait_for_view(session, "view-settings")
+
+    window.click("#set-gpu")
+    window.click("#settings-form button[type='submit']")
+    status = wait_until(
+        "the status never mentioned the GPU",
+        lambda: status_text(session).startswith(GPU_UNAVAILABLE_PREFIX)
+        and status_text(session),
+        STATUS_TIMEOUT_SECONDS,
+    )
+    assert GPU_UNAVAILABLE_PREFIX in status
+    assert session.property("#set-gpu", "checked") is False
+
+    preferences_file = (
+        tmp_path
+        / XDG_DIRECTORIES["XDG_CONFIG_HOME"]
+        / "dcpwizard/preferences.json"
+    )
+    wait_until(
+        "the preferences were never written",
+        preferences_file.is_file,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    assert json.loads(preferences_file.read_text())["gpu"] is False
