@@ -1066,7 +1066,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   // a second build would queue behind the first and encode all over again
   if (buildInFlight) return;
 
-  const title = document.getElementById("prop-title")?.value?.trim();
+  let title = document.getElementById("prop-title")?.value?.trim();
   if (!title) { tauriMessage("Enter a project title in Properties"); return; }
 
   const reel = project.reels[0];
@@ -1254,6 +1254,8 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       }
       result = await submit(true);
     }
+    title = result.title;
+    output = result.outputDir;
     currentJobId = result.jobId;
     setStatus("Building DCP...");
   } catch (e) {

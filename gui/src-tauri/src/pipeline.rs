@@ -509,6 +509,8 @@ fn parsed_colour(
 pub struct SubmitResult {
     pub job_id: Option<u64>,
     pub hints: Vec<String>,
+    pub title: String,
+    pub output_dir: String,
 }
 
 // a job that names nothing is verified, the way the CLI's create is
@@ -955,6 +957,8 @@ pub async fn submit_job(
 
     let (plan, planned_picture) = checked_job_plan(&job)?;
     apply_isdcf_name_to_job(&mut job, planned_picture.map(|picture| picture.raster))?;
+    let submitted_title = job.title.clone();
+    let submitted_output_dir = job.output_dir.to_string_lossy().into_owned();
 
     // packages are folders named by title, so a reused title lands in the old
     // package. refuse now, not after the encode.
@@ -980,6 +984,8 @@ pub async fn submit_job(
         return Ok(SubmitResult {
             job_id: None,
             hints,
+            title: submitted_title,
+            output_dir: submitted_output_dir,
         });
     }
     let job = JobConfig {
@@ -999,6 +1005,8 @@ pub async fn submit_job(
     Ok(SubmitResult {
         job_id: Some(id),
         hints,
+        title: submitted_title,
+        output_dir: submitted_output_dir,
     })
 }
 
