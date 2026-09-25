@@ -186,7 +186,7 @@ async function initializePreferences() {
 
   loadSettings();
   const preferences = getPrefs();
-  applyGpuSetting(
+  await applyGpuSetting(
     preferences.gpu,
     preferences.gpuLicense,
     preferences.gpuRegistrationUrl,
@@ -224,28 +224,21 @@ function loadSettings() {
 // grok routes every compress and decompress in the process
 async function applyGpuSetting(enabled, license, registrationUrl) {
   try {
-    await invoke("set_gpu", {
+    const active = await invoke("set_gpu", {
       enabled,
       license: license || null,
       registrationUrl: registrationUrl || null,
     });
-    if (enabled) setStatus("GPU encoding on");
+    if (enabled && !active) throw new Error("Grok did not enable the GPU");
+    return true;
   } catch (error) {
     setStatus(`GPU encoding unavailable: ${error}`);
     const gpu = document.getElementById("set-gpu");
     if (gpu) gpu.checked = false;
-    savePrefs({ ...getPrefs(), gpu: false });
+    await savePrefs({ ...getPrefs(), gpu: false });
+    return false;
   }
 }
-
-document.getElementById("set-gpu")?.addEventListener("change", (event) => {
-  if (!event.target.checked) return;
-  applyGpuSetting(
-    true,
-    document.getElementById("set-gpu-license")?.value.trim() || "",
-    document.getElementById("set-gpu-registration-url")?.value.trim() || "",
-  );
-});
 
 // Advisory findings the pre-build check made. Returns true to build anyway.
 function showHintsDialog(hints) {
@@ -298,10 +291,10 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     gpuLicense: document.getElementById("set-gpu-license")?.value.trim() || "",
     gpuRegistrationUrl: document.getElementById("set-gpu-registration-url")?.value.trim() || "",
   };
+  if (!await applyGpuSetting(prefs.gpu, prefs.gpuLicense, prefs.gpuRegistrationUrl)) return;
   if (!await savePrefs(prefs)) return;
   refreshIsdcfPreview();
   setStatus("Settings saved");
-  applyGpuSetting(prefs.gpu, prefs.gpuLicense, prefs.gpuRegistrationUrl);
 });
 
 document.getElementById("set-reset")?.addEventListener("click", async () => {
