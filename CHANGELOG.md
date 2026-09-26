@@ -9,6 +9,9 @@
 ### Fixed
 - **Progress shows for every build stage**: the audio, package and validate stages showed zeros for elapsed time and a meaningless time remaining. Every stage now shows the build's total elapsed time, the package stage names its step and counts frames with a rate while it wraps the picture, and time remaining appears only where a rate exists.
 
+### Added
+- **The Settings page lists the component versions**: a Components box shows the versions of the app, PostKit, Grok, FFmpeg and mpv. Every job log starts with the same lines.
+
 ## [1.3.3] - 2026-09-14
 
 ### Changed

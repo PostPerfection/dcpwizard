@@ -13,6 +13,7 @@ import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from ".
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
+import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
@@ -191,6 +192,7 @@ async function initializePreferences() {
     preferences.gpuLicense,
     preferences.gpuRegistrationUrl,
   );
+  await loadComponentVersions(invoke);
 }
 
 // Load prefs into settings form

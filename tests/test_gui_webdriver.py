@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import tomllib
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
@@ -35,6 +36,7 @@ TEXT_DIALOG = ".text-dialog"
 
 PREVIEW_DEFAULT_TITLE = "Preview"
 GPU_UNAVAILABLE_PREFIX = "GPU encoding unavailable"
+UNAVAILABLE_VERSION = "unavailable"
 
 FIXTURE_TITLE = "Two Reel Test"
 FIXTURE_SIZE = "1998x1080"
@@ -64,6 +66,12 @@ return [...document.querySelectorAll(arguments[0] + " .timeline-segment")].map(
     duration: segment.querySelector(".segment-duration").textContent,
     active: segment.classList.contains("active"),
   }),
+);
+"""
+
+COMPONENT_VERSIONS = """
+return [...document.querySelectorAll("#component-versions .component-version")].map(
+  (row) => [row.querySelector("span").textContent, row.querySelector("output").textContent],
 );
 """
 
@@ -443,3 +451,26 @@ def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window,
         STATUS_TIMEOUT_SECONDS,
     )
     assert json.loads(preferences_file.read_text())["gpu"] is False
+
+
+def test_the_settings_page_lists_the_component_versions(window):
+    session = window.session
+    window.press("ctrl+7")
+    wait_for_view(session, "view-settings")
+
+    rows = wait_until(
+        "the component versions were never listed",
+        lambda: session.execute(COMPONENT_VERSIONS),
+        STATUS_TIMEOUT_SECONDS,
+    )
+    names = [name for name, _ in rows]
+    versions = dict(rows)
+    assert names == ["DCP Wizard", "PostKit", "Grok", "FFmpeg", "mpv"]
+    assert versions["DCP Wizard"] == package_version(REPOSITORY_ROOT / "gui/src-tauri/Cargo.toml")
+    assert versions["PostKit"] == package_version(REPOSITORY_ROOT / "extern/postkit/Cargo.toml")
+    for name, version in rows:
+        assert version and version != UNAVAILABLE_VERSION, f"{name} has no version: {version!r}"
+
+
+def package_version(manifest):
+    return tomllib.loads(manifest.read_text())["package"]["version"]

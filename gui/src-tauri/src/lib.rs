@@ -23,6 +23,17 @@ mod pipeline;
 mod preferences;
 mod timeline;
 
+#[tauri::command]
+fn component_versions(
+    preview_player: tauri::State<'_, guikit::preview::PreviewPlayer>,
+) -> Vec<postkit::component_versions::ComponentVersion> {
+    guikit::component_versions::installed_components(
+        "DCP Wizard",
+        env!("CARGO_PKG_VERSION"),
+        &preview_player,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dcpwizard_core::grok::set_packaged_gpu_plugin_path();
@@ -60,6 +71,7 @@ pub fn run() {
             guikit::preview::preview_set_subtitle_file,
             guikit::preview::preview_set_subtitle_visibility,
             guikit::gpu::set_gpu,
+            component_versions,
             preferences::load_preferences,
             preferences::save_preferences,
             preferences::reset_preferences,
