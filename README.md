@@ -184,6 +184,14 @@ sudo akmods --force
 sudo reboot
 ```
 
+**GPU encoding on macOS.** The released dmg encodes on the CPU. A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
+
+```bash
+./scripts/build-macos-dmg.sh /path/to/grok/install
+```
+
+The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-1.3.3-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
+
 ### Install from source
 
 #### Linux (Ubuntu/Debian)
