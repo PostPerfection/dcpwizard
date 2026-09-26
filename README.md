@@ -174,7 +174,7 @@ The `.AppImage` carries libmpv as well, and runs ffmpeg, xmlsec1 and xmllint fro
 ./scripts/build-fedora-rpm.sh /path/to/grok/install
 ```
 
-The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. Remove an installed test build with `sudo dnf remove dcp-wizard`.
+The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-1.3.3-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
 
 That rpm needs two more things on the target machine: the RPM Fusion NVIDIA driver, and a Grok licence entered under Settings. The CUDA runtime is linked into the plugin, so the CUDA toolkit and the NVIDIA Container Toolkit are not needed:
 
