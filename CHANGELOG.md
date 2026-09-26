@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **The deb and rpm pull in the tools the app runs**: ffmpeg, xmlsec1, xmllint and curl are declared as package dependencies, so a package install no longer leaves imports and verification without them.
 - **Builds against grok v20.4.11**: the CLI archives, the desktop packages, the Docker image and CI carry grok v20.4.11.
 - **Validation after a build no longer reads the picture MXF back**: the hashes in the PKL were taken from a read of the finished files moments earlier, and the encoder held every codestream under the DCI per-frame byte cap as it wrote it, so both the re-hash and the bitrate measurement are dropped. Two full reads of a 23 GB picture MXF go away. The Verify tool still checks hashes and measures the bitrate.
 
