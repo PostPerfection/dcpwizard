@@ -6,7 +6,7 @@
 
 Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
 
-Version 1.2 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
+Version 1.3 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
 
 ## Overview
 
@@ -157,16 +157,18 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 
 The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits: nothing has to be installed and `LD_LIBRARY_PATH` does not have to be set.
 
-The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. They need libmpv for the preview player, which the package manager pulls in:
+The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. The package manager pulls in the rest: libmpv for the preview player, ffmpeg for video import, xmlsec1 and xmllint for verification, curl for certificate fetching.
 
 ```bash
 sudo apt install ./dcpwizard_*_amd64.deb     # Debian, Ubuntu
-sudo dnf install ./dcpwizard-*.x86_64.rpm    # Fedora, with RPM Fusion enabled for mpv-libs and ffmpeg
+sudo dnf install ./dcpwizard-*.x86_64.rpm    # Fedora
 ```
 
-The `.AppImage` carries libmpv as well and needs nothing installed. For the `.dmg`, install libmpv with `brew install mpv`.
+On Fedora, enable [RPM Fusion](https://rpmfusion.org/Configuration) first: ffmpeg comes from there. Nothing else has to be installed by hand.
 
-To build a Fedora RPM with the CUDA plugin from a local Grok installation:
+The `.AppImage` carries libmpv as well, and runs ffmpeg, xmlsec1 and xmllint from the PATH. For the `.dmg`, install libmpv with `brew install mpv`.
+
+**GPU encoding on Fedora.** The released rpm encodes on the CPU. An rpm with the CUDA plugin is built from a local Grok installation that carries it:
 
 ```bash
 ./scripts/build-fedora-rpm.sh /path/to/grok/install
@@ -174,7 +176,7 @@ To build a Fedora RPM with the CUDA plugin from a local Grok installation:
 
 The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. Remove an installed test build with `sudo dnf remove dcp-wizard`.
 
-The CUDA runtime is linked into the plugin. The target Fedora system needs the RPM Fusion NVIDIA driver, but it does not need the CUDA toolkit or NVIDIA Container Toolkit:
+That rpm needs two more things on the target machine: the RPM Fusion NVIDIA driver, and a Grok licence entered under Settings. The CUDA runtime is linked into the plugin, so the CUDA toolkit and the NVIDIA Container Toolkit are not needed:
 
 ```bash
 sudo dnf install akmod-nvidia xorg-x11-drv-nvidia-cuda
@@ -192,6 +194,22 @@ sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libaso
 
 # Grok (libgrokj2k) must be discoverable by pkg-config at build time and its
 # shared lib loadable at runtime. Build it from source or install a release, then:
+export PKG_CONFIG_PATH="/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/path/to/grok/lib64:$LD_LIBRARY_PATH"
+
+cd rust
+cargo build --release
+# Binary at rust/target/release/dcpwizard
+```
+
+#### Fedora
+
+```bash
+sudo dnf install gcc-c++ cmake pkgconf-pkg-config libxml2-devel openssl-devel xerces-c-devel alsa-lib-devel
+# For GUI: also install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel mpv-devel
+# ffmpeg comes from RPM Fusion
+
+# Grok as in the Ubuntu section, then:
 export PKG_CONFIG_PATH="/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
 export LD_LIBRARY_PATH="/path/to/grok/lib64:$LD_LIBRARY_PATH"
 

@@ -27,8 +27,7 @@
           "libtiff.so.6()(64bit)"
         ],
         "files": {
-          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
-          "/usr/lib/dcpwizard/libgrokj2k_plugin.so": "libgrokj2k_plugin.so"
+          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1"
         }
       }
     }

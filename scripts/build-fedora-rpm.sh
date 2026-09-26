@@ -32,4 +32,6 @@ cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.so" "$ROOT/gui/src-tauri/libgro
 
 cd "$ROOT/gui"
 pnpm install --frozen-lockfile
-pnpm tauri build --bundles rpm
+# the plugin is private, the committed config leaves it out
+PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"files":{"/usr/lib/dcpwizard/libgrokj2k.so.1":"libgrokj2k.so.1","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
+pnpm tauri build --bundles rpm --config "$PLUGIN_FILES"
