@@ -25,6 +25,8 @@ mod timeline;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    dcpwizard_core::grok::set_packaged_gpu_plugin_path();
+
     #[cfg(unix)]
     guikit::startup::fork_terminal_guard();
 

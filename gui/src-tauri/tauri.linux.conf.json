@@ -11,9 +11,14 @@
         }
       },
       "rpm": {
-        "depends": ["mpv-libs"],
+        "depends": [
+          "mpv-libs",
+          "libcurl.so.4()(64bit)",
+          "libtiff.so.6()(64bit)"
+        ],
         "files": {
-          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1"
+          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
+          "/usr/lib/dcpwizard/libgrokj2k_plugin.so": "libgrokj2k_plugin.so"
         }
       }
     }

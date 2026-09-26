@@ -166,6 +166,22 @@ sudo dnf install ./dcpwizard-*.x86_64.rpm    # Fedora, with RPM Fusion enabled f
 
 The `.AppImage` carries libmpv as well and needs nothing installed. For the `.dmg`, install libmpv with `brew install mpv`.
 
+To build a Fedora RPM with the CUDA plugin from a local Grok installation:
+
+```bash
+./scripts/build-fedora-rpm.sh /path/to/grok/install
+```
+
+The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. Remove an installed test build with `sudo dnf remove dcp-wizard`.
+
+The CUDA runtime is linked into the plugin. The target Fedora system needs the RPM Fusion NVIDIA driver, but it does not need the CUDA toolkit or NVIDIA Container Toolkit:
+
+```bash
+sudo dnf install akmod-nvidia xorg-x11-drv-nvidia-cuda
+sudo akmods --force
+sudo reboot
+```
+
 ### Install from source
 
 #### Linux (Ubuntu/Debian)

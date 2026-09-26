@@ -3814,6 +3814,8 @@ fn run_preferences_command(action: &PreferencesCommand) -> i32 {
 }
 
 fn main() {
+    dcpwizard_core::grok::set_packaged_gpu_plugin_path();
+
     // Windows debug builds overflow the default 1MB stack due to large clap
     // derive enum (102 args across 34 subcommands). Spawn with 8MB stack.
     let thread = std::thread::Builder::new()

@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub const CURRENT_PREFERENCES_VERSION: u32 = 2;
+pub const DEFAULT_GPU_REGISTRATION_URL: &str = "https://grokcompression.com/api/register";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -56,7 +57,7 @@ impl Default for Preferences {
             bandwidth: 230,
             gpu: false,
             gpu_license: String::new(),
-            gpu_registration_url: String::new(),
+            gpu_registration_url: DEFAULT_GPU_REGISTRATION_URL.to_string(),
             signing_cert: String::new(),
             signing_key: String::new(),
             output_dir: String::new(),
@@ -158,6 +159,18 @@ mod tests {
         );
         assert!(saved.contains("gpuRegistrationUrl"));
         assert!(saved.contains("theme"));
+        assert_eq!(
+            preferences.gpu_registration_url,
+            DEFAULT_GPU_REGISTRATION_URL
+        );
+    }
+
+    #[test]
+    fn new_preferences_use_the_registration_server() {
+        assert_eq!(
+            Preferences::default().gpu_registration_url,
+            DEFAULT_GPU_REGISTRATION_URL
+        );
     }
 
     #[test]
