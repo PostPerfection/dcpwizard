@@ -3814,7 +3814,7 @@ fn run_preferences_command(action: &PreferencesCommand) -> i32 {
 }
 
 fn main() {
-    dcpwizard_core::grok::set_packaged_gpu_plugin_path();
+    postkit::grok_encoder::set_packaged_gpu_plugin_path("dcpwizard");
 
     // Windows debug builds overflow the default 1MB stack due to large clap
     // derive enum (102 args across 34 subcommands). Spawn with 8MB stack.

@@ -36,7 +36,7 @@ fn component_versions(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    dcpwizard_core::grok::set_packaged_gpu_plugin_path();
+    postkit::grok_encoder::set_packaged_gpu_plugin_path("dcpwizard");
 
     #[cfg(unix)]
     guikit::startup::fork_terminal_guard();
