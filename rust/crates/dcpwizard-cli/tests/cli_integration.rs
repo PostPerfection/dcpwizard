@@ -1272,3 +1272,15 @@ fn create_reads_the_tms_config_before_it_encodes() {
     .stdout(predicate::str::contains("cannot read tms config"));
     assert!(!out.exists(), "the encode must not have started");
 }
+
+#[test]
+fn the_default_registration_url_needs_no_license() {
+    let directory = TempDir::new().unwrap();
+    let missing = directory.path().join("does_not_exist");
+    cmd()
+        .env("XDG_CONFIG_HOME", directory.path())
+        .args(["verify", missing.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--license").not());
+}

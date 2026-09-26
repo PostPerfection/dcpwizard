@@ -3888,7 +3888,7 @@ fn run() {
         eprintln!("--license and --registration-url require GPU encoding");
         std::process::exit(2);
     }
-    if registration_url.is_some() && license.is_none() {
+    if cli.registration_url.is_some() && license.is_none() {
         eprintln!("--registration-url requires --license");
         std::process::exit(2);
     }
@@ -4630,6 +4630,12 @@ fn run() {
                 }
             };
             job_log.line("=== DCP Wizard Pipeline ===");
+            for component in postkit::component_versions::installed_components(
+                "DCP Wizard",
+                env!("CARGO_PKG_VERSION"),
+            ) {
+                job_log.line(&format!("{}: {}", component.name, component.version));
+            }
             job_log.line(&format!("Title: {title}"));
             job_log.line(&format!("Input: {}", video_path.display()));
             job_log.line(&format!("Output: {}", output_dir.display()));
