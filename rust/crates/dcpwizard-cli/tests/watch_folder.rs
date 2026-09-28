@@ -14,6 +14,8 @@ const CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const GROWING_APPEND_INTERVAL: Duration = Duration::from_millis(300);
 const GROWING_APPEND_COUNT: usize = 10;
 const GROWING_APPEND_BYTES: usize = 4096;
+const JOB_LOG_FIRST_LINE: &str = "=== DCP Wizard Pipeline ===";
+const JOB_LOG_ACCELERATOR_PREFIX: &str = "Accelerator: ";
 
 struct RecordedWebhooks {
     url: String,
@@ -232,7 +234,15 @@ fn a_master_that_lands_becomes_a_dcp() {
     );
 
     let log = std::fs::read_to_string(output_dir.path().join("feature.log")).unwrap();
-    assert!(!log.is_empty(), "the job log is empty");
+    assert!(
+        log.starts_with(JOB_LOG_FIRST_LINE),
+        "the create output was written over the job log header: {log}"
+    );
+    assert!(
+        log.lines()
+            .any(|line| line.starts_with(JOB_LOG_ACCELERATOR_PREFIX)),
+        "the job log header names no accelerator: {log}"
+    );
 
     let created = webhooks.wait_for_one("dcp.created");
     assert_eq!(

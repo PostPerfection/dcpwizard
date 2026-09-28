@@ -41,6 +41,7 @@ pub mod intermediates;
 pub mod isdcf_name;
 pub mod isdcf_title;
 pub mod j2k_transcode;
+pub mod job_log;
 pub mod job_queue;
 pub mod kdm;
 pub mod kdm_log;

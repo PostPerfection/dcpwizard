@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
-mod job_log;
+use dcpwizard_core::job_log;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum AccessibilityStandardArg {
@@ -6281,6 +6281,22 @@ fn run() {
                 }
             }
 
+            fn append_captured_output(mut captured_output: std::fs::File, log_path: &Path) {
+                use std::io::Seek;
+                let appended = captured_output
+                    .rewind()
+                    .and_then(|()| {
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(log_path)
+                    })
+                    .and_then(|mut log| std::io::copy(&mut captured_output, &mut log));
+                if let Err(e) = appended {
+                    tracing::error!("cannot write {}: {e}", log_path.display());
+                }
+            }
+
             fn post_event(
                 webhook: Option<&postkit::webhook::WebhookConfig>,
                 event_type: &str,
@@ -6330,7 +6346,13 @@ fn run() {
                         return;
                     };
                     let package_dir = output_dir.join(stem);
-                    let log_path = output_dir.join(format!("{stem}.log"));
+                    let log_path = match job_log::job_log_path(&package_dir) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            return;
+                        }
+                    };
 
                     let audio = watch_dir.join(format!("{stem}.{AUDIO_SIDECAR_EXTENSION}"));
                     let subtitle = watch_dir.join(format!("{stem}.{SUBTITLE_SIDECAR_EXTENSION}"));
@@ -6356,20 +6378,28 @@ fn run() {
                     }
                     arguments.extend(create_arguments.iter().map(std::ffi::OsString::from));
 
-                    let log = match std::fs::File::create(&log_path) {
+                    // create truncates log_path when it opens its job log
+                    let captured_output = match tempfile::tempfile() {
                         Ok(file) => file,
                         Err(e) => {
-                            tracing::error!("cannot write {}: {e}", log_path.display());
+                            tracing::error!("cannot create a file for the create output: {e}");
                             return;
                         }
                     };
-                    let log_for_stderr = match log.try_clone() {
-                        Ok(file) => file,
-                        Err(e) => {
-                            tracing::error!("cannot write {}: {e}", log_path.display());
-                            return;
-                        }
-                    };
+                    let (captured_stdout, captured_stderr) =
+                        match (captured_output.try_clone(), captured_output.try_clone()) {
+                            (Ok(stdout), Ok(stderr)) => (stdout, stderr),
+                            (Err(e), _) | (_, Err(e)) => {
+                                tracing::error!("cannot create a file for the create output: {e}");
+                                return;
+                            }
+                        };
+                    if let Err(e) = std::fs::remove_file(&log_path)
+                        && e.kind() != std::io::ErrorKind::NotFound
+                    {
+                        tracing::error!("cannot remove {}: {e}", log_path.display());
+                        return;
+                    }
 
                     tracing::info!(
                         "building {} from {}",
@@ -6379,10 +6409,11 @@ fn run() {
                     let started = std::time::Instant::now();
                     let outcome = std::process::Command::new(&executable)
                         .args(&arguments)
-                        .stdout(std::process::Stdio::from(log))
-                        .stderr(std::process::Stdio::from(log_for_stderr))
+                        .stdout(std::process::Stdio::from(captured_stdout))
+                        .stderr(std::process::Stdio::from(captured_stderr))
                         .status();
                     let elapsed_seconds = started.elapsed().as_secs_f64();
+                    append_captured_output(captured_output, &log_path);
 
                     let failure = match outcome {
                         Ok(status) if status.success() => None,

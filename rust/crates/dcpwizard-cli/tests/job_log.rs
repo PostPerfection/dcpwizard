@@ -10,7 +10,8 @@ const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 24;
 const FRAMES: u32 = 3;
-const LOG_NAME: &str = "dcpwizard.log";
+const LOG_NAME_INSIDE_THE_PACKAGE: &str = "dcpwizard.log";
+const FOREIGN_FILE_CODE: &str = "foreign_file_in_package";
 const DEVICE_WARNING: &str =
     "[ENCODE] WARNING: the GPU was requested and no frame ran on the device";
 
@@ -53,7 +54,7 @@ fn write_source(directory: &Path) -> PathBuf {
     path
 }
 
-fn create_and_read_log(source: &Path, out: &Path, config_home: &Path) -> String {
+fn create(source: &Path, out: &Path, config_home: &Path) {
     dcpwizard(config_home)
         .args([
             "create",
@@ -67,8 +68,37 @@ fn create_and_read_log(source: &Path, out: &Path, config_home: &Path) -> String 
         ])
         .assert()
         .success();
-    std::fs::read_to_string(out.join(LOG_NAME))
+}
+
+fn create_and_read_log(source: &Path, out: &Path, config_home: &Path) -> String {
+    create(source, out, config_home);
+    assert!(
+        !out.join(LOG_NAME_INSIDE_THE_PACKAGE).exists(),
+        "the job log has to stay out of the package folder"
+    );
+    std::fs::read_to_string(out.with_extension("log"))
         .unwrap_or_else(|e| panic!("the job log has to sit beside the package: {e}"))
+}
+
+#[test]
+fn dcpdoctor_finds_no_foreign_file_in_a_fresh_package() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+    create(&source, &out, config_home.path());
+
+    let verified = dcpwizard_core::verify::verify_dcp(&out);
+    assert!(verified.valid, "dcpdoctor errors: {:?}", verified.errors);
+    let foreign: Vec<&String> = verified
+        .warnings
+        .iter()
+        .filter(|warning| warning.contains(FOREIGN_FILE_CODE))
+        .collect();
+    assert!(
+        foreign.is_empty(),
+        "the package holds a file its ASSETMAP does not list: {foreign:?}"
+    );
 }
 
 #[test]

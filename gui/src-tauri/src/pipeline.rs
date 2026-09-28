@@ -2199,9 +2199,9 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     let pause = queue.pause_flag();
 
     let output = &job.output_dir;
+    let log_path = dcpwizard_core::job_log::job_log_path(output)?;
     std::fs::create_dir_all(output)
         .map_err(|e| format!("Cannot create the output folder {}: {e}", output.display()))?;
-    let log_path = output.join("dcpwizard.log");
     let log_file = Arc::new(Mutex::new(std::fs::File::create(&log_path).map_err(
         |e| format!("Cannot create the job log {}: {e}", log_path.display()),
     )?));

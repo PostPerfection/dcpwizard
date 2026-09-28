@@ -9,6 +9,7 @@
 ### Fixed
 - **`transcode` and `queue add import-video` keep the source frame rate**: every video was resampled to 24 fps, so a 25 fps master lost one frame a second, and now each source frame writes one still.
 - **`transcode` and `queue add import-video` refuse an image format they do not know**: an unknown format wrote TIFF, and now the job fails naming the formats it takes.
+- **The job log is written beside the package**: `create` and the GUI wrote `dcpwizard.log` inside the package folder, where the ASSETMAP does not list it, so dcpdoctor reported `foreign_file_in_package` on every package, and now the log is `<output>.log` next to the folder.
 - **An ASS override tag warning prints once per run**: the hints, the pre-build checks and the packaging each read the file and printed every dropped tag, and now the packaging or the burn prints it once, as `create --check` does.
 
 ## [1.4.0] - 2026-09-28

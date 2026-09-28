@@ -377,7 +377,7 @@ finds the plugin source under the shared `Grok/grok` workspace.
 
 A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
 
-**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it into the package folder. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
+**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it beside the package as `<output>.log`, so `--output /x/my_dcp` logs to `/x/my_dcp.log`. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
 
 ```bash
 dcpwizard --gpu create \
