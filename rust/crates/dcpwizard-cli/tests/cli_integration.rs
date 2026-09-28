@@ -1120,6 +1120,43 @@ fn create_refuses_a_subtitle_appearance_with_no_subtitle_track() {
         .stdout(predicate::str::contains("--subtitle"));
 }
 
+const DROPPED_OVERRIDE_TAG_WARNING: &str = "ASS override tag not modelled, dropped: \\pos";
+
+#[test]
+fn create_warns_once_about_a_dropped_ass_override_tag() {
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("hd.mp4");
+    write_test_video(&video, 1920, 1080);
+    let ass = dir.path().join("cues.ass");
+    std::fs::write(
+        &ass,
+        "[Script Info]\n[V4+ Styles]\nFormat: Name, Italic, Alignment\nStyle: Def,0,2\n\
+         [Events]\nFormat: Layer, Start, End, Style, Text\n\
+         Dialogue: 0,0:00:00.00,0:00:00.20,Def,{\\pos(1,1)}placed\n",
+    )
+    .unwrap();
+
+    let ass = ass.to_str().unwrap();
+    for extra in [
+        vec!["--check", "--subtitle", ass],
+        vec!["--check", "--burn-subtitle", ass],
+        vec!["--subtitle", ass],
+    ] {
+        let output = create_with(&dir, &video, &extra).output().unwrap();
+        assert!(output.status.success(), "{extra:?}: {output:?}");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            printed.matches(DROPPED_OVERRIDE_TAG_WARNING).count(),
+            1,
+            "{extra:?}: {printed}"
+        );
+    }
+}
+
 // ── create --check: the pre-build refusals and hints ─────────────────────────
 
 /// One SRT cue, so a test can place the first subtitle where it wants it.

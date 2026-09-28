@@ -999,8 +999,10 @@ dcpwizard/
 ```
 
 DCP Wizard shares common functionality with [IMF Wizard](https://github.com/PostPerfection/imfwizard)
-via the [postkit](https://github.com/PostPerfection/postkit) library (encoding, transcoding, hashing,
-job queue, preferences, REST API, and more).
+via the [postkit](https://github.com/PostPerfection/postkit) library (encoding, hashing, job queue,
+preferences, REST API, the watch folder loop, the cancellable ffmpeg transcode runner, and more).
+The DCP build each watched master starts stays in DCP Wizard, as does the frame extraction
+`transcode` runs through the shared ffmpeg runner.
 
 ## License
 

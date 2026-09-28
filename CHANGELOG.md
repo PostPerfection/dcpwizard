@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+- **`watch` and `transcode` run postkit's code**: the watch folder loop is `postkit::watch` and `transcode` runs ffmpeg through `postkit::transcode::run_ffmpeg_until_cancelled`, the same code IMF Wizard runs.
+- **The Windows release installs the msi too**: after the NSIS check, the release workflow uninstalls the NSIS install, installs the msi, checks it carries every staged dll and runs the sidecar from it, then uninstalls it.
+
+### Fixed
+- **`transcode` and `queue add import-video` keep the source frame rate**: every video was resampled to 24 fps, so a 25 fps master lost one frame a second, and now each source frame writes one still.
+- **`transcode` and `queue add import-video` refuse an image format they do not know**: an unknown format wrote TIFF, and now the job fails naming the formats it takes.
+- **An ASS override tag warning prints once per run**: the hints, the pre-build checks and the packaging each read the file and printed every dropped tag, and now the packaging or the burn prints it once, as `create --check` does.
+
 ## [1.4.0] - 2026-09-28
 
 ### Changed

@@ -188,6 +188,51 @@ jobs:
           & (Join-Path $installDirectory "dcpwizard.exe") --version
           if ($LASTEXITCODE -ne 0) { throw "the installed sidecar exited with $LASTEXITCODE" }
 
+      - name: The msi carries its dlls (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $nsisEntry = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+            Where-Object { $_.DisplayName -eq "DCP Wizard" } |
+            Select-Object -First 1
+          if ($null -eq $nsisEntry) { throw "NSIS installer was not registered" }
+          $uninstall = Start-Process -FilePath $nsisEntry.UninstallString.Trim('"') -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstaller exited with $($uninstall.ExitCode)" }
+          # the NSIS uninstaller returns before it removes the entry
+          foreach ($attempt in 1..30) {
+            $nsisEntry = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+              Where-Object { $_.DisplayName -eq "DCP Wizard" } |
+              Select-Object -First 1
+            if ($null -eq $nsisEntry) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($null -ne $nsisEntry) { throw "NSIS installer was still registered after uninstall" }
+          $installer = Get-ChildItem "gui/src-tauri/target/release/bundle/msi/*.msi" | Select-Object -First 1
+          if ($null -eq $installer) { throw "msi not found" }
+          $install = Start-Process -FilePath msiexec -ArgumentList "/i `"$($installer.FullName)`" /qn" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "msi exited with $($install.ExitCode)" }
+          $uninstallKeys = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $entry = Get-ItemProperty $uninstallKeys |
+            Where-Object { $_.DisplayName -eq "DCP Wizard" } |
+            Select-Object -First 1
+          if ($null -eq $entry) { throw "Installed application was not registered" }
+          $installDirectory = "$($entry.InstallLocation)".Trim('"')
+          if ($installDirectory -eq "") { $installDirectory = Split-Path ($entry.DisplayIcon -replace ',\d+$', '').Trim('"') }
+          foreach ($dll in Get-ChildItem gui/src-tauri/*.dll) {
+            if (-not (Test-Path (Join-Path $installDirectory $dll.Name))) { throw "the msi does not carry $($dll.Name)" }
+          }
+          $env:PATH = @("$env:SystemRoot\System32", $installDirectory) -join [IO.Path]::PathSeparator
+          & (Join-Path $installDirectory "dcpwizard.exe") --version
+          if ($LASTEXITCODE -ne 0) { throw "the installed sidecar exited with $LASTEXITCODE" }
+          $uninstall = Start-Process -FilePath msiexec -ArgumentList "/x `"$($installer.FullName)`" /qn" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "msi uninstall exited with $($uninstall.ExitCode)" }
+          $entry = Get-ItemProperty $uninstallKeys |
+            Where-Object { $_.DisplayName -eq "DCP Wizard" } |
+            Select-Object -First 1
+          if ($null -ne $entry) { throw "msi was still registered after uninstall" }
+
       # every check runs with the loader path setup-grok exported unset
       - name: The packages run without a grok install (Linux)
         if: runner.os == 'Linux'

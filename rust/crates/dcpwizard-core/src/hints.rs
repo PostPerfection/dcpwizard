@@ -445,7 +445,7 @@ fn read_cue_files(paths: [Option<&Path>; 2], fps: u32) -> Vec<SubtitleCues> {
         .into_iter()
         .flatten()
         .filter_map(|path| {
-            let cues = crate::subtitle::load_styled_cues(path, fps).ok()?;
+            let cues = crate::subtitle::load_styled_cues(path, fps).ok()?.cues;
             Some(SubtitleCues {
                 file: short_name(path),
                 cues: cues

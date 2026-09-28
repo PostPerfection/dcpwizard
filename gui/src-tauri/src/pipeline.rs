@@ -884,7 +884,7 @@ pub async fn submit_job(
             &source_colour,
             postkit::encode::detect_input_type(&video) == postkit::encode::InputType::J2kSequence,
         )?;
-        dcpwizard_core::subtitle::prepare_subtitle_burn(
+        dcpwizard_core::subtitle::check_subtitle_burn(
             Path::new(path),
             burn_subtitle_font.as_deref().map(Path::new),
             postkit::encode::FrameRate::whole(fps_num),

@@ -156,3 +156,73 @@ fn create_packages_every_image_sequence_format_the_readme_names() {
         }
     }
 }
+
+const TRANSCODE_FRAME_RATE: u32 = 25;
+const TRANSCODE_FRAMES: u32 = 50;
+const TRANSCODE_SIZE: &str = "64x64";
+
+fn write_transcode_master(directory: &Path) -> PathBuf {
+    let master = directory.join("master.mkv");
+    let seconds = f64::from(TRANSCODE_FRAMES) / f64::from(TRANSCODE_FRAME_RATE);
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+        .arg(format!(
+            "testsrc=size={TRANSCODE_SIZE}:rate={TRANSCODE_FRAME_RATE}:duration={seconds}"
+        ))
+        .args(["-c:v", "ffv1"])
+        .arg(&master)
+        .output()
+        .expect("ffmpeg has to run");
+    assert!(
+        made.status.success(),
+        "ffmpeg could not write the master: {}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    master
+}
+
+#[test]
+fn transcode_writes_one_still_per_source_frame_at_the_source_rate() {
+    let directory = TempDir::new().unwrap();
+    let master = write_transcode_master(directory.path());
+    let stills = directory.path().join("stills");
+
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .args(["transcode", "--input", master.to_str().unwrap()])
+        .args(["--output", stills.to_str().unwrap()])
+        .args(["--format", "png", "--bit-depth", "8"])
+        .assert()
+        .success();
+
+    let written = std::fs::read_dir(&stills)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "png"))
+        .count();
+    assert_eq!(
+        written, TRANSCODE_FRAMES as usize,
+        "a {TRANSCODE_FRAME_RATE} fps master was resampled"
+    );
+}
+
+#[test]
+fn transcode_refuses_an_image_format_it_does_not_know() {
+    let directory = TempDir::new().unwrap();
+    let master = write_transcode_master(directory.path());
+    let stills = directory.path().join("stills");
+
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .args(["transcode", "--input", master.to_str().unwrap()])
+        .args(["--output", stills.to_str().unwrap()])
+        .args(["--format", "jpeg2000"])
+        .assert()
+        .failure();
+
+    assert!(
+        !stills.exists(),
+        "a refused format still wrote {}",
+        stills.display()
+    );
+}

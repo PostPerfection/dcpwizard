@@ -84,7 +84,6 @@ pub mod verify;
 pub mod version_tracker;
 pub mod versions;
 pub mod vf;
-pub mod watch;
 pub mod watermark;
 pub mod webhook;
 

@@ -70,7 +70,7 @@ fn preview_cues(
     if input.is_dir() || PACKAGED_EXTENSIONS.contains(&extension) {
         return extract_track_cues(input, track);
     }
-    let styled = crate::subtitle::load_styled_cues(input, fps)?;
+    let styled = crate::subtitle::load_styled_cues(input, fps)?.cues;
     Ok(styled
         .iter()
         .filter_map(|cue| {

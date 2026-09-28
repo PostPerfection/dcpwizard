@@ -196,6 +196,22 @@ const PLAN_CHECKS: [PlanCheck; 24] = [
     check_resume,
 ];
 
+pub fn warn_dropped_override_tags_in_plan(plan: &CreatePlan) {
+    for path in [
+        plan.subtitle.as_deref(),
+        plan.burn_subtitle.as_deref(),
+        plan.ccap.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        // a file that does not parse is already a refusal
+        if let Ok(parsed) = crate::subtitle::load_styled_cues(path, plan.fps) {
+            crate::subtitle::warn_dropped_override_tags(&parsed.dropped_override_tags);
+        }
+    }
+}
+
 pub fn check_before_encode(plan: &CreatePlan) -> Result<(), Vec<String>> {
     let refusals: Vec<String> = PLAN_CHECKS
         .iter()
@@ -362,13 +378,12 @@ fn check_burn(plan: &CreatePlan) -> Result<(), String> {
         &plan.source_colour,
         plan.is_codestreams(),
     )?;
-    crate::subtitle::prepare_subtitle_burn(
+    crate::subtitle::check_subtitle_burn(
         burn,
         plan.burn_subtitle_font.as_deref(),
         postkit::encode::FrameRate::whole(plan.fps),
         &plan.burn_style,
     )
-    .map(|_| ())
 }
 
 fn check_stereo_hdr_dci(plan: &CreatePlan) -> Result<(), String> {

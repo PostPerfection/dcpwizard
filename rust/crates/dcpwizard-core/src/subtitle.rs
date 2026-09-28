@@ -307,10 +307,22 @@ fn read_head(path: &Path, n: usize) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&buf[..read]).into_owned())
 }
 
+pub struct ParsedCueFile {
+    pub cues: Vec<StyledCue>,
+    pub dropped_override_tags: Vec<String>,
+}
+
+pub fn warn_dropped_override_tags(tags: &[String]) {
+    for tag in tags {
+        tracing::warn!("ASS override tag not modelled, dropped: {tag}");
+    }
+}
+
 /// Load any styled subtitle format into `StyledCue`s. Not for the SMPTE-DCST
 /// pass-through kind (that XML is wrapped unchanged, never parsed to cues here).
-pub fn load_styled_cues(path: &Path, fps: u32) -> Result<Vec<StyledCue>, String> {
+pub fn load_styled_cues(path: &Path, fps: u32) -> Result<ParsedCueFile, String> {
     let kind = detect_subtitle_kind(path)?;
+    let mut dropped_override_tags = Vec::new();
     let cues = match kind {
         SubtitleInputKind::Srt => {
             let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -323,9 +335,7 @@ pub fn load_styled_cues(path: &Path, fps: u32) -> Result<Vec<StyledCue>, String>
         SubtitleInputKind::Ass => {
             let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
             let parsed = subtitle_formats::ass::parse_ass(&content).map_err(|e| e.to_string())?;
-            for w in &parsed.warnings {
-                tracing::warn!("ASS override tag not modelled, dropped: {w}");
-            }
+            dropped_override_tags = parsed.warnings;
             parsed.cues
         }
         SubtitleInputKind::Pac => {
@@ -351,7 +361,10 @@ pub fn load_styled_cues(path: &Path, fps: u32) -> Result<Vec<StyledCue>, String>
     if cues.is_empty() {
         return Err(format!("no subtitle cues in {}", path.display()));
     }
-    Ok(cues)
+    Ok(ParsedCueFile {
+        cues,
+        dropped_override_tags,
+    })
 }
 
 /// Prepare `create --burn-subtitle`: parse the cue file and build the burn the
@@ -367,6 +380,31 @@ pub fn prepare_subtitle_burn(
     fps: postkit::encode::FrameRate,
     style: &BurnStyleOverrides,
 ) -> Result<std::sync::Arc<postkit::subtitle_raster::SubtitleBurn>, String> {
+    let built = build_subtitle_burn(input, font, fps, style)?;
+    warn_dropped_override_tags(&built.dropped_override_tags);
+    Ok(built.burn)
+}
+
+pub fn check_subtitle_burn(
+    input: &Path,
+    font: Option<&Path>,
+    fps: postkit::encode::FrameRate,
+    style: &BurnStyleOverrides,
+) -> Result<(), String> {
+    build_subtitle_burn(input, font, fps, style).map(|_| ())
+}
+
+struct BuiltSubtitleBurn {
+    burn: std::sync::Arc<postkit::subtitle_raster::SubtitleBurn>,
+    dropped_override_tags: Vec<String>,
+}
+
+fn build_subtitle_burn(
+    input: &Path,
+    font: Option<&Path>,
+    fps: postkit::encode::FrameRate,
+    style: &BurnStyleOverrides,
+) -> Result<BuiltSubtitleBurn, String> {
     if detect_subtitle_kind(input)? == SubtitleInputKind::SmpteDcstPassthrough {
         return Err(format!(
             "{} is SMPTE DCST XML, which has no cue reader here: burn from the SRT, ASS, PAC, \
@@ -383,10 +421,13 @@ pub fn prepare_subtitle_burn(
         .apply(BurnStyle::default())
         .map_err(|e| format!("burn-in appearance: {e}"))?;
     // a frame-timed cue file is read against the DCP edit rate, which is whole
-    let cues = load_styled_cues(input, fps.as_f64().round() as u32)?;
-    postkit::subtitle_raster::SubtitleBurn::new(cues, font, style, fps.as_f64())
-        .map(std::sync::Arc::new)
-        .map_err(|e| format!("cannot burn {}: {e}", input.display()))
+    let parsed = load_styled_cues(input, fps.as_f64().round() as u32)?;
+    let burn = postkit::subtitle_raster::SubtitleBurn::new(parsed.cues, font, style, fps.as_f64())
+        .map_err(|e| format!("cannot burn {}: {e}", input.display()))?;
+    Ok(BuiltSubtitleBurn {
+        burn: std::sync::Arc::new(burn),
+        dropped_override_tags: parsed.dropped_override_tags,
+    })
 }
 
 /// Read a timed-text input the way the wrap will, so a file the packager cannot
@@ -439,7 +480,9 @@ pub fn prepare_subtitle_track(
     opts: &SubtitleOptions,
     out: &Path,
 ) -> Result<PreparedSubtitle, String> {
-    let mut cues = apply_source_trim(&load_styled_cues(input, fps)?, timing.trim, fps);
+    let parsed = load_styled_cues(input, fps)?;
+    warn_dropped_override_tags(&parsed.dropped_override_tags);
+    let mut cues = apply_source_trim(&parsed.cues, timing.trim, fps);
 
     // wrap first (adds '\n'), then RTL reorder each line to visual order
     if let Some(cols) = opts.wrap_cols.filter(|c| *c > 0) {
@@ -605,7 +648,9 @@ pub fn plan_reel_subtitles(
             "reel splitting cannot re-time a supplied SMPTE subtitle XML; supply SRT or a parsable format".into(),
         );
     }
-    let mut cues = apply_source_trim(&load_styled_cues(input, fps)?, trim, fps);
+    let parsed = load_styled_cues(input, fps)?;
+    warn_dropped_override_tags(&parsed.dropped_override_tags);
+    let mut cues = apply_source_trim(&parsed.cues, trim, fps);
     if let Some(cols) = opts.wrap_cols.filter(|c| *c > 0) {
         cues = cues
             .iter()

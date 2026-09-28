@@ -593,7 +593,7 @@ fn watermark_font_size_help() -> String {
 
 fn burn_font_size_help() -> String {
     format!(
-        "Burn-in text height as a percent of the frame height (default {:.1})",
+        "Burn-in text height as a percent of the frame height (default {:.2})",
         postkit::subtitle_raster::DEFAULT_FONT_SIZE_RATIO * RATIO_TO_PERCENT
     )
 }
@@ -1313,7 +1313,7 @@ enum Commands {
         /// Output directory
         #[arg(short, long)]
         output: String,
-        /// Image format: tiff (default), dpx, exr, png
+        /// Image format: tiff (default), dpx, exr, png, bmp
         #[arg(long, default_value = "tiff")]
         format: String,
         /// Bit depth: 16 (default), 10, or 8
@@ -1590,9 +1590,9 @@ enum Commands {
         /// Seconds between polls
         #[arg(
             long,
-            default_value_t = dcpwizard_core::watch::DEFAULT_POLL_INTERVAL_SECONDS,
+            default_value_t = postkit::watch::DEFAULT_POLL_INTERVAL_SECONDS,
             value_parser = clap::value_parser!(u64).range(
-                dcpwizard_core::watch::MINIMUM_POLL_INTERVAL_SECONDS..
+                postkit::watch::MINIMUM_POLL_INTERVAL_SECONDS..
             )
         )]
         interval: u64,
@@ -4582,6 +4582,9 @@ fn run() {
                     hints.len()
                 };
             if check {
+                if let Some(plan) = &plan {
+                    dcpwizard_core::preflight::warn_dropped_override_tags_in_plan(plan);
+                }
                 let hint_count = plan.map_or(0, |plan| {
                     print_hints(std::thread::spawn(move || {
                         dcpwizard_core::hints::gather_hints(&plan)
@@ -6230,10 +6233,11 @@ fn run() {
             interval,
             create_arguments,
         } => {
-            use dcpwizard_core::watch::{
+            use postkit::watch::{
                 AUDIO_SIDECAR_EXTENSION, DONE_DIRECTORY_NAME, FAILED_DIRECTORY_NAME,
-                SUBTITLE_SIDECAR_EXTENSION,
             };
+
+            const SUBTITLE_SIDECAR_EXTENSION: &str = "srt";
 
             fn free_destination(directory: &Path, file_name: &str) -> PathBuf {
                 let taken = directory.join(file_name);
@@ -6316,7 +6320,7 @@ fn run() {
                 ..Default::default()
             });
 
-            dcpwizard_core::watch::watch_directory(
+            postkit::watch::watch_directory(
                 &watch_dir,
                 std::time::Duration::from_secs(interval),
                 &|| false,

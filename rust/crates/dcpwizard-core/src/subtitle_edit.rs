@@ -16,7 +16,7 @@ pub struct EditCue {
 /// plain text). A supplied SMPTE DCST XML is rejected: this edits source files,
 /// not finished timed-text tracks.
 pub fn load(path: &Path, fps: u32) -> Result<Vec<EditCue>, String> {
-    let cues = crate::subtitle::load_styled_cues(path, fps)?;
+    let cues = crate::subtitle::load_styled_cues(path, fps)?.cues;
     Ok(cues
         .iter()
         .map(|c| EditCue {

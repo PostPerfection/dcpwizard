@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 /// Transcode configuration for video to image sequence conversion.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -20,28 +21,22 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
         return -1;
     }
 
-    if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
-        tracing::error!("Failed to create output directory: {e}");
-        return -1;
-    }
-
     let ext = match config.image_format.as_str() {
         "dpx" => "dpx",
         "exr" => "exr",
         "png" => "png",
         "bmp" => "bmp",
-        "tiff" | "tif" | "" => "tiff",
+        "tiff" | "tif" => "tiff",
         other => {
-            tracing::warn!("Unknown image format '{other}', defaulting to tiff");
-            "tiff"
+            tracing::error!("Unknown image format '{other}', use tiff, dpx, exr, png or bmp");
+            return -1;
         }
     };
 
-    let fps = if config.target_fps == 0 {
-        24
-    } else {
-        config.target_fps
-    };
+    if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
+        tracing::error!("Failed to create output directory: {e}");
+        return -1;
+    }
 
     let pattern = config.output_dir.join(format!("frame_%08d.{ext}"));
 
@@ -56,7 +51,9 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
             config.target_width, config.target_height
         ));
     }
-    filters.push(format!("fps={fps}"));
+    if config.target_fps > 0 {
+        filters.push(format!("fps={}", config.target_fps));
+    }
 
     if !filters.is_empty() {
         cmd.arg("-vf").arg(filters.join(","));
@@ -72,10 +69,9 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
     cmd.arg("-an");
     cmd.arg(&pattern);
 
-    let result = cmd.output();
-
-    match result {
-        Ok(o) if o.status.success() => {
+    let never_cancelled = AtomicBool::new(false);
+    match postkit::transcode::run_ffmpeg_until_cancelled(cmd, &pattern, &never_cancelled) {
+        Ok(()) => {
             let frame_count = std::fs::read_dir(&config.output_dir)
                 .into_iter()
                 .flatten()
@@ -93,15 +89,8 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
             );
             0
         }
-        Ok(o) => {
-            tracing::error!(
-                "ffmpeg transcode failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
-            -1
-        }
         Err(e) => {
-            tracing::error!("Failed to run ffmpeg: {e}");
+            tracing::error!("ffmpeg transcode failed: {e}");
             -1
         }
     }
