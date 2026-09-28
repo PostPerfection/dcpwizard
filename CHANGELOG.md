@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [1.4.0] - 2026-09-28
+
 ### Changed
 - **`create` no longer takes `-j/--threads`**: the flag was parsed and ignored, and the encoder runs one thread per available core whatever it was set to.
 - **`cert-fetch` takes the vendor password from a file or the environment**: `--password-file <path>` reads the password from the file's first line, and without it the password comes from `DCPWIZARD_VENDOR_PASSWORD`. `--password` is refused with a message naming both, because a password on the command line shows in `ps` and in shell history.
