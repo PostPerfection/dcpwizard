@@ -1032,9 +1032,6 @@ enum Commands {
         /// Picture container: 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, or 4k-full
         #[arg(long)]
         container: Option<String>,
-        /// Number of encoding threads (default: auto-detect CPU count)
-        #[arg(short = 'j', long)]
-        threads: Option<u32>,
         /// J2K bandwidth in Mbit/s (default: 250 for 2K, 500 for 4K)
         #[arg(long)]
         video_bit_rate: Option<u32>,
@@ -4036,7 +4033,6 @@ fn run() {
             twok,
             fourk,
             container,
-            threads,
             video_bit_rate,
             quality_psnr,
             reel_length,
@@ -4944,8 +4940,6 @@ fn run() {
                     ),
                     (None, _, _) => {}
                 }
-
-                let _num_threads = threads.unwrap_or(0); // reserved for future use
 
                 let params = CompressParams {
                     compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,

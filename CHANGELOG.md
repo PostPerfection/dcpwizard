@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **`create` no longer takes `-j/--threads`**: the flag was parsed and ignored, and the encoder runs one thread per available core whatever it was set to.
 - **`cert-fetch` takes the vendor password from a file or the environment**: `--password-file <path>` reads the password from the file's first line, and without it the password comes from `DCPWIZARD_VENDOR_PASSWORD`. `--password` is refused with a message naming both, because a password on the command line shows in `ps` and in shell history.
 - **The deb and rpm pull in the tools the app runs**: ffmpeg, xmlsec1, xmllint and curl are declared as package dependencies, so a package install no longer leaves imports and verification without them.
 - **Builds against grok v20.4.12**: the CLI archives, the desktop packages, the Docker image and CI carry grok v20.4.12.
