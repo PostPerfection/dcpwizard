@@ -3,13 +3,10 @@ targets = []
 all-features = true
 
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = "workspace"
 yanked = "deny"
-notice = "warn"
 
 [licenses]
-unlicensed = "deny"
 allow = [
     "AGPL-3.0-or-later",
     "AGPL-3.0-only",
@@ -22,8 +19,12 @@ allow = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "OpenSSL",
+    "0BSD",  # quoted_printable
+    "CC0-1.0",  # notify, ppmd-rust
+    "MPL-2.0",  # option-ext
+    "bzip2-1.0.6",  # libbz2-rs-sys
+    "CDLA-Permissive-2.0",  # webpki-roots
 ]
-copyleft = "deny"
 
 [[licenses.clarify]]
 name = "ring"
