@@ -121,16 +121,7 @@ jobs:
             done
             patchelf --set-rpath '$ORIGIN/lib' dist/${{ matrix.binary }}
           else
-            for reference in $(otool -L dist/${{ matrix.binary }} | awk '/libgrok/ {print $1}'); do
-              name=$(basename "$reference")
-              cp -L "$GROK_LIB/$name" "dist/lib/$name"
-              install_name_tool -id "@rpath/$name" "dist/lib/$name"
-              install_name_tool -change "$reference" "@rpath/$name" dist/${{ matrix.binary }}
-              codesign --force --sign - "dist/lib/$name"
-            done
-            install_name_tool -add_rpath '@loader_path/lib' dist/${{ matrix.binary }}
-            # every install_name_tool edit breaks the signature arm64 requires
-            codesign --force --sign - dist/${{ matrix.binary }}
+            scripts/bundle-macos-cli-libraries.sh dist/${{ matrix.binary }} dist/lib "$GROK_LIB"
           fi
           tar -czf ${{ matrix.artifact }}.tar.gz -C dist .
 
@@ -139,8 +130,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist
           Copy-Item "rust/target/release/${{ matrix.binary }}" "dist/"
-          # the exe links grokj2k.dll at load time, so ship it alongside
-          Copy-Item "$env:GITHUB_WORKSPACE/grok-install/bin/grokj2k.dll" "dist/"
+          # the exe links grokj2k.dll and the vcpkg libraries at load time, so ship them alongside
+          ./scripts/bundle-windows-cli-dlls.ps1 -Binary "dist/${{ matrix.binary }}" `
+            -SearchDirectories "$env:GITHUB_WORKSPACE/grok-install/bin", "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin"
           Compress-Archive -Path "dist/*" -DestinationPath "${{ matrix.artifact }}.zip"
 
       # what a user does with the download: unpack it and run it, with nothing
@@ -153,6 +145,19 @@ jobs:
           mkdir -p unpacked
           tar -xzf ${{ matrix.artifact }}.tar.gz -C unpacked
           cd unpacked
+          if [ "$RUNNER_OS" = "macOS" ]
+          then
+            for file in ./${{ matrix.binary }} lib/*.dylib
+            do
+              otool -L "$file"
+              # a Mac without Homebrew has only /usr/lib and /System
+              if otool -L "$file" | awk 'NR > 1 {print $1}' | grep -vE '^(/usr/lib/|/System/|@rpath/|@loader_path/)'
+              then
+                echo "$file loads a library from outside the archive"
+                exit 1
+              fi
+            done
+          fi
           env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH \
             ./${{ matrix.binary }} --version
 
@@ -161,7 +166,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path unpacked
           Expand-Archive -Path "${{ matrix.artifact }}.zip" -DestinationPath unpacked
+          # the runner's System32 has the VC++ runtime, which hides a missing copy from the run below
+          foreach ($runtime in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            if (-not (Test-Path (Join-Path unpacked $runtime))) { throw "the archive does not carry $runtime" }
+          }
+          # setup-grok puts grok-install/bin on PATH, which a user's machine does not have
+          $env:PATH = @("$env:SystemRoot\System32", (Resolve-Path unpacked).Path) -join [IO.Path]::PathSeparator
           & "unpacked/${{ matrix.binary }}" --version
+          if ($LASTEXITCODE -ne 0) { throw "the unpacked archive exited with $LASTEXITCODE" }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -186,7 +198,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev
+          sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev patchelf
           cargo install cargo-deb
 
       - name: Setup grok
@@ -194,11 +206,53 @@ jobs:
         with:
           grok-ref: v20.4.12
 
-      - name: Build .deb package
+      - name: Build release
         working-directory: rust
         env:
           OPENSSL_STATIC: "1"
-        run: cargo deb -p dcpwizard-cli
+        run: cargo build --release -p dcpwizard-cli
+
+      # the deb carries libgrokj2k at /usr/lib/dcpwizard, like the desktop deb and rpm
+      - name: Bundle libgrokj2k
+        shell: bash
+        run: |
+          set -euo pipefail
+          for candidate in "$GITHUB_WORKSPACE/grok-install/lib64" "$GITHUB_WORKSPACE/grok-install/lib"
+          do
+            if [ -f "$candidate/libgrokj2k.so.1" ]
+            then
+              GROK_LIB="$candidate"
+              break
+            fi
+          done
+          if [ -z "${GROK_LIB:-}" ]
+          then
+            echo "no libgrokj2k.so.1 under grok-install/lib64 or grok-install/lib"
+            exit 1
+          fi
+          cp -L "$GROK_LIB/libgrokj2k.so.1" rust/target/release/libgrokj2k.so.1
+          # strip run after patchelf can corrupt the binary, so cargo deb gets --no-strip
+          strip rust/target/release/dcpwizard
+          patchelf --set-rpath /usr/lib/dcpwizard rust/target/release/dcpwizard
+
+      - name: Build .deb package
+        working-directory: rust
+        run: cargo deb -p dcpwizard-cli --no-build --no-strip
+
+      # setup-grok's LD_LIBRARY_PATH would find a libgrokj2k the package does not carry
+      - name: Test installed CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(realpath "$(find rust/target/debian -name '*.deb' -print -quit)")
+          dpkg-deb -f "$package" Depends
+          sudo apt-get install -y "$package"
+          env -u LD_LIBRARY_PATH dcpwizard --version
+          env -u LD_LIBRARY_PATH ldd /usr/bin/dcpwizard
+          env -u LD_LIBRARY_PATH ldd /usr/bin/dcpwizard | grep -F "libgrokj2k.so.1 => /usr/lib/dcpwizard/libgrokj2k.so.1"
+          # the runner already has every library the package depends on, a clean image does not
+          docker run --rm -v "$package:/tmp/dcpwizard.deb:ro" ubuntu:24.04 bash -euo pipefail -c \
+            'apt-get update && apt-get install -y --no-install-recommends /tmp/dcpwizard.deb && dcpwizard --version'
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4

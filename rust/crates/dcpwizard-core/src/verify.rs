@@ -88,12 +88,22 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
     };
 
     let report = dcpdoctor_core::verify(dcp_dir, &opts);
+    verify_result_from_notes(&report.notes)
+}
 
+pub fn check_bv21_profile(dcp_dir: &Path) -> VerifyResult {
+    let standard = dcpdoctor_core::dcp::detect_standard(dcp_dir);
+    verify_result_from_notes(&dcpdoctor_core::advanced::check_bv21_compliance(
+        dcp_dir, standard,
+    ))
+}
+
+fn verify_result_from_notes(notes: &[dcpdoctor_core::Note]) -> VerifyResult {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let mut info = Vec::new();
 
-    for note in &report.notes {
+    for note in notes {
         match note.severity {
             dcpdoctor_core::Severity::Error => errors.push(note.to_string()),
             dcpdoctor_core::Severity::Warning => warnings.push(note.to_string()),
@@ -102,7 +112,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
     }
 
     VerifyResult {
-        valid: report.ok(),
+        valid: errors.is_empty(),
         errors,
         warnings,
         info,

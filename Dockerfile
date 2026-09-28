@@ -1,9 +1,9 @@
 # Headless dcpwizard. Build: docker build -t dcpwizard .
 # Create:   docker run -v /path/to/media:/data dcpwizard create --title "My Film" --video /data/master.mov --output /data/out
-# REST API: docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --bind 0.0.0.0:8080
+# REST API: docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --bind 0.0.0.0:8080 --api-key <key>
 # Watch:    docker run -v /path/to/incoming:/in -v /path/to/out:/out dcpwizard watch /in --output /out
 
-ARG GROK_REF=v20.4.11
+ARG GROK_REF=v20.4.12
 ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
 
 FROM ubuntu:24.04 AS grok

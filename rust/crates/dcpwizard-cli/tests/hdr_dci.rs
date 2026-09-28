@@ -271,6 +271,34 @@ fn the_hdr_source_flags_refuse_what_they_cannot_deliver() {
 }
 
 #[test]
+fn hdr10plus_names_the_grade_and_hdr10_plus_still_parses() {
+    let dir = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let master = hdr10_master(dir.path());
+    let out = dir.path().join("checked");
+
+    for spelling in ["hdr10plus", "hdr10-plus"] {
+        dcpwizard(config_home.path())
+            .args([
+                "create",
+                "--title",
+                "T",
+                "--video",
+                master.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+                "--hdr-dci",
+                "--hdr-source",
+                spelling,
+                "--check",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("hdr10plus master"));
+    }
+}
+
+#[test]
 fn a_master_with_no_dolby_vision_rpu_is_refused_by_name() {
     let dir = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();

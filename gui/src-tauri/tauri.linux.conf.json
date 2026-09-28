@@ -12,6 +12,15 @@
           "libxml2-utils",
           "curl"
         ],
+        "provides": [
+          "dcpwizard"
+        ],
+        "conflicts": [
+          "dcpwizard"
+        ],
+        "replaces": [
+          "dcpwizard"
+        ],
         "files": {
           "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1"
         }

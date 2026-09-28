@@ -2,6 +2,7 @@
 //! which every app in the family shares; only the config file is ours, because
 //! its path carries our name.
 
+use crate::email::toml_error_without_values;
 use std::path::{Path, PathBuf};
 
 pub use postkit::tms::{TmsConfig, upload_package};
@@ -22,7 +23,12 @@ pub fn load_config(path: &Path) -> Result<TmsConfig, String> {
 }
 
 fn parse_config(text: &str) -> Result<TmsConfig, String> {
-    let config: TmsConfig = toml::from_str(text).map_err(|e| format!("invalid tms config: {e}"))?;
+    let config: TmsConfig = toml::from_str(text).map_err(|e| {
+        format!(
+            "invalid tms config: {}",
+            toml_error_without_values(text, &e)
+        )
+    })?;
     config.validate()?;
     Ok(config)
 }
@@ -75,5 +81,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("invalid tms config"), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_secret_line_is_named_by_line_without_its_value() {
+        for secret_line in [
+            "password = hunter2",
+            "password = 1234",
+            "private_key_passphrase = 1234",
+        ] {
+            let text = format!(
+                "protocol = \"sftp\"\nhost = \"tms.cinema.test\"\npath = \"/dcp\"\nuser = \"projectionist\"\n{secret_line}\n"
+            );
+            let error = parse_config(&text).unwrap_err();
+            assert!(!error.contains("hunter2"), "{error}");
+            assert!(!error.contains("1234"), "{error}");
+            assert!(error.contains("line 5"), "{error}");
+        }
     }
 }

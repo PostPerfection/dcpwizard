@@ -1061,6 +1061,9 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         geometry: job_geometry(job),
         trim_start_frames: job.trim_start_frames,
         trim_end_frames: job.trim_end_frames,
+        video_fade_in_seconds: None,
+        video_fade_out_seconds: None,
+        forces_input_range: false,
         pad_head_frames: pad_frames(&job.pad_head),
         pad_tail_frames: pad_frames(&job.pad_tail),
         audio: job
@@ -1072,6 +1075,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         upmix: job.upmix.is_some(),
         audio_channels: job.audio_channels,
         audio_language: job.naming.audio_language.clone(),
+        loudness_target: job.loudness_target.clone(),
         subtitle: job.subtitle.as_ref().map(PathBuf::from),
         ccap: job.ccap.as_ref().map(PathBuf::from),
         burn_subtitle: job.burn_subtitle.as_ref().map(PathBuf::from),
@@ -1079,6 +1083,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         burn_style: job.burn_style.clone(),
         source_colourspace: job.source_colourspace,
         source_colour: job.source_colour.clone(),
+        allow_generic_hdr_tonemap: job.allow_generic_hdr_tonemap,
         atmos: job.atmos.as_ref().map(PathBuf::from),
         // the panel places no markers, so a composition gets the default pair
         markers: Vec::new(),
@@ -1093,6 +1098,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         reel_length_minutes: job.reel_length_minutes,
         reel_split_frames: job.reel_split_frames.clone(),
         library_items: job.head_items.len() + job.tail_items.len(),
+        output: job.output_dir.clone(),
+        resume: false,
     }
 }
 
@@ -1111,7 +1118,8 @@ fn checked_job_plan(
         plan.four_k = dcpwizard_core::Resolution::for_raster(picture.raster.0, picture.raster.1)
             == dcpwizard_core::Resolution::FourK;
     }
-    dcpwizard_core::preflight::check_before_encode(&plan)?;
+    dcpwizard_core::preflight::check_before_encode(&plan)
+        .map_err(|refusals| refusals.join("\n"))?;
     Ok((plan, planned_picture))
 }
 
@@ -2292,11 +2300,11 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         );
     }
 
-    let dci_codestream_byte_cap = if job.hdr_dci {
-        dcpwizard_core::hdr::hdr_codestream_byte_cap(fps_num)
-    } else {
-        postkit::j2k::dci_codestream_byte_cap(fps_num)
-    };
+    let dci_codestream_byte_cap = dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(
+        fps_num,
+        job.hdr_dci,
+        job.right_eye.is_some(),
+    );
     // under a PSNR target the bandwidth is a ceiling per frame rather than what
     // the allocation aims at
     let codestream_byte_cap = match job.quality_psnr {

@@ -9,6 +9,8 @@ const FRAMES: u32 = 3;
 
 const PASSED_LINE: &str = "DCP verification PASSED";
 const SKIP_LINE: &str = "--no-verify: the finished package was not verified";
+const BV21_SECTION_LINE: &str = "Bv2.1 profile check:";
+const BV21_EXTENSION_METADATA_NOTE: &str = "BV2.1 recommends ExtensionMetadata in CPL";
 
 fn dcpwizard(config_home: &Path) -> Command {
     let mut command = Command::cargo_bin("dcpwizard").unwrap();
@@ -103,4 +105,35 @@ fn no_verify_says_the_package_went_out_unread() {
         !printed.contains(PASSED_LINE),
         "nothing was verified, so nothing passed: {printed}"
     );
+}
+
+#[test]
+fn verify_strict_runs_the_bv21_profile_check() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+    assert!(
+        create(&source, &out, config_home.path(), &["--no-verify"])
+            .status
+            .success()
+    );
+
+    let verify = |extra: &[&str]| {
+        dcpwizard(config_home.path())
+            .arg("verify")
+            .args(extra)
+            .arg(&out)
+            .output()
+            .expect("dcpwizard has to run")
+    };
+
+    let strict = verify(&["--strict"]);
+    let printed = everything_printed(&strict);
+    assert!(strict.status.success(), "{printed}");
+    assert!(printed.contains(BV21_SECTION_LINE), "{printed}");
+    assert!(printed.contains(BV21_EXTENSION_METADATA_NOTE), "{printed}");
+
+    let plain = everything_printed(&verify(&[]));
+    assert!(!plain.contains(BV21_SECTION_LINE), "{plain}");
 }

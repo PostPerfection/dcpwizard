@@ -33,7 +33,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Still images** via `create --video <image> --still-length <dur>`: one image held for a duration, encoded once and repeated
 - **Source colour space** via `create --source-colourspace rec709|p3|rec2020|xyz|logc` (default `rec709`), declaring what the source carries; P3, Rec.2020 and ARRI LogC3 are converted to X'Y'Z' during the encode
 - **Input decode range** override via `create --input-range full|legal`, correcting wrong or absent source range flags
-- **High Bitrate (HBR)**, up to 500 Mbps for demanding content
+- **Picture bandwidth** via `--video-bit-rate`, held to the DCI cap of 250 Mbit/s (1,302,083 bytes a frame at 24 fps), 450 Mbit/s with `--hdr-dci`
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **Multi-version packages** via `create --versions <file>`: one package with several CPLs sharing the same picture/sound essence, differing by subtitle and/or audio track (multiple language versions over one master)
 - **Multi-composition packages** via `create-multi --compositions <manifest>`: one CPL per manifest entry, each with its own picture/sound/subtitle, over one shared PKL/ASSETMAP
@@ -52,7 +52,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **JPEG 2000 encoding** via Grok (create, pipeline, and DCP transcode paths)
 - **CPU encoding** on all available cores. GPU encoding needs Grok's accelerator plugin, a commercial product sold separately, see [GPU builds](#gpu-builds)
 - **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV
-- **Video transcoding**, ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
+- **Video transcoding**, ProRes, H.264, H.265 and DNxHR are decoded by ffmpeg straight into the J2K encode
 - **Image sequence input**, DPX, TIFF, EXR, PNG, JPEG, BMP
 - **Scale / Crop / Letterbox**, target resolution adaptation
 - **Colour conversion** to XYZ (DCI, gamma 2.6)
@@ -81,13 +81,13 @@ Free and open-source alternative to easyDCP Creator+.
 - **Subtitle editing** on standalone files via `subtitle-edit`: `--list` cues, `--shift-ms` all cues, or `--index N` with `--text` / `--set-start-ms`+`--set-end-ms`, written back as SRT (it edits source files, never subtitles inside a finished DCP)
 - **Subtitle extraction** from a DCP or subtitle asset back to `.srt` (timed) or `.txt` (text only) via `subtitle-extract`; reads MXF-wrapped ST 428-7 and loose SMPTE/Interop XML, concatenating reels with their timeline offsets
 - **Multilingual subtitles** with RFC 5646 language tags
-- **Burn-in during the encode** via `create --burn-subtitle <file>` (+ `--burn-subtitle-font <ttf/otf>`): the cues are drawn into the picture as it encodes, so a burnt festival print costs one generation rather than two. Takes the same formats `--subtitle` does, and covers video, image sequences and held stills. Burnt text is part of the image and registers no timed-text track; the same file cannot be both, and burning onto an already-X'Y'Z' source or a J2K directory is refused
+- **Burn-in during the encode** via `create --burn-subtitle <file>` (+ `--burn-subtitle-font <ttf/otf>`): the cues are drawn into the picture as it encodes, so a burnt festival print costs one generation rather than two. Takes SRT, ASS/SSA, PAC, MKS, FCPXML and Interop DCSubtitle, not a supplied SMPTE DCST, and covers video, image sequences and held stills. Burnt text is part of the image and registers no timed-text track; the same file cannot be both, and burning onto an already-X'Y'Z' source or a J2K directory is refused
 - **Burn-in appearance** on `create`: `--burn-font-size <pct of frame height>`, `--burn-colour <RRGGBB[AA]>`, `--burn-effect none|outline|shadow`, `--burn-effect-colour <RRGGBB[AA]>`, `--burn-outline-width <pct of text height>`, `--burn-line-height <multiple of text height>`, `--burn-margin <pct of frame height>`, `--burn-x-scale`, `--burn-y-scale`, `--burn-fade-up <ms>` and `--burn-fade-down <ms>`. Each is laid over postkit's burn defaults, so an unnamed one keeps the value it always had. Any of them without `--burn-subtitle` is refused by name
 - **Subtitle burn-in as a standalone pass** via `burnin`, for a review copy rather than a package: it writes a video file, so a DCP burn goes through `create --burn-subtitle` instead of this. `--font-size`, `--colour <RRGGBB>` and `--position top|center|bottom` style the cues, and `--video-codec <encoder>` with `--crf <n>` name the output encoder and its quality rather than leaving both to ffmpeg's guess from the output file name: `--video-codec libx264 --crf 0` writes a lossless copy
 
 ### Audio
 - **PCM audio wrapping** (48 kHz)
-- **Loudness measurement**, EBU R128 / ATSC A/85
+- **Loudness measurement** via `loudness`: integrated LUFS (ITU-R BS.1770, as EBU R128 and ATSC A/85 both use), true peak and loudness range
 - **Loudness normalization** to a target via `create --loudness-target leqm=<db>|lufs=<v>` (with `--true-peak-ceiling`)
 - **Channel mapping matrix** via `create --audio-map <IN:OUT[@GAIN],...>`: any source channel to any DCP lane at any gain in dB, summing where several land on one lane. OUT is a lane name (L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI, VI) or a 1-based number, and the track is widened to the smallest DCP sound layout that holds every named lane
 - **Packaged channel count** via `create --audio-channels 2|6|8|16`: the sound track is filled with silent channels up to the count, so a stereo source ships in a 16-channel container without an upmix. Without the flag a 5.1 source is widened to 16 and everything else is packaged at its own width. A source wider than the count is refused, with `--audio-map` to fold channels instead
@@ -118,7 +118,7 @@ Free and open-source alternative to easyDCP Creator+.
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
 - **Frame extraction**, extract individual frames as images (thumbnails/preview)
-- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback. MP4, ProRes and other sources use libmpv. Encrypted and stereoscopic J2K also use libmpv
+- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback. MP4, ProRes and other sources use libmpv. Stereoscopic J2K also uses libmpv. Encrypted picture does not preview
 
 ### Delivery & Automation
 - **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU); **format-drive** (ext2/ext3, volume label, mounted-target refusal) and **check-drive** (report fs type + label) for cinema hard-drive delivery
@@ -127,13 +127,13 @@ Free and open-source alternative to easyDCP Creator+.
 - **REST API** for headless/batch operation
 - **Prometheus metrics endpoint** (`GET /metrics`), job counts, daemon status for monitoring
 - **Docker container** for CI/CD pipelines
-- **CLI scriptable**, all features accessible from command line
+- **CLI scriptable**: every packaging, KDM, QC and delivery feature is a command, the preview player is in the desktop app only
 - **Version dashboard**, OV/VF management, territory tracking, distribution matrix export
 - **Webhook notifications**, HTTP callbacks on job completion/failure
 - **TMS upload**, push a finished package to a theatre management system over sftp (host key checked against `known_hosts`) or ftp, on its own or straight after a build
 
 ### Mastering & Compliance
-- **DCDM creation**, Digital Cinema Distribution Master (X'Y'Z' 12/16-bit) intermediate
+- **DCDM creation**, Digital Cinema Distribution Master (X'Y'Z' 12-bit in 16-bit TIFF) intermediate
 - **Visible watermarking** via `watermark`, a text mark (distributor ID/serial) burnt into an existing DCP's JPEG 2000 picture essence, with `--font-size` as a percent of the frame height, `--colour`, `--position top|center|bottom` and `--font`. The picture is decoded, marked and re-encoded at its own average bandwidth unless `--video-bit-rate` names another; sound and timed text ship unchanged, and `--kdm`/`--recipient-key`/`--keys` mark an encrypted source. `create --watermark TEXT` marks at build time instead
 - **Trailer packaging**, ratings cards (MPAA/BBFC/FSK), green/red band, countdown leaders; the packaged mp4 is then encoded and wrapped into a real trailer DCP
 - **Content version tracker**, SQLite database of which version delivered where and when
@@ -155,13 +155,13 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
-The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits: nothing has to be installed and `LD_LIBRARY_PATH` does not have to be set.
+The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits, `LD_LIBRARY_PATH` does not have to be set. On Linux nothing else has to be installed. The macOS archive needs `brew install openssl@3 xerces-c`, and the Windows zip carries libcrypto and the VC++ runtime.
 
 The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. The package manager pulls in the rest: libmpv for the preview player, ffmpeg for video import, xmlsec1 and xmllint for verification, curl for certificate fetching.
 
 ```bash
-sudo apt install ./dcpwizard_*_amd64.deb     # Debian, Ubuntu
-sudo dnf install ./dcpwizard-*.x86_64.rpm    # Fedora
+sudo apt install ./DCP.Wizard_*_amd64.deb    # Debian, Ubuntu
+sudo dnf install ./DCP.Wizard-*.x86_64.rpm   # Fedora
 ```
 
 On Fedora, enable [RPM Fusion](https://rpmfusion.org/Configuration) first: ffmpeg comes from there. Nothing else has to be installed by hand.
@@ -209,13 +209,13 @@ The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name
 #### Linux (Ubuntu/Debian)
 
 ```bash
-sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev
-# For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+sudo apt-get install -y build-essential cmake libclang-dev pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev
+# For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libmpv-dev patchelf
 
 # Grok (libgrokj2k) must be discoverable by pkg-config at build time and its
 # shared lib loadable at runtime. Build it from source or install a release, then:
-export PKG_CONFIG_PATH="/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
-export LD_LIBRARY_PATH="/path/to/grok/lib64:$LD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="/path/to/grok/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/path/to/grok/lib:$LD_LIBRARY_PATH"
 
 cd rust
 cargo build --release
@@ -225,8 +225,8 @@ cargo build --release
 #### Fedora
 
 ```bash
-sudo dnf install gcc-c++ cmake pkgconf-pkg-config libxml2-devel openssl-devel xerces-c-devel alsa-lib-devel
-# For GUI: also install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel mpv-devel
+sudo dnf install gcc-c++ cmake clang-devel pkgconf-pkg-config libxml2-devel openssl-devel xerces-c-devel alsa-lib-devel
+# For GUI: also install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel mpv-devel patchelf
 # ffmpeg comes from RPM Fusion
 
 # Grok as in the Ubuntu section, then:
@@ -292,7 +292,7 @@ cargo build --release
 # Using vcpkg (recommended)
 vcpkg install libxml2 openssl xerces-c --triplet x64-windows
 
-$env:VCPKG_ROOT = "$env:VCPKG_INSTALLATION_ROOT"
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"   # the vcpkg checkout
 
 cd rust
 cargo build --release
@@ -348,7 +348,7 @@ pnpm tauri dev                         # or: pnpm tauri build --no-bundle
 
 Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 
-**Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes and previews on the CPU even with the GPU toggle on. On Metal the same directory must also contain `grok_kernels.metallib`.
+**Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI from a source build, launched without `GRK_PLUGIN_PATH`, finds no plugin, reports `GPU encoding unavailable` and turns the GPU setting off. The GPU rpm and deb set it themselves to `/usr/lib/dcpwizard`. On Metal the same directory must also contain `grok_kernels.metallib`.
 
 ```bash
 # rebuilds the GUI against that grok and launches it with the plugin on the
@@ -377,7 +377,7 @@ finds the plugin source under the shared `Grok/grok` workspace.
 
 A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
 
-**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. `create` writes the same log beside the package it builds. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
+**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log at `<output>/dcpwizard.log` confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it into the package folder. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
 
 ```bash
 dcpwizard --gpu create \
@@ -387,12 +387,12 @@ dcpwizard --gpu create \
   --twok --frame-rate 24 --content-type FTR
 ```
 
-**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). Status should read `GPU encoding on`; if the plugin is missing it falls back to CPU and says `GPU encoding unavailable`.
+**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin is missing it reads `GPU encoding unavailable` and the checkbox turns off.
 
 Then **Open** (Ctrl+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
 
 ```
-grok player decode backend: device, colour on the device
+grok player: device batch open, colour on the device
 ```
 
 `colour on the cpu` means the plugin decoded but the X'Y'Z'→sRGB (or App 2E display LUT) ran on the host. The preview surface also logs its GL renderer, e.g. `[preview] GL renderer: Apple M5 (4.1 Metal - …)`.
@@ -413,7 +413,8 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp --check
 
 # Transcode an existing DCP's picture essence to a lower bandwidth (audio and
-# subtitle tracks are copied unchanged; encrypted input is rejected)
+# subtitle tracks are copied unchanged). Encrypted input needs --kdm with
+# --recipient-key, or --keys, and is written out decrypted
 dcpwizard transcode-dcp --input ./dcp --output ./dcp_light --video-bit-rate 100
 
 # Create with encryption. Content keys are generated with a CSPRNG and every
@@ -421,9 +422,11 @@ dcpwizard transcode-dcp --input ./dcp --output ./dcp_light --video-bit-rate 100
 # closed caption and Atmos each get their own key. --key-out is required: it is
 # the only place the keys are written (never next to the DCP). That file holds
 # the plaintext keys, keep it secret and outside the DCP. Feed it to
-# `kdm --keys`, which puts every key in the KDM.
+# `kdm --keys`, which puts every key in the KDM. --encrypt also needs a signer:
+# an encrypted package must carry a signed CPL and PKL.
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav --output ./dcp \
-    --encrypt --key-out ./secret/my_film.keys.json
+    --encrypt --key-out ./secret/my_film.keys.json \
+    --signer-cert signer.pem --signer-key signer.key
 
 # Create a signed DCP. The CPL and PKL get an XML-DSig ds:Signature (SMPTE
 # ST 429-7/-8), which encrypted packages require and validators such as
@@ -464,7 +467,8 @@ dcpwizard create --title "My Feature" --video movie.mov --output ./dcp \
     --split-at 00:20:00,00:41:30:12
 dcpwizard create --title "My Feature" --video movie.mov --output ./dcp --split-chapters
 
-# Custom container: a named DCI container or arbitrary even dimensions
+# Custom container: a named DCI container, or any even dimensions that fit
+# inside 2048x1080 (4096x2160 with --fourk)
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container 2k-flat
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container-dims 1920x1080
 
@@ -490,6 +494,7 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp --input-rang
 #   MyFilm_FTR-1_F_EN-XX_20_2K_ABC_20260816_SMPTE_OV
 dcpwizard create --title "My Film" --video movie.mov --audio stereo.wav --output ./dcp \
     --isdcf-name --content-type FTR --audio-lang en --studio ABC \
+    --container 2k-flat --isdcf-date 2026-08-16 \
     --rating "http://www.mpaa.org/2003-ratings=PG-13" --content-version "Final Cut"
 
 # Sign-language video track (ISDCF Doc 13, carried on sound channel 15)
@@ -523,15 +528,15 @@ dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
 dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
     --output ./dcp --frame-rate 24
 
-# Dolby Atmos aux track (ST 429-18). Pass a bitstream file or a directory of
-# per-frame payloads. Real-essence conformance needs real Atmos material.
+# Dolby Atmos aux track (ST 429-18). Pass a directory with one payload file per
+# picture frame. Real-essence conformance needs real Atmos material.
 # DTS:X: since ST 429-18/-19 it is delivered as a standard IAB track (ST 2098-2,
 # "DTS:X for IAB"), which is this same --atmos path. There is no separate DTS:X UL.
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
-    --output ./dcp --atmos ./atmos.iab
+    --output ./dcp --atmos ./atmos_frames
 
-# Closed captions (ST 429-12): an accessibility track with a MainClosedCaption
-# CPL role, distinct from open --subtitle. Same input formats. Carried through
+# Closed captions (ST 429-12): an accessibility track written as a ClosedCaption
+# CPL asset, distinct from open --subtitle. Same input formats. Carried through
 # every CPL path: single-reel, reel splitting, versions (a `ccap` manifest field),
 # and VF (--add-ccap/--replace-ccap REEL=PATH). Written as ST 429-12
 # <tt:ClosedCaption>, the element that namespace declares.
@@ -556,7 +561,7 @@ dcpwizard mid-side-decode -i ms.wav -o lr.wav --mid 0 --side 1
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
     --start-at 22:00 --resume --shutdown-when-done
 
-# Full pipeline: video → J2K → DCP in one pass (no intermediate files)
+# Pipeline: video → J2K → DCP in one command, encoding to <output>/j2k and removing it once packaged
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 
 # Supplemental Version File (VF): replace reel 1's sound against an existing OV.
@@ -676,7 +681,8 @@ dcpwizard watch ./incoming --output ./packages --interval 30 \
 # lose queued jobs. $DCPWIZARD_JOBS_FILE points a second daemon at another file.
 #
 # The desktop GUI runs a queue of its own, written to
-# ~/.local/share/dcpwizard/gui-jobs.jsonl in the same format and listed in the
+# ~/.local/share/dcpwizard/gui-jobs.jsonl, one JSON line per record like the
+# daemon's file but with the GUI's own record shape, and listed in the
 # Jobs panel beside the daemon's. $DCPWIZARD_GUI_JOBS_FILE points a second GUI
 # at another file. The two variables name different files: DCPWIZARD_JOBS_FILE
 # is the daemon's jobs.jsonl, DCPWIZARD_GUI_JOBS_FILE the GUI's gui-jobs.jsonl.
@@ -684,7 +690,7 @@ dcpwizard daemon
 
 # Manage job queue
 dcpwizard batch list
-dcpwizard batch add -T create-dcp -p '{"title":"My Film","video":"./j2k","output":"./dcp"}'
+dcpwizard batch add -T create-dcp -p '{"title":"My Film","standard":"Smpte","resolution":"TwoK","content_type":"Feature","frame_rate_num":24,"frame_rate_den":1,"max_bitrate_mbps":250,"encrypt":false,"stereo_3d":false,"container_width":0,"container_height":0,"output_dir":"./dcp","j2k_dir":"./j2k","audio_path":"./audio.wav","audio_input_order":"Canonical51","subtitle_language":"en","reel_length_minutes":0}'
 dcpwizard batch cancel <job-id>
 
 # Shell completion
@@ -800,11 +806,12 @@ dcpwizard kdm-history --title "My Film" --since 2026-07
 
 # Download a projector/server recipient cert by vendor + serial. Anonymous
 # endpoints: dolby/doremi and qube. christie/gdc/barco need a vendor account
-# (--user/--password; the password is never logged). Requires the `curl` binary.
+# (--user, with the password in the first line of --password-file or in
+# DCPWIZARD_VENDOR_PASSWORD, never on the command line). Requires the `curl` binary.
 dcpwizard cert-fetch --vendor dolby --serial 218281828 -o screen.pem
 dcpwizard cert-fetch --vendor qube --type QXPD --serial 54 -o screen.pem
-dcpwizard cert-fetch --vendor christie --serial 218281 --user me --password '***' -o screen.pem
-dcpwizard cert-fetch --vendor barco --serial 1234567890 --user me --password '***' -o screen.pem
+dcpwizard cert-fetch --vendor christie --serial 218281 --user me --password-file ~/.config/dcpwizard/vendor-password -o screen.pem
+dcpwizard cert-fetch --vendor barco --serial 1234567890 --user me --password-file ~/.config/dcpwizard/vendor-password -o screen.pem
 
 # Package a trailer (ratings card + countdown leader + content)
 dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
@@ -915,12 +922,12 @@ TMS offers it, and an ftp config that names a `private_key` is refused.
 
 Start the server:
 ```bash
-dcpwizard serve --bind 0.0.0.0:8080
+dcpwizard serve --bind 0.0.0.0:8080 --api-key <key>
 ```
 
 Or via Docker:
 ```bash
-docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --bind 0.0.0.0:8080
+docker run -p 8080:8080 -v /path/to/media:/data dcpwizard serve --bind 0.0.0.0:8080 --api-key <key>
 ```
 
 `--api-key <key>` requires that key in `X-Api-Key` or `Authorization: Bearer` on
@@ -948,7 +955,7 @@ not running.
 | Up to 4K | ✅ | ✅ |
 | Stereoscopic 3D | ✅ | ✅ |
 | Frame rates 24–60 fps | ✅ | ✅ |
-| High Bitrate (500 Mbps) | ✅ | ✅ |
+| High bitrate | ✅ (up to the DCI 250 Mbit/s cap, 450 Mbit/s for a DCI HDR package) | ✅ |
 | DPX/TIFF/EXR/PNG/JPEG/BMP/QuickTime input | ✅ | ✅ |
 | Scale/Crop/Letterbox | ✅ | ✅ |
 | J2K Transcoder | ✅ | ✅ |
@@ -982,18 +989,18 @@ not running.
 dcpwizard/
 ├── rust/                # Rust workspace
 │   ├── crates/
-│   │   ├── dcpwizard-core/  # Core library, 59 modules, DCP creation, encoding, encryption, KDM, QC
+│   │   ├── dcpwizard-core/  # Core library, 89 modules, DCP creation, encoding, encryption, KDM, QC
 │   │   └── dcpwizard-cli/   # CLI binary (dcpwizard)
 │   └── Cargo.toml
 ├── gui/                 # Tauri 2 desktop application
 │   ├── src/             # Frontend (Vite + vanilla JS)
-│   └── src-tauri/       # Rust backend (plugin shell)
+│   └── src-tauri/       # Rust backend: the build queue, which encodes and packages through dcpwizard-core, and the guikit preview
 └── docs/                # GitHub Pages site
 ```
 
 DCP Wizard shares common functionality with [IMF Wizard](https://github.com/PostPerfection/imfwizard)
 via the [postkit](https://github.com/PostPerfection/postkit) library (encoding, transcoding, hashing,
-job queue, preferences, REST API, watch folders, and more).
+job queue, preferences, REST API, and more).
 
 ## License
 

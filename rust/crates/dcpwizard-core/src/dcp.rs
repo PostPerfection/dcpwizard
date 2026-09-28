@@ -622,9 +622,6 @@ pub fn create_dcp_with_progress(
                 "Picture MXF: {picture_mxf_name} ({picture_duration} frames: {head_frames} head + {content_count} content + {tail_frames} tail)"
             );
         } else if stereoscopic {
-            if config.hdr_dci {
-                return Err("--hdr-dci is not supported for stereoscopic (3D) DCPs".into());
-            }
             picture_duration = content_count;
             // left eye is j2k_dir, right eye its own dir; both must match frame counts
             let right_dir = config.right_eye_dir.as_ref().unwrap();

@@ -66,7 +66,6 @@ pub mod qc;
 pub mod reel;
 pub mod report;
 pub mod rest_api;
-pub mod shell_completion;
 pub mod sign_language;
 pub mod source_picture;
 pub mod store;
@@ -160,23 +159,40 @@ pub enum ContentType {
     Episode,
 }
 
+const CONTENT_TYPE_ABBREVIATIONS: [(&str, ContentType); 11] = [
+    ("FTR", ContentType::Feature),
+    ("SHR", ContentType::Short),
+    ("TLR", ContentType::Trailer),
+    ("TST", ContentType::Test),
+    ("XSN", ContentType::Transitional),
+    ("RTG", ContentType::Rating),
+    ("TSR", ContentType::Teaser),
+    ("POL", ContentType::Policy),
+    ("PSA", ContentType::PublicServiceAnnouncement),
+    ("ADV", ContentType::Advertisement),
+    ("EPS", ContentType::Episode),
+];
+
 impl ContentType {
     /// Parse from common abbreviation string.
     pub fn from_abbrev(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "FTR" => Some(Self::Feature),
-            "SHR" => Some(Self::Short),
-            "TLR" => Some(Self::Trailer),
-            "TST" => Some(Self::Test),
-            "XSN" => Some(Self::Transitional),
-            "RTG" => Some(Self::Rating),
-            "TSR" => Some(Self::Teaser),
-            "POL" => Some(Self::Policy),
-            "PSA" => Some(Self::PublicServiceAnnouncement),
-            "ADV" => Some(Self::Advertisement),
-            "EPS" => Some(Self::Episode),
-            _ => None,
-        }
+        CONTENT_TYPE_ABBREVIATIONS
+            .iter()
+            .find(|(abbreviation, _)| abbreviation.eq_ignore_ascii_case(s))
+            .map(|(_, content_type)| *content_type)
+    }
+
+    pub fn parse_abbrev(s: &str) -> Result<Self, String> {
+        Self::from_abbrev(s).ok_or_else(|| {
+            let abbreviations: Vec<&str> = CONTENT_TYPE_ABBREVIATIONS
+                .iter()
+                .map(|(abbreviation, _)| *abbreviation)
+                .collect();
+            format!(
+                "unknown content type '{s}' (use {})",
+                abbreviations.join(", ")
+            )
+        })
     }
 
     /// SMPTE content kind string for CPL.
@@ -234,6 +250,16 @@ mod tests {
     fn test_content_type_invalid() {
         assert_eq!(ContentType::from_abbrev("XYZ"), None);
         assert_eq!(ContentType::from_abbrev(""), None);
+    }
+
+    #[test]
+    fn an_unknown_content_type_is_refused_with_every_valid_abbreviation() {
+        assert_eq!(ContentType::parse_abbrev("tlr"), Ok(ContentType::Trailer));
+        let refusal = ContentType::parse_abbrev("TRL").unwrap_err();
+        assert!(refusal.contains("'TRL'"), "{refusal}");
+        for (abbreviation, _) in CONTENT_TYPE_ABBREVIATIONS {
+            assert!(refusal.contains(abbreviation), "{refusal}");
+        }
     }
 
     #[test]

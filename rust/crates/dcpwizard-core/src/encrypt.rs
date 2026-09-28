@@ -88,8 +88,29 @@ impl KeyBundle {
     pub fn read(path: &Path) -> Result<Self, String> {
         let json = std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read keys file {}: {e}", path.display()))?;
-        serde_json::from_str(&json).map_err(|e| format!("bad keys file {}: {e}", path.display()))
+        serde_json::from_str(&json).map_err(|e| {
+            format!(
+                "bad keys file {}: {}",
+                path.display(),
+                json_error_without_values(&e)
+            )
+        })
     }
+}
+
+// serde_json type errors quote the value, which can be a content key
+fn json_error_without_values(error: &serde_json::Error) -> String {
+    let description = match error.classify() {
+        serde_json::error::Category::Data => "a value has the wrong type or a field is missing",
+        serde_json::error::Category::Syntax => "not valid JSON",
+        serde_json::error::Category::Eof => "the file ends inside the JSON",
+        serde_json::error::Category::Io => "cannot read the JSON",
+    };
+    format!(
+        "line {} column {}: {description}",
+        error.line(),
+        error.column()
+    )
 }
 
 /// A freshly minted key: the record for the keys file plus the raw material the
@@ -174,5 +195,27 @@ mod tests {
         assert_eq!(back.cpl_id, "cpl-1");
         assert_eq!(back.keys.len(), 2);
         assert_eq!(back.keys[1].key_type, KeyType::Mdak);
+    }
+
+    #[test]
+    fn a_malformed_keys_file_is_named_by_line_without_the_key() {
+        let key_hex = "31415926535897932384626433832795";
+        // serde_json echoes the bare number as 3.1415926535897933e+31
+        let key_digits = &key_hex[1..12];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(KEYS_FILE_NAME);
+        for key_entry in [
+            format!(
+                "{{\"key_type\": \"Mdik\", \"key_id\": \"k\", \"asset_uuid\": \"a\", \"content_key_hex\": {key_hex}}}"
+            ),
+            format!("\"{key_hex}\""),
+        ] {
+            let json =
+                format!("{{\n  \"cpl_id\": \"cpl-1\",\n  \"keys\": [\n    {key_entry}\n  ]\n}}\n");
+            std::fs::write(&path, json).unwrap();
+            let error = KeyBundle::read(&path).unwrap_err();
+            assert!(!error.contains(key_digits), "{error}");
+            assert!(error.contains("line 4"), "{error}");
+        }
     }
 }

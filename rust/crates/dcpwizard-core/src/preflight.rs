@@ -39,6 +39,9 @@ pub struct CreatePlan {
     pub geometry: EncodeGeometry,
     pub trim_start_frames: u64,
     pub trim_end_frames: u64,
+    pub video_fade_in_seconds: Option<f64>,
+    pub video_fade_out_seconds: Option<f64>,
+    pub forces_input_range: bool,
     pub pad_head_frames: u64,
     pub pad_tail_frames: u64,
     /// The sound file, or the directory of channel WAVs the build routes into
@@ -51,6 +54,7 @@ pub struct CreatePlan {
     /// wrap's own rule, which widens 5.1 to 16 and touches nothing else.
     pub audio_channels: Option<u32>,
     pub audio_language: Option<String>,
+    pub loudness_target: Option<String>,
     pub subtitle: Option<PathBuf>,
     pub ccap: Option<PathBuf>,
     pub burn_subtitle: Option<PathBuf>,
@@ -60,6 +64,7 @@ pub struct CreatePlan {
     /// The colour the encoder's frames arrive in, which decides whether a burn
     /// or a mark can still be drawn into them.
     pub source_colour: postkit::encode::SourceColour,
+    pub allow_generic_hdr_tonemap: bool,
     pub atmos: Option<PathBuf>,
     /// `LABEL=timecode` marker requests, unparsed.
     pub markers: Vec<String>,
@@ -76,6 +81,8 @@ pub struct CreatePlan {
     pub reel_split_frames: Vec<u64>,
     /// How many library items are joined onto the build as extra reels.
     pub library_items: usize,
+    pub output: PathBuf,
+    pub resume: bool,
 }
 
 impl Default for CreatePlan {
@@ -90,6 +97,9 @@ impl Default for CreatePlan {
             geometry: EncodeGeometry::default(),
             trim_start_frames: 0,
             trim_end_frames: 0,
+            video_fade_in_seconds: None,
+            video_fade_out_seconds: None,
+            forces_input_range: false,
             pad_head_frames: 0,
             pad_tail_frames: 0,
             audio: None,
@@ -97,6 +107,7 @@ impl Default for CreatePlan {
             upmix: false,
             audio_channels: None,
             audio_language: None,
+            loudness_target: None,
             subtitle: None,
             ccap: None,
             burn_subtitle: None,
@@ -104,6 +115,7 @@ impl Default for CreatePlan {
             burn_style: BurnStyleOverrides::default(),
             source_colourspace: ColourSpace::Rec709,
             source_colour: postkit::encode::SourceColour::default(),
+            allow_generic_hdr_tonemap: false,
             atmos: None,
             markers: Vec::new(),
             standard: Standard::default(),
@@ -117,6 +129,8 @@ impl Default for CreatePlan {
             reel_length_minutes: 0,
             reel_split_frames: Vec::new(),
             library_items: 0,
+            output: PathBuf::new(),
+            resume: false,
         }
     }
 }
@@ -132,6 +146,16 @@ impl CreatePlan {
     fn is_codestreams(&self) -> bool {
         self.picture_kind == PictureKind::Codestreams
     }
+
+    // the GUI plans an image sequence directory as Video too
+    fn video_file(&self) -> Option<&Path> {
+        (self.picture_kind == PictureKind::Video && self.picture.is_file())
+            .then_some(self.picture.as_path())
+    }
+
+    fn trims(&self) -> bool {
+        self.trim_start_frames + self.trim_end_frames > 0
+    }
 }
 
 /// What the encode will hand the packager: the raster it produces, and the size
@@ -142,24 +166,186 @@ pub struct PlannedPicture {
     pub content: (u32, u32),
 }
 
-/// Run every plan-time refusal, cheapest and most specific first so a job with
-/// two faults names the one a reader can act on.
-pub fn check_before_encode(plan: &CreatePlan) -> Result<(), String> {
-    if plan.is_codestreams() {
-        crate::encode::check_precompressed_colourspace(plan.source_colourspace)?;
-        crate::source_picture::check_precompressed_picture(&plan.picture_options)?;
+type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
+
+// cheapest and most specific first: the first refusal printed is the one to fix
+const PLAN_CHECKS: [PlanCheck; 24] = [
+    check_precompressed_colourspace,
+    check_precompressed_picture,
+    check_video_decodable,
+    check_opaque_source,
+    check_hdr_to_dci_lut,
+    check_hdr_source_path,
+    check_fps_resolution,
+    check_still_length,
+    check_input_range,
+    check_trim,
+    check_video_fades,
+    check_burn,
+    check_stereo_hdr_dci,
+    check_reel_splitting,
+    check_library_items,
+    check_audio_map,
+    check_audio_channels,
+    check_loudness_target,
+    check_active_area,
+    check_sound,
+    check_signed_when_encrypted,
+    check_atmos,
+    check_timed_text,
+    check_resume,
+];
+
+pub fn check_before_encode(plan: &CreatePlan) -> Result<(), Vec<String>> {
+    let refusals: Vec<String> = PLAN_CHECKS
+        .iter()
+        .filter_map(|check| check(plan).err())
+        .collect();
+    if refusals.is_empty() {
+        return Ok(());
     }
-    crate::hfr::validate_fps_resolution(plan.fps, plan.four_k, plan.standard == Standard::Smpte)?;
-    check_burn(plan)?;
-    check_reel_splitting(plan)?;
-    check_library_items(plan)?;
-    check_audio_map(plan)?;
-    check_audio_channels(plan)?;
-    check_active_area(plan)?;
-    check_sound(plan)?;
-    check_signed_when_encrypted(plan)?;
-    check_atmos(plan)?;
-    check_timed_text(plan)
+    Err(refusals)
+}
+
+fn check_precompressed_colourspace(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.is_codestreams() {
+        return Ok(());
+    }
+    crate::encode::check_precompressed_colourspace(plan.source_colourspace)
+}
+
+fn check_precompressed_picture(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.is_codestreams() {
+        return Ok(());
+    }
+    crate::source_picture::check_precompressed_picture(&plan.picture_options)
+}
+
+fn check_video_decodable(plan: &CreatePlan) -> Result<(), String> {
+    let Some(video) = plan.video_file() else {
+        return Ok(());
+    };
+    crate::probe::ensure_video_decodable(video)
+}
+
+fn check_opaque_source(plan: &CreatePlan) -> Result<(), String> {
+    let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
+        return Ok(());
+    };
+    check_opaque_picture(&source.pix_fmt)
+}
+
+pub fn check_opaque_picture(pixel_format: &str) -> Result<(), String> {
+    if !crate::probe::pixel_format_has_alpha(pixel_format) {
+        return Ok(());
+    }
+    Err(
+        "Input video has alpha. Composite it over an opaque background before creating a DCP."
+            .into(),
+    )
+}
+
+fn check_hdr_to_dci_lut(plan: &CreatePlan) -> Result<(), String> {
+    let postkit::encode::SourceColour::DciLut(lut) = &plan.source_colour else {
+        return Ok(());
+    };
+    if lut.is_file() {
+        return Ok(());
+    }
+    Err(format!("HDR-to-DCI LUT not found: {}", lut.display()))
+}
+
+pub const HDR_SOURCE_NEEDS_A_LUT: &str = "HDR source requires --hdr-to-dci-lut. Use \
+    --allow-generic-hdr-tonemap only for an explicitly accepted generic transform.";
+
+fn check_hdr_source_path(plan: &CreatePlan) -> Result<(), String> {
+    let display_rgb = matches!(
+        plan.source_colour,
+        postkit::encode::SourceColour::DisplayRgb | postkit::encode::SourceColour::DisplayRgbIn(_)
+    );
+    if !display_rgb || plan.allow_generic_hdr_tonemap {
+        return Ok(());
+    }
+    let Some(video) = plan.video_file() else {
+        return Ok(());
+    };
+    if crate::dolby_vision::detect_hdr_type(video) == postkit::dolby_vision::HdrType::Sdr {
+        return Ok(());
+    }
+    Err(HDR_SOURCE_NEEDS_A_LUT.into())
+}
+
+fn check_fps_resolution(plan: &CreatePlan) -> Result<(), String> {
+    crate::hfr::validate_fps_resolution(plan.fps, plan.four_k, plan.standard == Standard::Smpte)
+}
+
+fn check_still_length(plan: &CreatePlan) -> Result<(), String> {
+    if plan.picture_kind != PictureKind::Still || plan.still_frames > 0 {
+        return Ok(());
+    }
+    Err("--still-length: a still must be held for at least one frame".into())
+}
+
+fn check_input_range(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.forces_input_range || plan.picture_kind == PictureKind::Video {
+        return Ok(());
+    }
+    Err(
+        "--input-range applies to a video input; a J2K/image sequence carries no decode range"
+            .into(),
+    )
+}
+
+fn source_frame_count(plan: &CreatePlan) -> Option<u64> {
+    let source_frames = match plan.picture_kind {
+        PictureKind::Still => plan.still_frames,
+        PictureKind::Codestreams => crate::trim::frame_count(&plan.picture),
+        PictureKind::Video => u64::from(plan.source.as_ref()?.total_frames),
+    };
+    (source_frames > 0).then_some(source_frames)
+}
+
+fn check_trim(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.trims() {
+        return Ok(());
+    }
+    let Some(source_frames) = source_frame_count(plan) else {
+        return Ok(());
+    };
+    crate::trim::kept_frames(source_frames, plan.trim_start_frames, plan.trim_end_frames)
+        .map(|_| ())
+}
+
+fn video_encode_window(
+    plan: &CreatePlan,
+    source_frames: u64,
+) -> Option<postkit::encode::FrameRange> {
+    if !plan.trims() {
+        return None;
+    }
+    let kept_frames =
+        crate::trim::kept_frames(source_frames, plan.trim_start_frames, plan.trim_end_frames)
+            .ok()?;
+    crate::trim::encode_window(&plan.picture, plan.trim_start_frames, kept_frames)
+}
+
+// the fade-out ends where the encode window ends
+fn check_video_fades(plan: &CreatePlan) -> Result<(), String> {
+    if plan.video_fade_in_seconds.is_none() && plan.video_fade_out_seconds.is_none() {
+        return Ok(());
+    }
+    let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
+        return Ok(());
+    };
+    let source_frames = u64::from(source.total_frames);
+    let faded_frames =
+        video_encode_window(plan, source_frames).map_or(source_frames, |window| window.end_frame());
+    crate::audio_adjust::video_fade_filter(
+        plan.video_fade_in_seconds,
+        plan.video_fade_out_seconds,
+        faded_frames as f64 / plan.fps.max(1) as f64,
+    )
+    .map(|_| ())
 }
 
 fn check_burn(plan: &CreatePlan) -> Result<(), String> {
@@ -183,6 +369,13 @@ fn check_burn(plan: &CreatePlan) -> Result<(), String> {
         &plan.burn_style,
     )
     .map(|_| ())
+}
+
+fn check_stereo_hdr_dci(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.hdr_dci || plan.right_eye.is_none() {
+        return Ok(());
+    }
+    Err("--hdr-dci is not supported for stereoscopic (3D) DCPs".into())
 }
 
 fn check_reel_splitting(plan: &CreatePlan) -> Result<(), String> {
@@ -319,6 +512,13 @@ fn check_audio_channels(plan: &CreatePlan) -> Result<(), String> {
     crate::mxf_wrap::check_source_fits_packaged_channels(content, packaged)
 }
 
+fn check_loudness_target(plan: &CreatePlan) -> Result<(), String> {
+    let Some(spec) = &plan.loudness_target else {
+        return Ok(());
+    };
+    crate::loudness::parse_loudness_target(spec).map(|_| ())
+}
+
 /// The active area a container declares has to fit inside the frames the encoder
 /// produces, and the plan says what those frames will be.
 fn check_active_area(plan: &CreatePlan) -> Result<(), String> {
@@ -417,6 +617,29 @@ fn check_timed_text(plan: &CreatePlan) -> Result<(), String> {
     Ok(())
 }
 
+fn check_resume(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.resume {
+        return Ok(());
+    }
+    let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
+        return Ok(());
+    };
+    let Some(planned) = plan_picture(plan)? else {
+        return Ok(());
+    };
+    let source_frames = u64::from(source.total_frames);
+    let encode_state = crate::encode_qol::EncodeState {
+        source: plan.picture.to_string_lossy().to_string(),
+        total_frames: video_encode_window(plan, source_frames)
+            .map_or(source_frames, |window| window.frame_count),
+        fps: plan.fps,
+        width: planned.raster.0,
+        height: planned.raster.1,
+        bitrate_mbps: plan.video_bit_rate_mbps,
+    };
+    encode_state.check_resumable(&plan.output).map(|_| ())
+}
+
 /// The Atmos essence has to be there before the picture is encoded around it.
 pub fn check_atmos_path(atmos: &Path) -> Result<(), String> {
     if atmos.exists() {
@@ -474,14 +697,7 @@ pub fn plan_picture(plan: &CreatePlan) -> Result<Option<PlannedPicture>, String>
 /// How many frames the packaged picture will carry, or None when nothing here
 /// can count them.
 pub fn planned_picture_frames(plan: &CreatePlan) -> Option<u64> {
-    let source_frames = match plan.picture_kind {
-        PictureKind::Still => plan.still_frames,
-        PictureKind::Codestreams => crate::trim::frame_count(&plan.picture),
-        PictureKind::Video => u64::from(plan.source.as_ref()?.total_frames),
-    };
-    if source_frames == 0 {
-        return None;
-    }
+    let source_frames = source_frame_count(plan)?;
     Some(
         source_frames
             .saturating_sub(plan.trim_start_frames)
@@ -507,6 +723,12 @@ mod tests {
             picture_kind: PictureKind::Codestreams,
             ..Default::default()
         }
+    }
+
+    fn only_refusal(plan: &CreatePlan) -> String {
+        let refusals = check_before_encode(plan).unwrap_err();
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        refusals[0].clone()
     }
 
     /// A codestream carrying nothing but the SIZ marker the raster is read from.
@@ -557,7 +779,7 @@ mod tests {
 
         let mut plan = plan_with_picture(codestreams);
         plan.geometry.container = Some((2048, 858));
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(
             error.contains("2048x858 is larger than the 1920x1080"),
             "{error}"
@@ -580,7 +802,7 @@ mod tests {
         let mut plan = plan_with_picture(codestreams);
         plan.audio = Some(wav);
         plan.audio_channels = Some(6);
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(error.contains('8') && error.contains('6'), "{error}");
         assert!(error.contains("--audio-map"), "{error}");
 
@@ -614,7 +836,7 @@ mod tests {
 
         let mut plan = plan_with_picture(dir.path().join("j2k"));
         plan.audio = Some(wav.clone());
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(error.contains("44100 Hz"), "{error}");
 
         write_wav(&wav, 2, 48_000);
@@ -627,7 +849,7 @@ mod tests {
         let mut plan = plan_with_picture(dir.path().join("j2k"));
         plan.atmos = Some(dir.path().join("atmos"));
 
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(error.contains("Atmos input not found"), "{error}");
     }
 
@@ -644,7 +866,7 @@ mod tests {
 
         let mut plan = plan_with_picture(codestreams);
         plan.atmos = Some(atmos.clone());
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(error.contains("2 frames but the picture is 3"), "{error}");
 
         std::fs::write(atmos.join("atmos_2.bin"), b"frame").unwrap();
@@ -673,7 +895,7 @@ mod tests {
 
         let mut plan = plan_with_picture(dir.path().join("j2k"));
         plan.ccap = Some(ccap);
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(error.contains("unsupported subtitle format"), "{error}");
     }
 
@@ -701,10 +923,29 @@ mod tests {
         assert_eq!(check_before_encode(&plan), Ok(()));
 
         plan.reel_length_minutes = 20;
-        let error = check_before_encode(&plan).unwrap_err();
+        let error = only_refusal(&plan);
         assert!(
             error.contains("not supported with reel splitting"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn every_refusal_is_returned_in_check_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = plan_with_picture(dir.path().join("j2k"));
+        plan.encrypt = true;
+        plan.atmos = Some(dir.path().join("atmos"));
+        plan.hdr_dci = true;
+        plan.right_eye = Some(dir.path().join("right.mov"));
+
+        let refusals = check_before_encode(&plan).unwrap_err();
+        assert_eq!(refusals.len(), 3, "{refusals:?}");
+        assert!(refusals[0].contains("stereoscopic (3D)"), "{refusals:?}");
+        assert!(refusals[1].contains("signed CPL and PKL"), "{refusals:?}");
+        assert!(
+            refusals[2].contains("Atmos input not found"),
+            "{refusals:?}"
         );
     }
 

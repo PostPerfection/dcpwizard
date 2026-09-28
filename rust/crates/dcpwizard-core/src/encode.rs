@@ -68,9 +68,23 @@ pub const MAXIMUM_QUALITY_PSNR_DB: f64 = 80.0;
 /// The bytes one frame may take at `mbps` and `fps`, halved per eye in 3D.
 pub fn video_codestream_byte_cap(fps: u32, mbps: u32, stereoscopic: bool) -> u64 {
     let fps = fps.max(1) as f64;
-    let eyes = if stereoscopic { STEREOSCOPIC_EYES } else { 1.0 };
-    (mbps as f64 * 1_000_000.0 / 8.0 / fps / eyes) as u64
+    (mbps as f64 * 1_000_000.0 / 8.0 / fps / eyes_sharing_the_track(stereoscopic)) as u64
 }
+
+pub fn dci_codestream_byte_cap_per_eye(fps: u32, hdr_dci: bool, stereoscopic: bool) -> u64 {
+    let track_cap = if hdr_dci {
+        crate::hdr::hdr_codestream_byte_cap(fps)
+    } else {
+        postkit::j2k::dci_codestream_byte_cap(fps)
+    };
+    (track_cap as f64 / eyes_sharing_the_track(stereoscopic)) as u64
+}
+
+fn eyes_sharing_the_track(stereoscopic: bool) -> f64 {
+    if stereoscopic { STEREOSCOPIC_EYES } else { 1.0 }
+}
+
+pub const COLOUR_SPACE_NAMES: &str = "rec709, p3, p3-d65, xyz, rec2020, aces, acescg or logc";
 
 /// Parse a `--source-colourspace` value into postkit's [`ColourSpace`].
 ///
@@ -78,7 +92,7 @@ pub fn video_codestream_byte_cap(fps: u32, mbps: u32, stereoscopic: bool) -> u64
 pub fn parse_source_colourspace(spec: &str) -> Result<postkit::colour::ColourSpace, String> {
     postkit::colour::parse_colour_space(spec).ok_or_else(|| {
         format!(
-            "unknown source colour space '{}' (use rec709, p3, xyz, rec2020, aces, acescg or logc)",
+            "unknown source colour space '{}' (use {COLOUR_SPACE_NAMES})",
             spec.trim().to_lowercase()
         )
     })
@@ -195,6 +209,14 @@ mod tests {
         assert_eq!(video_codestream_byte_cap(24, 230, false), 1_197_916);
         // both eyes share the track's bit rate, so each gets half the bytes
         assert_eq!(video_codestream_byte_cap(24, 250, true), 651_041);
+    }
+
+    #[test]
+    fn a_3d_track_gives_each_eye_half_of_the_dci_and_hdr_caps() {
+        assert_eq!(dci_codestream_byte_cap_per_eye(24, false, false), 1_302_083);
+        assert_eq!(dci_codestream_byte_cap_per_eye(24, false, true), 651_041);
+        assert_eq!(dci_codestream_byte_cap_per_eye(24, true, false), 2_343_750);
+        assert_eq!(dci_codestream_byte_cap_per_eye(24, true, true), 1_171_875);
     }
 
     fn image_sequence(bandwidth_mbps: u32) -> ImageSequenceEncode {

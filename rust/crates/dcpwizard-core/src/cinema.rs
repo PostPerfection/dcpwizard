@@ -31,6 +31,28 @@ impl CertSource {
     }
 }
 
+const PEM_BEGIN_MARKER: &str = "-----BEGIN ";
+const PEM_DELIMITER: &str = "-----";
+const CERTIFICATE_PEM_LABEL: &str = "CERTIFICATE";
+
+fn refuse_non_certificate_pem_blocks(pem: &str) -> Result<(), String> {
+    for line in pem.lines() {
+        let Some((_, after_begin_marker)) = line.split_once(PEM_BEGIN_MARKER) else {
+            continue;
+        };
+        let label = after_begin_marker
+            .split_once(PEM_DELIMITER)
+            .map_or(after_begin_marker, |(label, _)| label)
+            .trim();
+        if label != CERTIFICATE_PEM_LABEL {
+            return Err(format!(
+                "the inline certificate holds a PEM block labelled {label}, only {CERTIFICATE_PEM_LABEL} blocks can be stored"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Screen {
     pub name: String,
@@ -167,6 +189,9 @@ impl CinemaDb {
     /// the cert is validated as real X.509 here (untrusted input) and rejected
     /// otherwise.
     fn make_screen(name: &str, cert: CertSource) -> Result<Screen, String> {
+        if let CertSource::Inline(pem) = &cert {
+            refuse_non_certificate_pem_blocks(pem)?;
+        }
         let info = cert_info(&cert)?;
         Ok(Screen {
             name: name.to_string(),
@@ -413,6 +438,29 @@ mod tests {
         db.add_cinema("A", vec![], String::new()).unwrap();
         let r = db.add_screen("A", "S1", CertSource::Inline("not a cert".into()));
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn an_inline_certificate_is_refused_with_a_private_key_and_stored_as_is_without() {
+        let dir = tempfile::tempdir().unwrap();
+        let cert_pem = std::fs::read_to_string(leaf_cert(dir.path(), "Leaf")).unwrap();
+        let key_pem = std::fs::read_to_string(dir.path().join("Leaf.key")).unwrap();
+        let mut db = CinemaDb::default();
+        db.add_cinema("A", vec![], String::new()).unwrap();
+
+        let error = db
+            .add_screen(
+                "A",
+                "S1",
+                CertSource::Inline(format!("{cert_pem}{key_pem}")),
+            )
+            .unwrap_err();
+        assert!(error.contains("PRIVATE KEY"), "{error}");
+        assert!(db.cinemas[0].screens.is_empty());
+
+        db.add_screen("A", "S1", CertSource::Inline(cert_pem.clone()))
+            .unwrap();
+        assert_eq!(db.cinemas[0].screens[0].cert, CertSource::Inline(cert_pem));
     }
 
     #[test]

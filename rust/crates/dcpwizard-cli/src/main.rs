@@ -25,6 +25,7 @@ impl From<AccessibilityStandardArg> for postkit::accessibility::AccessibilitySta
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum HdrSourceArg {
     Hdr10,
+    #[value(name = "hdr10plus", alias = "hdr10-plus")]
     Hdr10Plus,
     Hlg,
     PqP3d65,
@@ -63,7 +64,7 @@ impl From<HdrSourceArg> for dcpwizard_core::hdr::HdrSourceFormat {
 /// ST 429-16 composition identity, boxed into the Create variant.
 #[derive(Args)]
 struct CreateCompositionMetadata {
-    /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV
+    /// Content type: FTR, SHR, TLR, TST, XSN, RTG, TSR, POL, PSA, ADV, EPS
     #[arg(long)]
     content_type: Option<String>,
     /// UN M.49 region code, or an RFC 5646 region subtag, the composition is
@@ -694,8 +695,9 @@ struct CreateHdr {
         conflicts_with_all = ["hdr_to_dci_lut", "hdr_already_pq"]
     )]
     hdr_source: Option<HdrSourceArg>,
-    /// Peak luminance of the grade in cd/m², where the DCI HDR roll-off
-    /// starts. Defaults to the master's MaxCLL or mastering display maximum.
+    /// Peak luminance of the grade in cd/m², the level the roll-off compresses
+    /// down to the DCI HDR 299.6 cd/m² peak. Defaults to the master's MaxCLL or
+    /// mastering display maximum.
     #[arg(long, requires = "hdr_dci")]
     hdr_peak_nits: Option<f32>,
     /// Acknowledge the source is already ST 2084 PQ (DCI HDR), so --hdr-dci
@@ -1376,7 +1378,7 @@ enum Commands {
         /// Skip picture bitstream checks (faster)
         #[arg(long)]
         no_picture_check: bool,
-        /// Require strict SMPTE Bv2.1 compliance
+        /// Strict SMPTE verification, then dcpdoctor's Bv2.1 profile check
         #[arg(long)]
         strict: bool,
         /// Write report to file (.txt or .html)
@@ -1621,9 +1623,8 @@ enum Commands {
     },
     /// Generate shell completion
     Completion {
-        /// Shell (bash|zsh|fish)
         #[arg(default_value = "bash")]
-        shell: String,
+        shell: clap_complete::Shell,
     },
     /// Start job queue daemon
     Daemon,
@@ -2057,7 +2058,7 @@ enum Commands {
     #[command(name = "cert-fetch")]
     CertFetch {
         /// Vendor: dolby/doremi, qube (anonymous); christie, gdc, barco
-        /// (need --user/--password). Others must be obtained from the vendor.
+        /// (need --user and a password). Others must be obtained from the vendor.
         #[arg(long)]
         vendor: String,
         /// Server serial number
@@ -2069,9 +2070,12 @@ enum Commands {
         /// Vendor account user (christie/gdc/barco)
         #[arg(long)]
         user: Option<String>,
-        /// Vendor account password (christie/gdc/barco); never logged
-        #[arg(long)]
+        #[arg(long, hide = true)]
         password: Option<String>,
+        /// File whose first line is the vendor account password (christie/gdc/barco).
+        /// Without it the password is read from DCPWIZARD_VENDOR_PASSWORD
+        #[arg(long)]
+        password_file: Option<PathBuf>,
         /// Output PEM file for the downloaded certificate
         #[arg(short, long)]
         output: String,
@@ -2499,10 +2503,31 @@ fn encode_phase_breakdown(progress: &postkit::grok_encoder::EncodeProgress) -> S
     .phase_breakdown()
 }
 
-fn parse_colour_space(s: &str) -> postkit::colour::ColourSpace {
-    postkit::colour::parse_colour_space(s).unwrap_or_else(|| {
-        tracing::warn!("Unknown colour space '{s}', defaulting to Rec709");
-        postkit::colour::ColourSpace::Rec709
+fn write_completion(shell: clap_complete::Shell, out: &mut dyn std::io::Write) {
+    use clap::CommandFactory;
+    clap_complete::generate(shell, &mut Cli::command(), "dcpwizard", out);
+}
+
+fn resolve_content_type(abbreviation: Option<&str>) -> Result<dcpwizard_core::ContentType, String> {
+    abbreviation.map_or(
+        Ok(dcpwizard_core::ContentType::default()),
+        dcpwizard_core::ContentType::parse_abbrev,
+    )
+}
+
+fn parse_colour_space(flag: &str, s: &str) -> Result<postkit::colour::ColourSpace, String> {
+    postkit::colour::parse_colour_space(s).ok_or_else(|| {
+        format!(
+            "unknown colour space '{s}' for {flag} (use {})",
+            dcpwizard_core::encode::COLOUR_SPACE_NAMES
+        )
+    })
+}
+
+fn parse_colour_space_or_exit(flag: &str, s: &str) -> postkit::colour::ColourSpace {
+    parse_colour_space(flag, s).unwrap_or_else(|e| {
+        tracing::error!("{e}");
+        std::process::exit(1);
     })
 }
 
@@ -2517,6 +2542,64 @@ fn parse_dcdm_target(s: &str) -> Option<postkit::dcdm::DcdmTarget> {
 }
 
 // ── create-time helpers (container dims, reel splits, input range) ───────────
+
+#[derive(Default)]
+struct Refusals {
+    messages: Vec<String>,
+}
+
+impl Refusals {
+    fn take<T>(&mut self, result: Result<T, String>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(refusal) => {
+                self.messages.push(refusal);
+                None
+            }
+        }
+    }
+}
+
+struct ParsedCreateFlags {
+    picture_options: dcpwizard_core::source_picture::SourcePictureOptions,
+    naming: CreateNaming,
+    tms_target: Option<dcpwizard_core::tms_upload::TmsConfig>,
+    head_items: Vec<dcpwizard_core::library::AttachedItem>,
+    tail_items: Vec<dcpwizard_core::library::AttachedItem>,
+    container: (u32, u32),
+    content_type: dcpwizard_core::ContentType,
+    source_space: postkit::colour::ColourSpace,
+    xyz_route: dcpwizard_core::encode::XyzRoute,
+    luminance: Option<dcpwizard_core::cpl::Luminance>,
+    audio_input_order: dcpwizard_core::mxf_wrap::AudioInputOrder,
+    versions_specs: Option<Vec<dcpwizard_core::versions::VersionSpec>>,
+    fourk: bool,
+    package_resolution: dcpwizard_core::Resolution,
+    frame_rate: Option<u32>,
+    video_bit_rate: Option<u32>,
+    hdr_dcdm_colour: Option<postkit::encode::SourceColour>,
+    source_colour: postkit::encode::SourceColour,
+    watermark: Option<dcpwizard_core::watermark::WatermarkOptions>,
+    burn_style: postkit::subtitle_raster::BurnStyleOverrides,
+    subtitle_appearance: dcpwizard_core::subtitle::TimedTextAppearance,
+    plan_fps: u32,
+    still_frames: u64,
+    trim_start_frames: u64,
+    trim_end_frames: u64,
+    pad_head_frames: u64,
+    pad_tail_frames: u64,
+    reel_split_frames: Vec<u64>,
+}
+
+fn delivery_profile(name: &str) -> Result<dcpwizard_core::profiles::Profile, String> {
+    dcpwizard_core::profiles::get_profile(name).ok_or_else(|| {
+        let names: Vec<String> = dcpwizard_core::profiles::all_profiles()
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        format!("Unknown profile '{name}'. Available: {}", names.join(", "))
+    })
+}
 
 /// Resolve container dimensions from a preset name or a custom WxH.
 ///
@@ -2630,6 +2713,22 @@ fn print_verify_findings(result: &dcpwizard_core::verify::VerifyResult) {
     }
     for i in &result.info {
         tracing::info!("{i}");
+    }
+}
+
+fn print_bv21_findings(result: &dcpwizard_core::verify::VerifyResult) {
+    tracing::info!("Bv2.1 profile check:");
+    for e in &result.errors {
+        tracing::error!("{e}");
+    }
+    for w in &result.warnings {
+        tracing::warn!("{w}");
+    }
+    for i in &result.info {
+        tracing::info!("{i}");
+    }
+    if result.valid {
+        tracing::info!("Bv2.1 profile check PASSED");
     }
 }
 
@@ -2968,6 +3067,7 @@ fn prepare_create_audio(
 /// this only rejects an unusable request up front. `hdr_dcdm_source` says the
 /// master's own grade was read, which is the third path to PQ.
 fn validate_hdr_dci(
+    refusals: &mut Refusals,
     hdr_to_dci_lut: &Option<String>,
     hdr_already_pq: bool,
     hdr_dcdm_source: bool,
@@ -2976,22 +3076,21 @@ fn validate_hdr_dci(
 ) {
     use dcpwizard_core::hdr;
     if hdr_to_dci_lut.is_none() && !hdr_already_pq && !hdr_dcdm_source {
-        tracing::error!(
+        refusals.messages.push(
             "--hdr-dci needs the source path to PQ: encode from an HDR master (--hdr-source names \
              its grade), or pass --hdr-to-dci-lut or --hdr-already-pq"
+                .to_string(),
         );
-        std::process::exit(1);
     }
     let rate = frame_rate.unwrap_or(24);
     let cap = hdr::hdr_codestream_byte_cap(rate);
     if let Some(mbps) = video_bit_rate
         && mbps > hdr::HDR_MAX_MBPS
     {
-        tracing::error!(
+        refusals.messages.push(format!(
             "--hdr-dci caps the codestream at {cap} bytes/frame ({} Mbit/s at {rate} fps); requested {mbps} Mbit/s exceeds it",
             hdr::HDR_MAX_MBPS
-        );
-        std::process::exit(1);
+        ));
     }
 }
 
@@ -3737,7 +3836,8 @@ fn run_cert_fetch(
     serial: String,
     device_type: Option<String>,
     user: Option<String>,
-    password: Option<String>,
+    password_on_command_line: bool,
+    password_file: Option<PathBuf>,
     output: String,
 ) -> i32 {
     let v = match dcpwizard_core::cert_fetch::parse_vendor(&vendor) {
@@ -3747,13 +3847,15 @@ fn run_cert_fetch(
             return 1;
         }
     };
-    let creds = match (user, password) {
-        (Some(user), Some(password)) => {
-            Some(dcpwizard_core::cert_fetch::Credentials { user, password })
-        }
-        (None, None) => None,
-        _ => {
-            tracing::error!("pass both --user and --password, or neither");
+    let creds = match dcpwizard_core::cert_fetch::resolve_credentials(
+        user,
+        password_on_command_line,
+        password_file.as_deref(),
+        std::env::var(dcpwizard_core::cert_fetch::VENDOR_PASSWORD_ENVIRONMENT_VARIABLE).ok(),
+    ) {
+        Ok(creds) => creds,
+        Err(e) => {
+            tracing::error!("{e}");
             return 1;
         }
     };
@@ -3813,13 +3915,15 @@ fn run_preferences_command(action: &PreferencesCommand) -> i32 {
     }
 }
 
+const MAIN_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 fn main() {
     postkit::grok_encoder::set_packaged_gpu_plugin_path("dcpwizard");
 
     // Windows debug builds overflow the default 1MB stack due to large clap
     // derive enum (102 args across 34 subcommands). Spawn with 8MB stack.
     let thread = std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
+        .stack_size(MAIN_THREAD_STACK_BYTES)
         .spawn(run)
         .expect("failed to spawn main thread");
     thread.join().unwrap();
@@ -3989,20 +4093,9 @@ fn run() {
                 trim_end,
                 still_length,
             } = *source_opts;
-            let picture_options = match picture_opts.resolve() {
-                Ok(options) => options,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
-            let naming = match isdcf_naming.resolve() {
-                Ok(naming) => naming,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
+            let mut refusals = Refusals::default();
+            let picture_options = refusals.take(picture_opts.resolve());
+            let naming = refusals.take(isdcf_naming.resolve());
             let CreateHdr {
                 hdr_to_dci_lut,
                 allow_generic_hdr_tonemap,
@@ -4025,30 +4118,22 @@ fn run() {
             if shutdown_when_done
                 && let Err(e) = dcpwizard_core::encode_qol::resolve_shutdown_command()
             {
-                tracing::error!("{e}");
-                std::process::exit(1);
+                refusals.messages.push(e);
             }
             // same for the TMS config: an unreadable one must fail before the
             // encode, not after it.
-            let tms_target = if upload_to_tms {
-                match load_tms_config(tms_config.as_deref()) {
-                    Ok(config) => Some(config),
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                }
-            } else {
-                None
-            };
+            let tms_target = refusals.take(
+                upload_to_tms
+                    .then(|| load_tms_config(tms_config.as_deref()))
+                    .transpose(),
+            );
             // same for the signer: an unusable key or certificate must fail
             // before the encode, not after it.
             let package_signer = package_signer(&signer_opts);
             if let Some(signer) = package_signer.as_ref()
                 && let Err(e) = signer.check_usable()
             {
-                tracing::error!("{e}");
-                std::process::exit(1);
+                refusals.messages.push(e);
             }
             // resolve the library items before the encode: a name the library
             // does not hold, or media it has lost, fails in a second
@@ -4059,84 +4144,58 @@ fn run() {
             } = *library_items;
             let (head_items, tail_items) = {
                 let library = open_library(library_dir);
-                let resolve = |names: &[String]| {
-                    dcpwizard_core::library_reel::attach_by_name(&library, names).unwrap_or_else(
-                        |e| {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
-                        },
-                    )
+                let mut resolve = |names: &[String]| {
+                    refusals.take(dcpwizard_core::library_reel::attach_by_name(
+                        &library, names,
+                    ))
                 };
                 (resolve(&head_items), resolve(&tail_items))
             };
-            // scheduled start: block until the wall-clock time before any work.
-            if let Some(spec) = start_at.as_deref() {
-                match dcpwizard_core::encode_qol::parse_start_at(
-                    spec,
-                    dcpwizard_core::encode_qol::now_local(),
-                ) {
-                    Ok(target) => {
-                        tracing::info!("Scheduled start: waiting until {target}");
-                        dcpwizard_core::encode_qol::wait_until(target);
-                    }
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                }
-            }
+            let start_at = refusals.take(
+                start_at
+                    .as_deref()
+                    .map(|spec| {
+                        dcpwizard_core::encode_qol::parse_start_at(
+                            spec,
+                            dcpwizard_core::encode_qol::now_local(),
+                        )
+                    })
+                    .transpose(),
+            );
             // resolved up front: it costs nothing and a bad value used to be
             // caught only after the whole encode had run
-            let (container_width, container_height) =
-                match resolve_container(container.as_deref(), container_dims.as_deref(), fourk) {
-                    Ok(dims) => dims,
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                };
+            let container = refusals.take(resolve_container(
+                container.as_deref(),
+                container_dims.as_deref(),
+                fourk,
+            ));
             let audio_adjust = dcpwizard_core::audio_adjust::AudioAdjust {
                 gain_db: audio_gain,
                 fade_in_seconds: audio_fade_in,
                 fade_out_seconds: audio_fade_out,
             };
+            let content_type = refusals.take(resolve_content_type(content_type.as_deref()));
             // source colour space, and the HDR flags that decide the encoder
             // transform themselves: two answers to one question, so refuse both.
-            let source_space =
-                match dcpwizard_core::encode::parse_source_colourspace(&source_colourspace) {
-                    Ok(space) => space,
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                };
-            let xyz_route = match dcpwizard_core::encode::xyz_route(source_space) {
-                Ok(route) => route,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
-            if !xyz_route.compressor_transform()
+            let source_space = refusals.take(dcpwizard_core::encode::parse_source_colourspace(
+                &source_colourspace,
+            ));
+            let xyz_route = source_space
+                .and_then(|space| refusals.take(dcpwizard_core::encode::xyz_route(space)));
+            if xyz_route.is_some_and(|route| !route.compressor_transform())
                 && (hdr_dci || hdr_to_dci_lut.is_some() || allow_generic_hdr_tonemap)
             {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "--source-colourspace {source_colourspace} and the HDR source flags both decide \
                      the encoder's colour transform: pass one or the other"
-                );
-                std::process::exit(1);
+                ));
             }
-            let parsed_luminance = match luminance
-                .as_deref()
-                .map(dcpwizard_core::cpl::Luminance::parse)
-            {
-                Some(Ok(l)) => Some(l),
-                Some(Err(e)) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-                None => None,
-            };
+            let parsed_luminance = refusals.take(
+                luminance
+                    .as_deref()
+                    .map(dcpwizard_core::cpl::Luminance::parse)
+                    .transpose(),
+            );
             let video_path = PathBuf::from(&video);
             let output_dir = PathBuf::from(&output);
             let std_val = if standard == "interop" {
@@ -4144,21 +4203,19 @@ fn run() {
             } else {
                 dcpwizard_core::Standard::Smpte
             };
-            let audio_input_order = match audio_input_order.as_str() {
-                "dcp" => dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51,
-                "lrc-ls-rs-lfe" => dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe,
-                value => {
-                    tracing::error!("Unknown audio input order: {value}");
-                    std::process::exit(1);
-                }
-            };
+            let audio_input_order = refusals.take(match audio_input_order.as_str() {
+                "dcp" => Ok(dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51),
+                "lrc-ls-rs-lfe" => Ok(dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe),
+                value => Err(format!("Unknown audio input order: {value}")),
+            });
             // --audio-map places every channel by hand, and each of these places
             // channels its own way, so two of them would fight over the same
             // lanes.
             if audio_map.is_some() {
                 let competing = [
                     (
-                        audio_input_order == dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe,
+                        audio_input_order
+                            == Some(dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe),
                         "--audio-input-order lrc-ls-rs-lfe",
                     ),
                     (upmix.is_some(), "--upmix"),
@@ -4168,72 +4225,54 @@ fn run() {
                     ),
                 ];
                 if let Some((_, name)) = competing.into_iter().find(|(set, _)| *set) {
-                    tracing::error!(
+                    refusals.messages.push(format!(
                         "--audio-map and {name} both decide which DCP lane each channel lands \
                          on: pass one or the other"
-                    );
-                    std::process::exit(1);
+                    ));
                 }
             }
 
             // parse the multi-version manifest up front so a bad manifest fails
             // before any encoding
-            let versions_specs = match versions.as_deref() {
-                Some(path) => match dcpwizard_core::versions::load_versions(&PathBuf::from(path)) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                },
-                None => None,
-            };
+            let versions_specs = refusals.take(
+                versions
+                    .as_deref()
+                    .map(|path| dcpwizard_core::versions::load_versions(Path::new(path)))
+                    .transpose(),
+            );
 
             // Resolve delivery profile and apply its presets as defaults; explicit
             // flags still win.
-            let profile = match profile.as_deref() {
-                Some(name) => match dcpwizard_core::profiles::get_profile(name) {
-                    Some(p) => {
-                        tracing::info!("Using profile '{}': {}", p.name, p.description);
-                        Some(p)
-                    }
-                    None => {
-                        let names: Vec<String> = dcpwizard_core::profiles::all_profiles()
-                            .into_iter()
-                            .map(|p| p.name)
-                            .collect();
-                        tracing::error!(
-                            "Unknown profile '{name}'. Available: {}",
-                            names.join(", ")
-                        );
-                        std::process::exit(1);
-                    }
-                },
-                None => None,
-            };
-            let fourk = fourk
-                || (!twok
-                    && profile
-                        .as_ref()
-                        .map(|p| p.resolution_width >= 4096)
-                        .unwrap_or(false));
-            let package_resolution = config_resolution(fourk, (container_width, container_height));
-            let package_is_four_k = package_resolution == dcpwizard_core::Resolution::FourK;
-            let frame_rate = frame_rate.or_else(|| profile.as_ref().map(|p| p.frame_rate));
-            let video_bit_rate =
-                video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps));
+            let profile = refusals.take(profile.as_deref().map(delivery_profile).transpose());
+            if let Some(Some(p)) = &profile {
+                tracing::info!("Using profile '{}': {}", p.name, p.description);
+            }
+            // None when --profile was refused
+            let fourk = profile.as_ref().map(|profile| {
+                fourk
+                    || (!twok
+                        && profile
+                            .as_ref()
+                            .map(|p| p.resolution_width >= 4096)
+                            .unwrap_or(false))
+            });
+            let frame_rate = profile
+                .as_ref()
+                .map(|profile| frame_rate.or_else(|| profile.as_ref().map(|p| p.frame_rate)));
+            let video_bit_rate = profile
+                .as_ref()
+                .map(|profile| video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps)));
 
             let quality_psnr_range = dcpwizard_core::encode::MINIMUM_QUALITY_PSNR_DB
                 ..=dcpwizard_core::encode::MAXIMUM_QUALITY_PSNR_DB;
             if let Some(db) = quality_psnr
                 && !quality_psnr_range.contains(&db)
             {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "--quality-psnr {db} is outside the range: at least {} and at most {} dB",
                     quality_psnr_range.start(),
                     quality_psnr_range.end()
-                );
-                std::process::exit(1);
+                ));
             }
 
             // Detect if input is a video file (not a J2K directory)
@@ -4263,22 +4302,23 @@ fn run() {
             // LUT or --hdr-already-pq already hands the encoder PQ.
             let hdr_dcdm_colour =
                 if hdr_dci && is_video_file && hdr_to_dci_lut.is_none() && !hdr_already_pq {
-                    match dcpwizard_core::hdr::plan_hdr_dcdm(
-                        &video_path,
-                        hdr_source.map(Into::into),
-                        hdr_peak_nits,
-                    ) {
-                        Ok(colour) => Some(colour),
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
-                        }
-                    }
+                    refusals.take(
+                        dcpwizard_core::hdr::plan_hdr_dcdm(
+                            &video_path,
+                            hdr_source.map(Into::into),
+                            hdr_peak_nits,
+                        )
+                        .map(Some),
+                    )
                 } else {
-                    None
+                    Some(None)
                 };
-            if hdr_dci {
+            if hdr_dci
+                && let (Some(hdr_dcdm_colour), Some(frame_rate), Some(video_bit_rate)) =
+                    (&hdr_dcdm_colour, frame_rate, video_bit_rate)
+            {
                 validate_hdr_dci(
+                    &mut refusals,
                     &hdr_to_dci_lut,
                     hdr_already_pq,
                     hdr_dcdm_colour.is_some(),
@@ -4291,10 +4331,13 @@ fn run() {
             // mark and the preflight all read
             let source_colour = match (&hdr_dcdm_colour, hdr_to_dci_lut.as_deref(), hdr_already_pq)
             {
-                (Some(colour), _, _) => colour.clone(),
-                (None, Some(lut), _) => postkit::encode::SourceColour::DciLut(PathBuf::from(lut)),
-                (None, None, true) => postkit::encode::SourceColour::AlreadyPq,
-                (None, None, false) => xyz_route.source_colour(),
+                (None, _, _) => None,
+                (Some(Some(colour)), _, _) => Some(colour.clone()),
+                (Some(None), Some(lut), _) => {
+                    Some(postkit::encode::SourceColour::DciLut(PathBuf::from(lut)))
+                }
+                (Some(None), None, true) => Some(postkit::encode::SourceColour::AlreadyPq),
+                (Some(None), None, false) => xyz_route.map(|route| route.source_colour()),
             };
 
             // a single image is a third input shape beside a video and a
@@ -4307,83 +4350,46 @@ fn run() {
             let sequence_input = video_path.is_dir()
                 && postkit::encode::detect_input_type(&video_path)
                     == postkit::encode::InputType::ImageSequence;
-            // a codestream directory is picture that is already encoded: no
-            // transform runs over it, so a colour space here would be ignored
-            if !is_video_file && !still_input {
-                if let Err(e) =
-                    dcpwizard_core::encode::check_precompressed_colourspace(source_space)
-                {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-                if let Err(e) =
-                    dcpwizard_core::source_picture::check_precompressed_picture(&picture_options)
-                {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            }
             if still_input && still_length.is_none() {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "--video {} is a single image and has no length: pass --still-length",
                     video_path.display()
-                );
-                std::process::exit(1);
+                ));
             }
             if !still_input && still_length.is_some() {
-                tracing::error!(
+                refusals.messages.push(
                     "--still-length applies to a single-image --video; a video or codestream \
                      directory carries its own length"
+                        .to_string(),
                 );
-                std::process::exit(1);
             }
             if still_input && (trim_start.is_some() || trim_end.is_some()) {
-                tracing::error!(
+                refusals.messages.push(
                     "--trim-start/--trim-end cut a source down; a still is held for exactly \
                      --still-length, so shorten that instead"
+                        .to_string(),
                 );
-                std::process::exit(1);
             }
 
-            // a burn draws display-RGB text onto decoded frames, so refuse
-            // every route that hands the encoder X'Y'Z' or nothing to draw on,
-            // before anything is encoded
-            let packaged_timed_text: Vec<&Path> =
-                [subtitle.as_deref(), subtitle_qol.ccap.as_deref()]
-                    .into_iter()
-                    .flatten()
-                    .map(Path::new)
-                    .collect();
             let input_is_codestreams = !is_video_file && !still_input;
-            if let Some(ref burn) = subtitle_qol.burn_subtitle
-                && let Err(e) = dcpwizard_core::subtitle::check_burn_supported(
-                    Path::new(burn),
-                    &packaged_timed_text,
-                    &source_colour,
-                    input_is_codestreams,
-                )
-            {
-                tracing::error!("{e}");
-                std::process::exit(1);
-            }
 
             // the mark is drawn in display RGB and onto decoded frames, the
             // same two things a subtitle burn needs
             if watermark_opts.watermark.is_some() {
                 if input_is_codestreams {
-                    tracing::error!(
+                    refusals.messages.push(
                         "--watermark needs frames to draw on, and a J2K directory is already \
                          compressed: mark the finished DCP with the watermark command instead"
+                            .to_string(),
                     );
-                    std::process::exit(1);
-                }
-                if let Some(frames) = dcpwizard_core::encode::frames_not_display_rgb(&source_colour)
+                } else if let Some(frames) = source_colour
+                    .as_ref()
+                    .and_then(dcpwizard_core::encode::frames_not_display_rgb)
                 {
-                    tracing::error!(
+                    refusals.messages.push(format!(
                         "--watermark draws in display RGB, but this source reaches the encoder \
                          as {frames}: mark the finished DCP with the watermark command instead"
-                    );
-                    std::process::exit(1);
+                    ));
                 }
             }
 
@@ -4391,57 +4397,36 @@ fn run() {
             // track was never asked for instead of packaging without them
             let unstyled_subtitle = subtitle_qol.named_appearance();
             if subtitle.is_none() && !unstyled_subtitle.is_empty() {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "{} styles the timed-text track --subtitle packages, and --ccap keeps the \
                      default appearance: pass --subtitle",
                     unstyled_subtitle.join(", ")
-                );
-                std::process::exit(1);
+                ));
             }
             let unstyled_watermark = watermark_opts.named_appearance();
             if watermark_opts.watermark.is_none() && !unstyled_watermark.is_empty() {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "{} styles the mark --watermark burns into the picture: pass --watermark",
                     unstyled_watermark.join(", ")
-                );
-                std::process::exit(1);
+                ));
             }
-            let watermark = match watermark_options(
+            let watermark = refusals.take(watermark_options(
                 watermark_opts.watermark.as_deref(),
                 watermark_opts.watermark_font_size,
                 watermark_opts.watermark_colour.as_deref(),
                 watermark_opts.watermark_position.as_deref(),
                 &CREATE_WATERMARK_FLAGS,
-            ) {
-                Ok(options) => options,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
+            ));
             let unstyled_burn = subtitle_qol.burn_appearance.named();
             if subtitle_qol.burn_subtitle.is_none() && !unstyled_burn.is_empty() {
-                tracing::error!(
+                refusals.messages.push(format!(
                     "{} styles the text --burn-subtitle draws into the picture: pass \
                      --burn-subtitle",
                     unstyled_burn.join(", ")
-                );
-                std::process::exit(1);
+                ));
             }
-            let burn_style = match subtitle_qol.burn_appearance.overrides() {
-                Ok(style) => style,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
-            let subtitle_appearance = match subtitle_qol.appearance() {
-                Ok(appearance) => appearance,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-            };
+            let burn_style = refusals.take(subtitle_qol.burn_appearance.overrides());
+            let subtitle_appearance = refusals.take(subtitle_qol.appearance());
 
             let burnt_in_subtitle = subtitle_qol.burn_subtitle.is_some();
             let CreateSubtitleOpts {
@@ -4459,6 +4444,207 @@ fn run() {
                 ccap_language,
                 ..
             } = *subtitle_qol;
+
+            // one description of the job, checked and hinted before anything is
+            // encoded. The frame count costs a decode, so the source is probed
+            // once here and the video branch reuses it.
+            let source_info = (is_video_file || still_input)
+                .then(|| dcpwizard_core::probe::probe_video(&video_path))
+                .flatten();
+            let plan_fps = frame_rate.map(|frame_rate| {
+                frame_rate.unwrap_or_else(|| {
+                    source_info
+                        .as_ref()
+                        .filter(|_| is_video_file)
+                        .map(|info| {
+                            dcpwizard_core::hfr::source_rate_to_dcp(info.fps_num, info.fps_den).0
+                        })
+                        .unwrap_or(DEFAULT_FRAME_RATE)
+                })
+            });
+            let mut duration_frames = |spec: Option<&str>, flag: &str| {
+                let fps = plan_fps?;
+                refusals.take(spec.map_or(Ok(0), |spec| {
+                    dcpwizard_core::pad::parse_pad_frames(spec, fps)
+                        .map_err(|e| format!("{flag}: {e}"))
+                }))
+            };
+            let still_frames = duration_frames(still_length.as_deref(), "--still-length");
+            let trim_start_frames = duration_frames(trim_start.as_deref(), "--trim-start");
+            let trim_end_frames = duration_frames(trim_end.as_deref(), "--trim-end");
+            let pad_head_frames = duration_frames(pad_head.as_deref(), "--pad-head");
+            let pad_tail_frames = duration_frames(pad_tail.as_deref(), "--pad-tail");
+            let reel_split_frames = plan_fps.and_then(|fps| {
+                refusals.take(resolve_reel_splits(
+                    split_at.as_deref(),
+                    split_chapters,
+                    is_video_file.then_some(video_path.as_path()),
+                    fps,
+                ))
+            });
+            let parsed = (|| {
+                Some(ParsedCreateFlags {
+                    picture_options: picture_options?,
+                    naming: naming?,
+                    tms_target: tms_target?,
+                    head_items: head_items?,
+                    tail_items: tail_items?,
+                    container: container?,
+                    content_type: content_type?,
+                    source_space: source_space?,
+                    xyz_route: xyz_route?,
+                    luminance: parsed_luminance?,
+                    audio_input_order: audio_input_order?,
+                    versions_specs: versions_specs?,
+                    fourk: fourk?,
+                    package_resolution: config_resolution(fourk?, container?),
+                    frame_rate: frame_rate?,
+                    video_bit_rate: video_bit_rate?,
+                    hdr_dcdm_colour: hdr_dcdm_colour?,
+                    source_colour: source_colour?,
+                    watermark: watermark?,
+                    burn_style: burn_style?,
+                    subtitle_appearance: subtitle_appearance?,
+                    plan_fps: plan_fps?,
+                    still_frames: still_frames?,
+                    trim_start_frames: trim_start_frames?,
+                    trim_end_frames: trim_end_frames?,
+                    pad_head_frames: pad_head_frames?,
+                    pad_tail_frames: pad_tail_frames?,
+                    reel_split_frames: reel_split_frames?,
+                })
+            })();
+            let plan = parsed
+                .as_ref()
+                .map(|parsed| dcpwizard_core::preflight::CreatePlan {
+                    picture: video_path.clone(),
+                    picture_kind: match (still_input, is_video_file) {
+                        (true, _) => dcpwizard_core::preflight::PictureKind::Still,
+                        (_, true) => dcpwizard_core::preflight::PictureKind::Video,
+                        _ => dcpwizard_core::preflight::PictureKind::Codestreams,
+                    },
+                    source: source_info.clone(),
+                    still_frames: parsed.still_frames,
+                    fps: parsed.plan_fps,
+                    picture_options: parsed.picture_options.clone(),
+                    geometry: encode_geometry(twok, parsed.fourk, parsed.container),
+                    trim_start_frames: parsed.trim_start_frames,
+                    trim_end_frames: parsed.trim_end_frames,
+                    video_fade_in_seconds: video_fade_in,
+                    video_fade_out_seconds: video_fade_out,
+                    forces_input_range: input_range.is_some(),
+                    pad_head_frames: parsed.pad_head_frames,
+                    pad_tail_frames: parsed.pad_tail_frames,
+                    audio: audio.as_deref().map(PathBuf::from),
+                    audio_map: audio_map.clone(),
+                    upmix: upmix.is_some(),
+                    audio_channels,
+                    audio_language: parsed.naming.audio_language.clone(),
+                    loudness_target: loudness_target.clone(),
+                    subtitle: subtitle.as_deref().map(PathBuf::from),
+                    ccap: ccap.as_deref().map(PathBuf::from),
+                    burn_subtitle: burn_subtitle.as_deref().map(PathBuf::from),
+                    burn_subtitle_font: burn_subtitle_font.as_deref().map(PathBuf::from),
+                    burn_style: parsed.burn_style.clone(),
+                    source_colourspace: parsed.source_space,
+                    source_colour: parsed.source_colour.clone(),
+                    allow_generic_hdr_tonemap,
+                    atmos: atmos.as_deref().map(PathBuf::from),
+                    markers: markers.clone(),
+                    standard: std_val,
+                    content_type: parsed.content_type,
+                    encrypt,
+                    signed: package_signer.is_some(),
+                    hdr_dci,
+                    video_bit_rate_mbps: parsed.video_bit_rate.unwrap_or(0),
+                    right_eye: right_eye.as_deref().map(PathBuf::from),
+                    four_k: parsed.package_resolution == dcpwizard_core::Resolution::FourK,
+                    reel_length_minutes: reel_length.unwrap_or(0),
+                    reel_split_frames: parsed.reel_split_frames.clone(),
+                    library_items: parsed.head_items.len() + parsed.tail_items.len(),
+                    output: output_dir.clone(),
+                    resume,
+                });
+            if let Some(plan) = &plan
+                && let Err(plan_refusals) = dcpwizard_core::preflight::check_before_encode(plan)
+            {
+                refusals.messages.extend(plan_refusals);
+            }
+            let refusals = refusals.messages;
+            for refusal in &refusals {
+                tracing::error!("{refusal}");
+            }
+            if !refusals.is_empty() && !check {
+                std::process::exit(1);
+            }
+            let print_hints =
+                |hints_pass: std::thread::JoinHandle<Vec<postkit::hints::Hint>>| -> usize {
+                    let hints = hints_pass.join().expect("the hint pass does not panic");
+                    for hint in &hints {
+                        tracing::warn!("hint: {}", hint.text);
+                    }
+                    hints.len()
+                };
+            if check {
+                let hint_count = plan.map_or(0, |plan| {
+                    print_hints(std::thread::spawn(move || {
+                        dcpwizard_core::hints::gather_hints(&plan)
+                    }))
+                });
+                if !refusals.is_empty() {
+                    println!(
+                        "Pre-build check refused the job with {} refusal(s) and {hint_count} \
+                         hint(s): nothing was encoded or written",
+                        refusals.len()
+                    );
+                    std::process::exit(1);
+                }
+                println!(
+                    "Pre-build check passed with {hint_count} hint(s); nothing was encoded or written"
+                );
+                return;
+            }
+            let (
+                Some(ParsedCreateFlags {
+                    picture_options,
+                    naming,
+                    tms_target,
+                    head_items,
+                    tail_items,
+                    container: (container_width, container_height),
+                    content_type,
+                    xyz_route,
+                    luminance: parsed_luminance,
+                    audio_input_order,
+                    versions_specs,
+                    fourk,
+                    package_resolution,
+                    frame_rate,
+                    video_bit_rate,
+                    hdr_dcdm_colour,
+                    watermark,
+                    burn_style,
+                    subtitle_appearance,
+                    still_frames,
+                    ..
+                }),
+                Some(plan),
+                Some(start_at),
+            ) = (parsed, plan, start_at)
+            else {
+                unreachable!("a flag that did not parse left a refusal, and a refusal exits above");
+            };
+            let package_is_four_k = package_resolution == dcpwizard_core::Resolution::FourK;
+
+            // scheduled start: block until the wall-clock time before any work.
+            if let Some(target) = start_at {
+                tracing::info!("Scheduled start: waiting until {target}");
+                dcpwizard_core::encode_qol::wait_until(target);
+            }
+            // the audio level hint measures the whole WAV, minutes on a feature,
+            // so the hints run beside the encode and print before packaging
+            let hints_pass = std::thread::spawn(move || dcpwizard_core::hints::gather_hints(&plan));
+
             let subtitle_rtl_mode = match subtitle_rtl.as_str() {
                 "on" => dcpwizard_core::subtitle::RtlMode::On,
                 "off" => dcpwizard_core::subtitle::RtlMode::Off,
@@ -4514,112 +4700,6 @@ fn run() {
                 }
             };
 
-            // one description of the job, checked and hinted before anything is
-            // encoded. The frame count costs a decode, so the source is probed
-            // once here and the video branch reuses it.
-            let source_info = (is_video_file || still_input)
-                .then(|| dcpwizard_core::probe::probe_video(&video_path))
-                .flatten();
-            let plan_fps = frame_rate.unwrap_or_else(|| {
-                source_info
-                    .as_ref()
-                    .filter(|_| is_video_file)
-                    .map(|info| {
-                        dcpwizard_core::hfr::source_rate_to_dcp(info.fps_num, info.fps_den).0
-                    })
-                    .unwrap_or(DEFAULT_FRAME_RATE)
-            });
-            let duration_frames = |spec: Option<&str>, flag: &str| -> u64 {
-                match spec {
-                    Some(spec) => match dcpwizard_core::pad::parse_pad_frames(spec, plan_fps) {
-                        Ok(frames) => frames,
-                        Err(e) => {
-                            tracing::error!("{flag}: {e}");
-                            std::process::exit(1);
-                        }
-                    },
-                    None => 0,
-                }
-            };
-            let plan = dcpwizard_core::preflight::CreatePlan {
-                picture: video_path.clone(),
-                picture_kind: match (still_input, is_video_file) {
-                    (true, _) => dcpwizard_core::preflight::PictureKind::Still,
-                    (_, true) => dcpwizard_core::preflight::PictureKind::Video,
-                    _ => dcpwizard_core::preflight::PictureKind::Codestreams,
-                },
-                source: source_info.clone(),
-                still_frames: duration_frames(still_length.as_deref(), "--still-length"),
-                fps: plan_fps,
-                picture_options: picture_options.clone(),
-                geometry: encode_geometry(twok, fourk, (container_width, container_height)),
-                trim_start_frames: duration_frames(trim_start.as_deref(), "--trim-start"),
-                trim_end_frames: duration_frames(trim_end.as_deref(), "--trim-end"),
-                pad_head_frames: duration_frames(pad_head.as_deref(), "--pad-head"),
-                pad_tail_frames: duration_frames(pad_tail.as_deref(), "--pad-tail"),
-                audio: audio.as_deref().map(PathBuf::from),
-                audio_map: audio_map.clone(),
-                upmix: upmix.is_some(),
-                audio_channels,
-                audio_language: naming.audio_language.clone(),
-                subtitle: subtitle.as_deref().map(PathBuf::from),
-                ccap: ccap.as_deref().map(PathBuf::from),
-                burn_subtitle: burn_subtitle.as_deref().map(PathBuf::from),
-                burn_subtitle_font: burn_subtitle_font.as_deref().map(PathBuf::from),
-                burn_style: burn_style.clone(),
-                source_colourspace: source_space,
-                source_colour: source_colour.clone(),
-                atmos: atmos.as_deref().map(PathBuf::from),
-                markers: markers.clone(),
-                standard: std_val,
-                content_type: content_type
-                    .as_deref()
-                    .and_then(dcpwizard_core::ContentType::from_abbrev)
-                    .unwrap_or_default(),
-                encrypt,
-                signed: package_signer.is_some(),
-                hdr_dci,
-                video_bit_rate_mbps: video_bit_rate.unwrap_or(0),
-                right_eye: right_eye.as_deref().map(PathBuf::from),
-                four_k: package_is_four_k,
-                reel_length_minutes: reel_length.unwrap_or(0),
-                reel_split_frames: match resolve_reel_splits(
-                    split_at.as_deref(),
-                    split_chapters,
-                    is_video_file.then_some(video_path.as_path()),
-                    plan_fps,
-                ) {
-                    Ok(frames) => frames,
-                    Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
-                    }
-                },
-                library_items: head_items.len() + tail_items.len(),
-            };
-            if let Err(e) = dcpwizard_core::preflight::check_before_encode(&plan) {
-                tracing::error!("{e}");
-                std::process::exit(1);
-            }
-            // the audio level hint measures the whole WAV, minutes on a feature,
-            // so the hints run beside the encode and print before packaging
-            let hints_pass = std::thread::spawn(move || dcpwizard_core::hints::gather_hints(&plan));
-            let print_hints =
-                |hints_pass: std::thread::JoinHandle<Vec<postkit::hints::Hint>>| -> usize {
-                    let hints = hints_pass.join().expect("the hint pass does not panic");
-                    for hint in &hints {
-                        tracing::warn!("hint: {}", hint.text);
-                    }
-                    hints.len()
-                };
-            if check {
-                println!(
-                    "Pre-build check passed with {} hint(s); nothing was encoded or written",
-                    print_hints(hints_pass)
-                );
-                return;
-            }
-
             // the job log sits beside the package, and a job that cannot write
             // one has nowhere to put the package either
             let mut job_log = match job_log::JobLog::create(&output_dir) {
@@ -4653,13 +4733,6 @@ fn run() {
                 use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
                 use std::sync::Arc;
                 use std::sync::atomic::AtomicBool;
-
-                // fail loud if ffmpeg cannot decode the source codec (e.g. APV on
-                // an older ffmpeg); the whole pipeline decodes through ffmpeg
-                if let Err(e) = dcpwizard_core::probe::ensure_video_decodable(&video_path) {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
 
                 let _ = std::fs::create_dir_all(&output_dir);
                 let j2k_dir = output_dir.join("j2k");
@@ -4714,10 +4787,6 @@ fn run() {
                     let converted = output_dir.join("hdr_to_dci_source.mov");
                     if let Some(lut) = hdr_to_dci_lut.as_ref() {
                         let lut = PathBuf::from(lut);
-                        if !lut.is_file() {
-                            tracing::error!("HDR-to-DCI LUT not found: {}", lut.display());
-                            std::process::exit(1);
-                        }
                         let opts = postkit::colour::ColourConvertOptions {
                             input: range_src.clone(),
                             output: converted.clone(),
@@ -4743,9 +4812,7 @@ fn run() {
                             return;
                         }
                     } else {
-                        tracing::error!(
-                            "HDR source requires --hdr-to-dci-lut. Use --allow-generic-hdr-tonemap only for an explicitly accepted generic transform."
-                        );
+                        tracing::error!("{}", dcpwizard_core::preflight::HDR_SOURCE_NEEDS_A_LUT);
                         std::process::exit(1);
                     }
                     encode_video_path = converted;
@@ -4768,10 +4835,10 @@ fn run() {
                     );
                     std::process::exit(1);
                 };
-                if dcpwizard_core::probe::pixel_format_has_alpha(&source_pixel_format.pix_fmt) {
-                    tracing::error!(
-                        "Input video has alpha. Composite it over an opaque background before creating a DCP."
-                    );
+                if let Err(e) =
+                    dcpwizard_core::preflight::check_opaque_picture(&source_pixel_format.pix_fmt)
+                {
+                    tracing::error!("{e}");
                     std::process::exit(1);
                 }
                 let source_fps = video_info
@@ -4854,11 +4921,12 @@ fn run() {
                     )
                 });
 
-                let dci_codestream_byte_cap = if hdr_dci {
-                    dcpwizard_core::hdr::hdr_codestream_byte_cap(fps)
-                } else {
-                    postkit::j2k::dci_codestream_byte_cap(fps)
-                };
+                let dci_codestream_byte_cap =
+                    dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(
+                        fps,
+                        hdr_dci,
+                        right_eye.is_some(),
+                    );
                 // under a PSNR target the bandwidth is a ceiling per frame
                 let codestream_byte_cap = match (quality_psnr, target_codestream_bytes) {
                     (Some(_), Some(target)) => dci_codestream_byte_cap.min(target),
@@ -5253,10 +5321,7 @@ fn run() {
                 };
 
                 let resolution = package_resolution;
-                let ct = content_type
-                    .as_deref()
-                    .and_then(dcpwizard_core::ContentType::from_abbrev)
-                    .unwrap_or_default();
+                let ct = content_type;
 
                 // reel-split boundaries from --split-at / --split-chapters
                 let reel_split_frames = match resolve_reel_splits(
@@ -5334,17 +5399,7 @@ fn run() {
                 // Input is a J2K directory or image sequence
                 print_hints(hints_pass);
                 let resolution = package_resolution;
-                let ct = content_type
-                    .as_deref()
-                    .and_then(dcpwizard_core::ContentType::from_abbrev)
-                    .unwrap_or_default();
-
-                if input_range.is_some() {
-                    tracing::error!(
-                        "--input-range applies to a video input; a J2K/image sequence carries no decode range"
-                    );
-                    std::process::exit(1);
-                }
+                let ct = content_type;
 
                 let fps = frame_rate.unwrap_or(24);
                 let reel_split_frames =
@@ -5360,20 +5415,7 @@ fn run() {
                 // the codestream linked for every frame of the hold
                 let still_j2k_dir = output_dir.join(postkit::still::HELD_PICTURE_DIR);
                 let source_j2k_dir = if still_input {
-                    let spec = still_length.as_deref().unwrap_or_default();
-                    let frames = match dcpwizard_core::pad::parse_pad_frames(spec, fps) {
-                        Ok(0) => {
-                            tracing::error!(
-                                "--still-length: a still must be held for at least one frame"
-                            );
-                            std::process::exit(1);
-                        }
-                        Ok(n) => n,
-                        Err(e) => {
-                            tracing::error!("--still-length: {e}");
-                            std::process::exit(1);
-                        }
-                    };
+                    let frames = still_frames;
                     let (width, height, still_filters) = match still_picture(
                         &video_path,
                         &picture_options,
@@ -5935,7 +5977,15 @@ fn run() {
                 print_verify_findings(&result);
             }
 
-            if result.valid { 0 } else { 1 }
+            let bv21_valid = !strict || {
+                let bv21 = dcpwizard_core::verify::check_bv21_profile(Path::new(&dcp_dir));
+                if !quiet {
+                    print_bv21_findings(&bv21);
+                }
+                bv21.valid
+            };
+
+            if result.valid && bv21_valid { 0 } else { 1 }
         }
 
         Commands::Info { dcp_dir } => {
@@ -6428,10 +6478,7 @@ fn run() {
         }
 
         Commands::Completion { shell } => {
-            print!(
-                "{}",
-                dcpwizard_core::shell_completion::generate_completion(&shell, "dcpwizard")
-            );
+            write_completion(shell, &mut std::io::stdout());
             0
         }
 
@@ -6671,7 +6718,7 @@ fn run() {
             colour_space,
             lut,
         } => {
-            let cs = parse_colour_space(&colour_space);
+            let cs = parse_colour_space_or_exit("--colour-space", &colour_space);
             let opts = postkit::dcdm::DcdmOptions {
                 input_dir: std::path::PathBuf::from(&input),
                 output_dir: std::path::PathBuf::from(&output),
@@ -6701,6 +6748,7 @@ fn run() {
             target,
             lut,
         } => {
+            let source_space = parse_colour_space_or_exit("--source", &source);
             // X'Y'Z' (DCDM) and P3-D65 are dcdm-module transforms, not ffmpeg
             // colorspace-filter targets; route them through the real
             // Rec.709/P3/Rec.2020 transform (fails loud on an unsupported source).
@@ -6732,8 +6780,8 @@ fn run() {
                 let opts = postkit::colour::ColourConvertOptions {
                     input: std::path::PathBuf::from(&input),
                     output: std::path::PathBuf::from(&output),
-                    source_space: parse_colour_space(&source),
-                    target_space: parse_colour_space(&target),
+                    source_space,
+                    target_space: parse_colour_space_or_exit("--target", &target),
                     lut_path: lut.map(std::path::PathBuf::from),
                 };
                 match postkit::colour::convert_colour(&opts) {
@@ -7135,8 +7183,17 @@ fn run() {
             device_type,
             user,
             password,
+            password_file,
             output,
-        } => run_cert_fetch(vendor, serial, device_type, user, password, output),
+        } => run_cert_fetch(
+            vendor,
+            serial,
+            device_type,
+            user,
+            password.is_some(),
+            password_file,
+            output,
+        ),
 
         Commands::Trailer {
             content,
@@ -7657,10 +7714,10 @@ fn run() {
                     }
                 };
             let resolution = config_resolution(fourk, (container_width, container_height));
-            let ct = content_type
-                .as_deref()
-                .and_then(dcpwizard_core::ContentType::from_abbrev)
-                .unwrap_or_default();
+            let ct = resolve_content_type(content_type.as_deref()).unwrap_or_else(|e| {
+                tracing::error!("{e}");
+                std::process::exit(1);
+            });
             let config = dcpwizard_core::dcp::DcpConfig {
                 title: String::new(),
                 standard: std_val,
@@ -7717,6 +7774,36 @@ mod tests {
     }
 
     #[test]
+    fn the_bash_completion_names_every_real_subcommand() {
+        let completion = std::thread::Builder::new()
+            .stack_size(MAIN_THREAD_STACK_BYTES)
+            .spawn(|| {
+                use clap::CommandFactory;
+                let mut script = Vec::new();
+                write_completion(clap_complete::Shell::Bash, &mut script);
+                let subcommands: Vec<String> = Cli::command()
+                    .get_subcommands()
+                    .map(|subcommand| subcommand.get_name().to_string())
+                    .collect();
+                (String::from_utf8(script).unwrap(), subcommands)
+            })
+            .unwrap();
+        let (script, subcommands) = completion.join().unwrap();
+        for name in &subcommands {
+            assert!(
+                script.contains(&format!("dcpwizard,{name})")),
+                "{name} is missing from the completion"
+            );
+        }
+        for invented in ["import", "wrap", "qc"] {
+            assert!(
+                !script.contains(&format!("dcpwizard,{invented})")),
+                "the completion names {invented}, which is no subcommand"
+            );
+        }
+    }
+
+    #[test]
     fn colour_target_selects_dcdm_target() {
         assert_eq!(
             parse_dcdm_target("xyz"),
@@ -7733,6 +7820,21 @@ mod tests {
         // ffmpeg colorspace targets are not dcdm-module targets
         assert_eq!(parse_dcdm_target("rec709"), None);
         assert_eq!(parse_dcdm_target("p3"), None);
+    }
+
+    #[test]
+    fn an_unknown_colour_space_is_refused_with_the_valid_names() {
+        assert_eq!(
+            parse_colour_space("--target", "p3").unwrap(),
+            postkit::colour::ColourSpace::P3
+        );
+        let refusal = parse_colour_space("--target", "rec601").unwrap_err();
+        assert!(refusal.contains("--target"), "{refusal}");
+        assert!(refusal.contains("'rec601'"), "{refusal}");
+        assert!(
+            refusal.contains(dcpwizard_core::encode::COLOUR_SPACE_NAMES),
+            "{refusal}"
+        );
     }
 
     #[test]

@@ -10,12 +10,14 @@
 //!   dolby/doremi: ftp://ftp.cinema.dolby.com/Certificates/<first3>xxx/
 //!   qube:         ftp://certificates.qubecinema.com/SMPTE-<type>/
 //!
-//! credentialed vendors (vendor account required, --user/--password; the
-//! password is embedded in the curl url but never logged, dom#2705/2706):
+//! credentialed vendors (vendor account required, --user plus --password-file
+//! or DCPWIZARD_VENDOR_PASSWORD, the password reaches curl through a config on
+//! stdin and is never logged, dom#2705/2706):
 //!   christie: ftp://certificates.christiedigital.com/Certificates/{F-IMB,IMB-S2}/
 //!   gdc:      ftp://ftp.gdc-tech.com/SHA256/<serial>.crt.pem
 //!   barco:    sftp://certificates.barco.com/<serial[0:7]>xxx/<serial>/Barco-ICMP...
 
+use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
@@ -34,10 +36,58 @@ pub enum Vendor {
 }
 
 /// projector/server login for a credentialed vendor endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Credentials {
     pub user: String,
     pub password: String,
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("user", &self.user)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+pub const VENDOR_PASSWORD_ENVIRONMENT_VARIABLE: &str = "DCPWIZARD_VENDOR_PASSWORD";
+
+pub fn resolve_credentials(
+    user: Option<String>,
+    password_on_command_line: bool,
+    password_file: Option<&Path>,
+    environment_password: Option<String>,
+) -> Result<Option<Credentials>, String> {
+    if password_on_command_line {
+        return Err(format!(
+            "--password is refused because the command line is visible to other users: pass --password-file <path> or set {VENDOR_PASSWORD_ENVIRONMENT_VARIABLE}"
+        ));
+    }
+    let Some(user) = user else {
+        if password_file.is_some() {
+            return Err("--password-file needs --user".to_string());
+        }
+        return Ok(None);
+    };
+    let password = match password_file {
+        Some(path) => read_password_file(path)?,
+        None => environment_password.ok_or_else(|| {
+            format!(
+                "--user needs a password: pass --password-file <path> or set {VENDOR_PASSWORD_ENVIRONMENT_VARIABLE}"
+            )
+        })?,
+    };
+    if password.is_empty() {
+        return Err("the vendor password is empty".to_string());
+    }
+    Ok(Some(Credentials { user, password }))
+}
+
+fn read_password_file(path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read password file {}: {e}", path.display()))?;
+    Ok(text.lines().next().unwrap_or_default().to_string())
 }
 
 const DOLBY_BASE: &str = "ftp://ftp.cinema.dolby.com/Certificates";
@@ -159,6 +209,32 @@ fn barco_path(serial: &str) -> Result<String, String> {
     ))
 }
 
+fn curl_config_quote(value: &str) -> String {
+    let mut quoted = String::new();
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{0b}' => quoted.push_str("\\v"),
+            other => quoted.push(other),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+fn curl_config(url: &str, creds: &Credentials) -> String {
+    format!(
+        "url = {}\nuser = {}\n",
+        curl_config_quote(url),
+        curl_config_quote(&format!("{}:{}", creds.user, creds.password))
+    )
+}
+
 /// download one credentialed url. credentials go through a curl config on stdin
 /// (`-K -`), never argv or logs. sftp host-key checking is disabled to match the
 /// vendor endpoints (same as dcp-o-matic's SSL-verify-off). the returned error
@@ -191,10 +267,7 @@ fn curl_creds(
             .as_mut()
             .ok_or("cannot pass credentials to curl")?;
         // curl config: url + user are read here so the password never hits argv.
-        let config = format!(
-            "url = \"{scheme}://{host}{path}\"\nuser = \"{}:{}\"\n",
-            creds.user, creds.password
-        );
+        let config = curl_config(&format!("{scheme}://{host}{path}"), creds);
         stdin
             .write_all(config.as_bytes())
             .map_err(|e| format!("cannot write curl config: {e}"))?;
@@ -211,7 +284,7 @@ fn curl_creds(
         7 => "could not connect to host",
         28 => "connection timed out",
         9 | 19 | 78 => "file not found on server",
-        67 => "authentication failed (check --user/--password)",
+        67 => "authentication failed (check --user and the vendor password)",
         _ => "download failed",
     };
     Err(format!("{msg} at {display_url} (curl exit {code})"))
@@ -284,7 +357,9 @@ pub fn fetch(
 
     if needs_credentials(vendor) {
         let creds = creds.ok_or_else(|| {
-            "this vendor needs a vendor account; pass --user and --password".to_string()
+            format!(
+                "this vendor needs a vendor account: pass --user with --password-file <path> or {VENDOR_PASSWORD_ENVIRONMENT_VARIABLE}"
+            )
         })?;
         let pem = fetch_credentialed(vendor, serial, creds)?;
         let info = postkit::certificate::cert_info_from_pem(&pem)?;
@@ -445,5 +520,142 @@ mod tests {
         );
         assert!(barco_path("123").is_err());
         assert!(barco_path("12345678901").is_err());
+    }
+
+    #[test]
+    fn credentials_debug_redacts_the_password() {
+        let credentials = Credentials {
+            user: "projectionist".into(),
+            password: "hunter2".into(),
+        };
+        let debug = format!("{credentials:?}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("projectionist"), "{debug}");
+    }
+
+    #[test]
+    fn the_password_file_first_line_wins_over_the_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vendor-password");
+        std::fs::write(&path, "from-file\r\nsecond line\n").unwrap();
+        let credentials = resolve_credentials(
+            Some("projectionist".into()),
+            false,
+            Some(&path),
+            Some("from-environment".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(credentials.user, "projectionist");
+        assert_eq!(credentials.password, "from-file");
+
+        let credentials = resolve_credentials(
+            Some("projectionist".into()),
+            false,
+            None,
+            Some("from-environment".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(credentials.password, "from-environment");
+    }
+
+    #[test]
+    fn a_user_without_a_password_source_is_refused_naming_both() {
+        let error =
+            resolve_credentials(Some("projectionist".into()), false, None, None).unwrap_err();
+        assert!(error.contains("--password-file"), "{error}");
+        assert!(
+            error.contains(VENDOR_PASSWORD_ENVIRONMENT_VARIABLE),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_password_argument_is_refused_naming_both_alternatives() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vendor-password");
+        std::fs::write(&path, "from-file\n").unwrap();
+        let error = resolve_credentials(
+            Some("projectionist".into()),
+            true,
+            Some(&path),
+            Some("from-environment".into()),
+        )
+        .unwrap_err();
+        assert!(error.contains("--password-file"), "{error}");
+        assert!(
+            error.contains(VENDOR_PASSWORD_ENVIRONMENT_VARIABLE),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn no_user_means_anonymous_and_a_password_file_alone_is_refused() {
+        assert!(
+            resolve_credentials(None, false, None, Some("from-environment".into()))
+                .unwrap()
+                .is_none()
+        );
+        let error =
+            resolve_credentials(None, false, Some(Path::new("vendor-password")), None).unwrap_err();
+        assert!(error.contains("--user"), "{error}");
+    }
+
+    #[test]
+    fn a_password_with_quotes_backslashes_and_newlines_reaches_curl_intact() {
+        use base64::Engine;
+        use std::io::{BufRead, BufReader, Write};
+        const BASIC_AUTHORIZATION_PREFIX: &str = "Authorization: Basic ";
+        const EMPTY_HTTP_RESPONSE: &[u8] =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let credentials = Credentials {
+            user: "projectionist".into(),
+            password: "a\"b\\c\tv\u{0b}\r\nurl = \"http://elsewhere.test/\"".into(),
+        };
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut authorization = None;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some(value) = line.strip_prefix(BASIC_AUTHORIZATION_PREFIX) {
+                    authorization = Some(value.to_string());
+                }
+            }
+            stream.write_all(EMPTY_HTTP_RESPONSE).unwrap();
+            authorization
+        });
+
+        let mut curl = Command::new("curl")
+            .args(["-q", "-s", "--noproxy", "*", "-K", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        curl.stdin
+            .take()
+            .unwrap()
+            .write_all(curl_config(&url, &credentials).as_bytes())
+            .unwrap();
+        assert!(curl.wait().unwrap().success());
+
+        let authorization = server.join().unwrap().expect("curl sent no basic auth");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(authorization)
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(decoded).unwrap(),
+            format!("{}:{}", credentials.user, credentials.password)
+        );
     }
 }

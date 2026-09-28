@@ -401,7 +401,7 @@
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🖥️</div>
-            <h3>2K, 4K, any frame rate</h3>
+            <h3>2K and 4K, 24 to 60 fps</h3>
             <p>2K and 4K at standard rates, plus high frame rate up to 60 fps at 2K.</p>
         </div>
         <div class="feature-card">
@@ -479,7 +479,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🌈</div>
             <h3>HDR and Dolby Vision</h3>
-            <p><code>create --hdr-dci</code> turns an HDR10, HLG, PQ P3-D65, or Dolby Vision 8.1 master into a DCI HDR Addendum DCP: ST 2084 on the picture descriptor, the HDR-Metadata extension in the CPL, HDR1 in the content title. <code>--hdr-source</code> names the grade when the master's colour tags do not, <code>--hdr-peak-nits</code> says where the roll-off starts.</p>
+            <p><code>create --hdr-dci</code> turns an HDR10, HLG, PQ P3-D65, or Dolby Vision 8.1 master into a DCI HDR Addendum DCP: ST 2084 on the picture descriptor, the HDR-Metadata extension in the CPL, HDR1 in the content title. <code>--hdr-source</code> names the grade when the master's colour tags do not, <code>--hdr-peak-nits</code> gives the grade's peak luminance, the level the roll-off compresses down to the DCI HDR 299.6 cd/m² peak.</p>
         </div>
     </div>
 
@@ -595,7 +595,7 @@
 
 <section class="section" id="automation">
     <h2 class="section-title">Automation</h2>
-    <p class="section-subtitle">Run deliveries hands-off. The command-line version drives everything the app does, plus watch folders, a job queue, and an automation API for headless rooms.</p>
+    <p class="section-subtitle">Run deliveries hands-off. The command-line version builds, checks and delivers every package the app does, plus watch folders, a job queue, and an automation API for headless rooms.</p>
 
     <div class="code-block"><code><span class="comment"># Raise every refusal and hint before committing to the encode</span>
 <span class="cmd">dcpwizard</span> create <span class="flag">--title</span> <span class="val">"My Film"</span> <span class="flag">--video</span> <span class="val">movie.mov</span> <span class="flag">--output</span> <span class="val">./dcp</span> <span class="flag">--check</span>
@@ -620,7 +620,7 @@
         <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
         <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>mpv (GUI preview)</span></div>
+        <div class="prereq"><span class="tag required">Required</span><span>libmpv development files (desktop app only)</span></div>
     </div>
 
     <div class="code-block"><code><span class="comment"># Command-line build</span>
@@ -629,8 +629,10 @@
 <span class="cmd">cargo</span> build --release
 
 <span class="comment"># Desktop app build</span>
-<span class="cmd">cd</span> gui
+<span class="comment"># Copy the grok library (libgrokj2k.so.1, libgrokj2k.1.dylib or grokj2k.dll) into gui/src-tauri first, setup-tauri-bin.sh also needs patchelf on Linux</span>
+<span class="cmd">cd</span> ../gui
 <span class="cmd">pnpm</span> install
+<span class="cmd">../scripts/setup-tauri-bin.sh</span>
 <span class="cmd">pnpm</span> tauri build</code></div>
 
     <p style="color: var(--text-secondary);">Full build notes for Linux, macOS, and Windows are in the <a href="https://github.com/PostPerfection/dcpwizard" style="color: var(--accent); text-decoration: none;">GitHub repository</a>.</p>

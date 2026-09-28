@@ -264,6 +264,36 @@ impl JobQueue {
             self.record(&job);
         }
     }
+
+    // a cancel that lands first is kept
+    fn update_job_in_state(
+        &self,
+        id: &str,
+        from: JobState,
+        state: JobState,
+        progress: u32,
+        message: &str,
+    ) -> bool {
+        let updated = {
+            let mut updated = None;
+            if let Ok(mut jobs) = self.jobs.lock()
+                && let Some(job) = jobs.get_mut(id)
+                && job.state == from
+            {
+                job.state = state;
+                job.progress_percent = progress;
+                job.message = message.to_string();
+                job.updated_at = current_epoch_secs();
+                updated = Some(job.clone());
+            }
+            updated
+        };
+        let Some(job) = updated else {
+            return false;
+        };
+        self.record(&job);
+        true
+    }
 }
 
 /// Append one job record as a JSON line, creating the file and its parent dir.
@@ -335,15 +365,25 @@ pub fn start_job_queue(queue: &JobQueue) {
             };
 
             if let Some(job) = next_job {
-                queue_clone.update_job(&job.id, JobState::Running, 0, "Processing...");
-                tracing::info!("Processing job {} ({:?})", job.id, job.job_type);
-
                 // run the job on its own thread so the loop can watch the cancel
                 // flag and finalise the job even if the operation is still running
                 let cancel = Arc::new(AtomicBool::new(false));
                 if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
                     flags.insert(job.id.clone(), cancel.clone());
                 }
+                if !queue_clone.update_job_in_state(
+                    &job.id,
+                    JobState::Pending,
+                    JobState::Running,
+                    0,
+                    "Processing...",
+                ) {
+                    if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
+                        flags.remove(&job.id);
+                    }
+                    continue;
+                }
+                tracing::info!("Processing job {} ({:?})", job.id, job.job_type);
                 let control = JobControl {
                     queue: queue_clone.clone(),
                     job_id: job.id.clone(),
@@ -375,24 +415,21 @@ pub fn start_job_queue(queue: &JobQueue) {
                 if cancel.load(Ordering::Relaxed) {
                     queue_clone.update_job(&job.id, JobState::Cancelled, 0, "Cancelled");
                 } else {
-                    match outcome {
-                        Some(Ok(())) => queue_clone.update_job(
-                            &job.id,
-                            JobState::Completed,
-                            100,
-                            "Completed successfully",
-                        ),
+                    let (state, progress, message) = match outcome {
+                        Some(Ok(())) => (JobState::Completed, 100, "Completed successfully".into()),
                         Some(Err(cause)) => {
                             tracing::error!("job {} failed: {cause}", job.id);
-                            queue_clone.update_job(&job.id, JobState::Failed, 0, &cause)
+                            (JobState::Failed, 0, cause)
                         }
-                        None => queue_clone.update_job(
-                            &job.id,
-                            JobState::Failed,
-                            0,
-                            WORKER_LOST_MESSAGE,
-                        ),
-                    }
+                        None => (JobState::Failed, 0, WORKER_LOST_MESSAGE.to_string()),
+                    };
+                    queue_clone.update_job_in_state(
+                        &job.id,
+                        JobState::Running,
+                        state,
+                        progress,
+                        &message,
+                    );
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_millis(500));
@@ -420,8 +457,13 @@ struct JobControl {
 
 impl crate::dcp::ProgressSink for JobControl {
     fn stage(&self, percent: u32, message: &str) {
-        self.queue
-            .update_job(&self.job_id, JobState::Running, percent, message);
+        self.queue.update_job_in_state(
+            &self.job_id,
+            JobState::Running,
+            JobState::Running,
+            percent,
+            message,
+        );
     }
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
@@ -724,6 +766,140 @@ mod tests {
             "message hid the cause: {}",
             failed.message
         );
+    }
+
+    const BLOCKING_FRAMES: usize = 48;
+    const BLOCKING_FRAME_BYTES: usize = 4 * 1024 * 1024;
+    const BLOCKING_FRAME_WIDTH: u32 = 2048;
+    const BLOCKING_FRAME_HEIGHT: u32 = 1080;
+    const BLOCKING_FRAME_RATE: u32 = 24;
+    const END_OF_CODESTREAM_BYTES: usize = 2;
+    const CANCELLED_WATCH_FACTOR: u32 = 2;
+    const STATE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+    // a create over the blocking frames takes seconds on a loaded box
+    const CREATE_RUN_LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+
+    // the wrapper reads only the codestream header
+    fn blocking_codestream_directory(root: &Path) -> PathBuf {
+        let frames = root.join("j2k");
+        std::fs::create_dir_all(&frames).unwrap();
+        let seed = root.join("seed.j2c");
+        crate::pad::generate_black_frame(
+            BLOCKING_FRAME_WIDTH,
+            BLOCKING_FRAME_HEIGHT,
+            BLOCKING_FRAME_RATE,
+            &seed,
+        )
+        .unwrap();
+        let mut codestream = std::fs::read(&seed).unwrap();
+        let end_of_codestream = codestream.split_off(codestream.len() - END_OF_CODESTREAM_BYTES);
+        codestream.resize(BLOCKING_FRAME_BYTES, 0);
+        codestream.extend_from_slice(&end_of_codestream);
+        for frame in 0..BLOCKING_FRAMES {
+            std::fs::write(frames.join(format!("frame_{frame:05}.j2c")), &codestream).unwrap();
+        }
+        frames
+    }
+
+    fn create_params(frames: &Path, output: &Path) -> String {
+        serde_json::to_string(&crate::dcp::DcpConfig {
+            title: "Cancel Test".into(),
+            output_dir: output.to_path_buf(),
+            j2k_dir: Some(frames.to_path_buf()),
+            frame_rate_num: BLOCKING_FRAME_RATE,
+            frame_rate_den: 1,
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    fn wait_for_state(queue: &JobQueue, id: &str, wanted: JobState, limit: std::time::Duration) {
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            let job = queue.get(id).expect("the submitted job");
+            if job.state == wanted {
+                return;
+            }
+            assert!(
+                matches!(job.state, JobState::Pending | JobState::Running),
+                "job ended {:?} ({}) while waiting for {wanted:?}",
+                job.state,
+                job.message
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "job stayed {:?} for {limit:?}",
+                job.state
+            );
+            std::thread::sleep(STATE_POLL_INTERVAL);
+        }
+    }
+
+    fn holds_assetmap(dir: &Path) -> bool {
+        std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("ASSETMAP"))
+        })
+    }
+
+    #[test]
+    fn a_create_cancelled_while_it_runs_stays_cancelled_and_writes_no_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let frames = blocking_codestream_directory(dir.path());
+        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
+        start_job_queue(&queue);
+
+        let finished_output = dir.path().join("finished");
+        let started = std::time::Instant::now();
+        let finished = queue.submit(
+            JobType::CreateDcp,
+            &create_params(&frames, &finished_output),
+        );
+        wait_for_state(&queue, &finished, JobState::Completed, CREATE_RUN_LIMIT);
+        let uncancelled_run_time = started.elapsed();
+        assert!(
+            holds_assetmap(&finished_output),
+            "the uncancelled create wrote no ASSETMAP"
+        );
+
+        let cancelled_output = dir.path().join("cancelled");
+        let cancelled = queue.submit(
+            JobType::CreateDcp,
+            &create_params(&frames, &cancelled_output),
+        );
+        wait_for_state(&queue, &cancelled, JobState::Running, FAILURE_POLL_LIMIT);
+        assert!(queue.cancel(&cancelled));
+
+        let watch_until = std::time::Instant::now() + uncancelled_run_time * CANCELLED_WATCH_FACTOR;
+        while std::time::Instant::now() < watch_until {
+            let job = queue.get(&cancelled).expect("the submitted job");
+            assert_eq!(job.state, JobState::Cancelled, "{}", job.message);
+            std::thread::sleep(STATE_POLL_INTERVAL);
+        }
+        stop_job_queue(&queue);
+        assert!(
+            !holds_assetmap(&cancelled_output),
+            "the cancelled create finished its package"
+        );
+    }
+
+    #[test]
+    fn a_stage_reported_after_a_cancel_leaves_the_job_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
+        let id = queue.submit(JobType::EncodeJ2k, "{}");
+        queue.update_job(&id, JobState::Running, 0, "Processing...");
+        let control = JobControl {
+            queue: queue.clone(),
+            job_id: id.clone(),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+
+        assert!(queue.cancel(&id));
+        crate::dcp::ProgressSink::stage(&control, 50, "24/48 frames");
+
+        assert_eq!(queue.get(&id).unwrap().state, JobState::Cancelled);
     }
 
     #[test]
