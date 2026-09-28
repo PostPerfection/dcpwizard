@@ -50,7 +50,7 @@ Free and open-source alternative to easyDCP Creator+.
 
 ### Encoding & Transcoding
 - **JPEG 2000 encoding** via Grok (create, pipeline, and DCP transcode paths)
-- **CPU and GPU encoding**: CPU encoding uses the available cores by default. `--gpu` or the desktop GPU setting enables Grok's accelerator plugin for JPEG 2000 encode and decode. An explicit `--gpu` fails if the plugin cannot start, while a saved desktop preference warns and continues on the CPU. `--no-gpu` forces the CPU
+- **CPU encoding** on all available cores. GPU encoding needs Grok's accelerator plugin, a commercial product sold separately, see [GPU builds](#gpu-builds)
 - **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV
 - **Video transcoding**, ProRes, H.264, H.265, DNxHR → image sequence → J2K (via ffmpeg)
 - **Image sequence input**, DPX, TIFF, EXR, PNG, JPEG, BMP
@@ -118,7 +118,7 @@ Free and open-source alternative to easyDCP Creator+.
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
 - **Frame extraction**, extract individual frames as images (thumbnails/preview)
-- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback, and the accelerator plugin adds device decode and the X'Y'Z' to display-RGB transform for 4K playback. MP4, ProRes and other sources use libmpv. Encrypted and stereoscopic J2K also use libmpv
+- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback. MP4, ProRes and other sources use libmpv. Encrypted and stereoscopic J2K also use libmpv
 
 ### Delivery & Automation
 - **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU); **format-drive** (ext2/ext3, volume label, mounted-target refusal) and **check-drive** (report fs type + label) for cinema hard-drive delivery
@@ -168,7 +168,11 @@ On Fedora, enable [RPM Fusion](https://rpmfusion.org/Configuration) first: ffmpe
 
 The `.AppImage` carries libmpv as well, and runs ffmpeg, xmlsec1 and xmllint from the PATH. For the `.dmg`, install libmpv with `brew install mpv`.
 
-**GPU encoding on Fedora.** The released rpm encodes on the CPU. An rpm with the CUDA plugin is built from a local Grok installation that carries it:
+### GPU builds
+
+GPU encoding and preview decode need Grok's accelerator plugin, a commercial product sold separately by Grok Image Compression. The released builds encode on the CPU. This section is for a machine that has the plugin.
+
+**GPU encoding on Fedora.** An rpm with the CUDA plugin is built from a local Grok installation that carries it:
 
 ```bash
 ./scripts/build-fedora-rpm.sh /path/to/grok/install
@@ -192,7 +196,7 @@ sudo reboot
 
 The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_1.3.3-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
 
-**GPU encoding on macOS.** The released dmg encodes on the CPU. A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
+**GPU encoding on macOS.** A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
 
 ```bash
 ./scripts/build-macos-dmg.sh /path/to/grok/install
@@ -326,13 +330,13 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Progress in title bar (visible in taskbar during builds)
 - Desktop notifications on build complete/fail
 - Conditional button enabling (Build disabled until ready)
-- Built-in preview player with timeline scrubber (click-to-seek, drag-to-scrub, timecode display). A DCP, a picture MXF, a CPL or a directory of codestreams plays through grok, in process, at 2K real time on the CPU and at 4K real time on the device when the GPU setting is on. Everything else plays through mpv. The strip under the picture carries the QC controls: safe area, aspect mask, centre cross, thirds grid, the crop the build will apply, decode resolution and the subtitle and closed-caption tracks
+- Built-in preview player with timeline scrubber (click-to-seek, drag-to-scrub, timecode display). A DCP, a picture MXF, a CPL or a directory of codestreams plays through grok, in process, at 2K real time on the CPU. Everything else plays through mpv. The strip under the picture carries the QC controls: safe area, aspect mask, centre cross, thirds grid, the crop the build will apply, decode resolution and the subtitle and closed-caption tracks
 - Multi-CPL composition tabs, switch, add, remove compositions
 - SRT → SMPTE subtitle conversion panel
 - Subtitle extraction panel (DCP/asset → SRT or text)
 - Subtitle burn-in panel
 - Target resolution conversion panel (2K/4K scope/flat/full)
-- GPU encoding toggle (grok acceleration)
+- GPU encoding toggle, only useful with the commercial Grok accelerator plugin
 
 ```bash
 # GUI extras: Node (pnpm) and libmpv. On macOS: brew install node pnpm mpv
@@ -344,7 +348,7 @@ pnpm tauri dev                         # or: pnpm tauri build --no-bundle
 
 Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 
-grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes and previews on the CPU even with the GPU toggle on. On Metal the same directory must also contain `grok_kernels.metallib`.
+**Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI launched without `GRK_PLUGIN_PATH` therefore encodes and previews on the CPU even with the GPU toggle on. On Metal the same directory must also contain `grok_kernels.metallib`.
 
 ```bash
 # rebuilds the GUI against that grok and launches it with the plugin on the
@@ -403,9 +407,6 @@ dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --o
 
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp
-
-# Same, JPEG 2000 on grok's accelerator plugin (fails if the plugin cannot load)
-dcpwizard --gpu create --title "My Film" --video movie.mov --output ./dcp --twok
 
 # Check the job before committing to the encode: every refusal, then every hint.
 # Nothing is encoded and nothing is written under --output. Exits 1 on a refusal.

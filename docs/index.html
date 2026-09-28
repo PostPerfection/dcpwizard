@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DCP Wizard: Turn Your Master Into a Cinema-Ready DCP</title>
-    <meta name="description" content="DCP Wizard turns your finished master into a cinema-ready Digital Cinema Package. Encode and preview JPEG 2000 on the CPU or GPU, package SMPTE or Interop, encrypt every track with KDMs, quality-check, and deliver. Free desktop app for Windows, macOS, and Linux.">
+    <meta name="description" content="DCP Wizard turns your finished master into a cinema-ready Digital Cinema Package. Encode and preview JPEG 2000, package SMPTE or Interop, encrypt every track with KDMs, quality-check, and deliver. Free desktop app for Windows, macOS, and Linux.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -334,7 +334,7 @@
 
 <section class="hero">
     <h1>Turn your master into a<br><span>cinema-ready DCP</span></h1>
-    <p>DCP Wizard encodes your finished picture on the CPU or GPU, packages the sound and picture into a Digital Cinema Package, and plays the result back before delivery.</p>
+    <p>DCP Wizard encodes your finished picture, packages the sound and picture into a Digital Cinema Package, and plays the result back before delivery.</p>
     <div class="hero-buttons">
         <a href="#download" class="btn btn-primary btn-lg">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -406,8 +406,8 @@
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">⚙️</div>
-            <h3>CPU or GPU JPEG 2000</h3>
-            <p>Encode through Grok on all available CPU cores, or enable its accelerator plugin from the app or with <code>--gpu</code>. The job log records whether the device started and how many frames it encoded.</p>
+            <h3>JPEG 2000 on every core</h3>
+            <p>Encode through Grok on all available CPU cores. The job log is written beside the package. Grok's GPU accelerator plugin is a separate commercial product and is not in the released builds.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🖼️</div>
@@ -465,7 +465,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
             <h3>Source and package preview</h3>
-            <p>Play the source or the finished DCP in the app. JPEG 2000 decodes in process through a CPU worker pool, or on the device when GPU mode is active. Grok handles DCP directories, CPLs, picture MXFs, and codestream folders. Other sources use libmpv.</p>
+            <p>Play the source or the finished DCP in the app. JPEG 2000 decodes in process through a CPU worker pool. Grok handles DCP directories, CPLs, picture MXFs, and codestream folders. Other sources use libmpv.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">📋</div>
@@ -575,7 +575,6 @@
             <tr><td>AES-128 essence encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>DKDM re-wrap</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Desktop app</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>GPU JPEG 2000 encode and preview decode</td><td class="yes">✓</td><td class="yes">✓ (Windows)</td></tr>
             <tr><td colspan="3" style="color:var(--accent);font-weight:600;padding-top:20px;">DCP Wizard exclusive</td></tr>
             <tr><td>Pre-build check and cinema hints</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Preview with crop, Sub/CC, and QC overlays</td><td class="yes">✓</td><td class="no">✗</td></tr>
@@ -622,8 +621,7 @@
 
     <div class="prereqs-list">
         <div class="prereq"><span class="tag required">Required</span><span>Rust toolchain</span></div>
-        <div class="prereq"><span class="tag required">Required</span><span>Grok (CPU JPEG 2000)</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>Grok accelerator plugin (GPU encode and preview decode)</span></div>
+        <div class="prereq"><span class="tag required">Required</span><span>Grok (JPEG 2000)</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
         <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
