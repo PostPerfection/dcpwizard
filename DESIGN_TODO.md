@@ -138,6 +138,44 @@ breadth, QC detectors, and the render-farm/cloud story. Items worth landing here
 - Waveform and vectorscope in the preview. Transkoder implies scopes ("HDR
   analyzer") but never enumerates them. guikit, both wizards.
 
+### Pad and picture findings off ffmpeg's filter thread (specced 2026-09-29, parked)
+
+Every video encode runs ffmpeg with `pad,split[picture][detect];[detect]blackdetect,
+freezedetect,nullsink;[picture]null` (PK/src/picture_processing.rs builds the pad,
+`with_detection_branch` in PK/src/picture_findings.rs adds the detectors). libavfilter
+runs one graph on one thread and pad and freezedetect have no slice threading, so that
+thread copies the whole 4K frame once and reads it twice per frame. On spain-docker
+(EPYC, 4x4090) ffmpeg alone delivered 15 fps with the graph and 52 without; on the
+6900HX laptop with the 3060 it delivers 70 fps with the graph and the GPU is the bound at
+30 fps, so nothing below is a win there. It matters only where the card outruns the
+decode: the 5070 tester's decoder wait was 38 s of a 63 s encode. Measure ffmpeg alone
+with the exact graph into `cat` before starting any of it.
+
+- Preference to turn picture findings off: `StreamEncodeOptions` gains
+  `picture_findings: bool`, a `picture_findings` preference beside `gpu`, `create
+  --no-picture-findings`, one job-log line beside `[ENCODE] Frames on the device`.
+- CPU path detects on a downscaled branch before the pad: split first, `scale=iw/8:ih/8:
+  flags=area` into the detectors, pad only the picture branch. Changes what the
+  detectors judge (source only, no bars, 8x8 averaged so a noisy static shot reads as
+  frozen sooner). Baseline to beat on the CPU path: decoder wait 6 s of 19 s on the
+  box.
+- grok API and CUDA plugin: `grk_plugin_batch_memory_info` grows canvas size, pad
+  offset and an optional per-frame stats callback (black fraction, ceil(w/8) x
+  ceil(h/8) box-averaged luma thumbnail); the preprocess kernel writes the canvas and
+  the black value outside the frame rectangle in one pass and accumulates the stats
+  with the code blocks, no extra copy. Capability probed by symbol
+  (`gpup_batch_memory_canvas_supported`), so a host can plan the graph before the
+  batch. Tests in the plugin's `batch` target, configured standalone with auth off.
+- postkit device path: build.rs probes grok.h for the symbol and sets a cfg; with the
+  accelerator active the plan drops the pad and the pipe carries scaled frames;
+  `Batch::begin` fills the canvas fields and the stats callback; the freeze compare
+  runs on the host from thumbnails (encoder threads submit out of index order, so
+  each is kept until both neighbours are compared) with blackdetect's 0.98 and
+  freezedetect's 0.001 thresholds and the 2 s minimum, into the same
+  `PictureFindings`. CI's `grok-ref` pins move to the tag that carries the API.
+- Metal parity for the RGB48 path behind the same symbol; until then the symbol is
+  false on Metal and ffmpeg keeps the pad there.
+
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)
 
 The shared *logic* lives in postkit (mpv::MpvPlayer, packaging writers, escape_xml,
