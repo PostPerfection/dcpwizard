@@ -5489,6 +5489,7 @@ fn run() {
                         filters: &still_filters,
                         apply_xyz_transform: xyz_route.compressor_transform(),
                         rsiz: postkit::encode::default_rsiz(),
+                        encode_threads,
                         colour_transform,
                         burn: build_subtitle_burn(postkit::encode::FrameRate::whole(fps)),
                         watermark: build_watermark(postkit::encode::FrameRate::whole(fps)),

@@ -2006,6 +2006,7 @@ fn encode_still(
     output: &std::path::Path,
     fps: postkit::encode::FrameRate,
     picture: &dcpwizard_core::source_picture::ResolvedPicture,
+    encode_threads: u32,
     log: impl Fn(&str),
 ) -> Result<postkit::pipeline::EncodeResult, String> {
     let started = std::time::Instant::now();
@@ -2020,6 +2021,7 @@ fn encode_still(
         filters: &picture.plan.filters,
         apply_xyz_transform: route.compressor_transform(),
         rsiz: postkit::encode::default_rsiz(),
+        encode_threads,
         colour_transform: route.frame_transform()?,
         burn: job_subtitle_burn(job, fps)?,
         watermark: None,
@@ -2402,9 +2404,14 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     let device_frames_before = postkit::grok_encoder::accelerated_frames();
     let mut picture_mxf = None;
     let encode_result = if job.still_length_frames > 0 {
-        encode_still(job, output, encode_fps, &resolved_picture, |msg| {
-            log_to(&log_ref, msg)
-        })?
+        encode_still(
+            job,
+            output,
+            encode_fps,
+            &resolved_picture,
+            encode_threads,
+            |msg| log_to(&log_ref, msg),
+        )?
     } else {
         let on_progress = |p: &postkit::pipeline::PipelineProgress| {
             emit_progress(
