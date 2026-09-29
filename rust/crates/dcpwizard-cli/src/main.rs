@@ -940,6 +940,14 @@ struct Cli {
     #[arg(long, global = true, conflicts_with = "gpu")]
     no_gpu: bool,
 
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        help = "Encoder threads on the CPU and in the accelerator plugin, 0 for one per available CPU"
+    )]
+    threads: Option<u32>,
+
     #[arg(long, global = true, help = "Grok accelerator plugin license")]
     license: Option<String>,
 
@@ -3687,6 +3695,7 @@ fn run_conform_assembly(
     media_dir: &str,
     output: Option<&str>,
     signer: Option<&dcpwizard_core::package_signature::PackageSigner>,
+    encode_threads: u32,
 ) -> i32 {
     let media = PathBuf::from(media_dir);
     let out = PathBuf::from(output.unwrap_or("conform_out"));
@@ -3732,7 +3741,7 @@ fn run_conform_assembly(
     }
 
     // drive the plan to a finished multi-reel DCP (per-reel encode + wrap + assembly)
-    dcpwizard_core::conform::assemble_dcp(&plan, &out, signer)
+    dcpwizard_core::conform::assemble_dcp(&plan, &out, signer, encode_threads)
 }
 
 const TRAILER_FALLBACK_TITLE: &str = "Trailer";
@@ -3753,7 +3762,13 @@ fn trailer_content_title(title: &str, content: &Path) -> String {
 /// Encode the packaged trailer mp4 to J2K and build a DCP (ContentKind=trailer)
 /// in `<output_dir>/dcp`, reusing the same grok encode + create_dcp path as
 /// `create --video`. The mp4 stays in place as the intermediate.
-fn trailer_to_dcp(mp4: &Path, output_dir: &Path, fps_arg: u32, content_title: &str) -> i32 {
+fn trailer_to_dcp(
+    mp4: &Path,
+    output_dir: &Path,
+    fps_arg: u32,
+    content_title: &str,
+    encode_threads: u32,
+) -> i32 {
     use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
@@ -3778,6 +3793,7 @@ fn trailer_to_dcp(mp4: &Path, output_dir: &Path, fps_arg: u32, content_title: &s
         compression_ratio: 10.0,
         edit_rate: postkit::encode::FrameRate::whole(fps),
         apply_xyz_transform: true,
+        encode_threads,
         ..CompressParams::default()
     };
     let cancel = Arc::new(AtomicBool::new(false));
@@ -3826,6 +3842,7 @@ fn trailer_to_dcp(mp4: &Path, output_dir: &Path, fps_arg: u32, content_title: &s
         j2k_dir: Some(j2k_dir),
         audio_path,
         subtitle_language: "en".to_string(),
+        encode_threads,
         ..Default::default()
     };
     let code = dcpwizard_core::dcp::create_dcp(&config);
@@ -3994,6 +4011,7 @@ fn run() {
         .registration_url
         .as_deref()
         .or_else(|| nonempty(&preferences.gpu_registration_url));
+    let encode_threads = cli.threads.unwrap_or(preferences.encode_threads);
 
     if (cli.license.is_some() || cli.registration_url.is_some()) && !gpu_enabled {
         eprintln!("--license and --registration-url require GPU encoding");
@@ -4004,12 +4022,15 @@ fn run() {
         std::process::exit(2);
     }
 
-    postkit::grok_encoder::initialize(0);
+    postkit::grok_encoder::initialize(encode_threads);
 
     let mut accelerator_error = None;
     if gpu_enabled
-        && let Err(e) =
-            postkit::grok_encoder::use_gpu_with_authentication(license, registration_url)
+        && let Err(e) = postkit::grok_encoder::use_gpu_with_authentication(
+            license,
+            registration_url,
+            encode_threads,
+        )
     {
         // the preference file is the GUI's too
         if cli.gpu {
@@ -4739,6 +4760,10 @@ fn run() {
                     accelerator_error.as_deref(),
                 )
             ));
+            job_log.line(&format!(
+                "Encode threads: {}",
+                job_log::encode_threads_status(encode_threads)
+            ));
 
             let code = if is_video_file {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
@@ -4978,6 +5003,7 @@ fn run() {
                         watermark: build_watermark(postkit::encode::FrameRate::whole(fps)),
                         colour_transform: frame_transform,
                     },
+                    encode_threads,
                     ..CompressParams::default()
                 };
 
@@ -5405,6 +5431,7 @@ fn run() {
                     content_versions: naming.content_versions.clone(),
                     head_items: head_items.clone(),
                     tail_items: tail_items.clone(),
+                    encode_threads,
                 };
                 apply_isdcf_name(&mut config, &naming, burnt_in_subtitle);
                 let code = match versions_specs.as_ref() {
@@ -5485,6 +5512,7 @@ fn run() {
                             output_dir: output_dir.clone(),
                             bandwidth_mbps: video_bit_rate.unwrap_or(0),
                             fps,
+                            encode_threads,
                         },
                         &cancel,
                         print_encode_progress,
@@ -5640,6 +5668,7 @@ fn run() {
                     content_versions: naming.content_versions.clone(),
                     head_items,
                     tail_items,
+                    encode_threads,
                 };
                 apply_isdcf_name(&mut config, &naming, burnt_in_subtitle);
                 let code = match versions_specs.as_ref() {
@@ -5709,6 +5738,7 @@ fn run() {
                 output_dir: PathBuf::from(output),
                 bandwidth_mbps: bandwidth,
                 fps,
+                encode_threads,
             };
             let result = dcpwizard_core::encode::encode_image_sequence(
                 &encode,
@@ -5800,6 +5830,7 @@ fn run() {
                 fps: postkit::encode::FrameRate::whole(fps),
                 read_source_at: conform.read_source_at,
                 codestream_byte_cap: Some(postkit::j2k::dci_codestream_byte_cap(fps)),
+                encode_threads,
                 ..EncodeRunOptions::default()
             };
 
@@ -5891,6 +5922,7 @@ fn run() {
                 audio_path: audio_path.clone(),
                 audio_input_order: dcpwizard_core::mxf_wrap::AudioInputOrder::Canonical51,
                 reel_split_frames: reel_split_frames.clone(),
+                encode_threads,
                 ..Default::default()
             };
             let code = dcpwizard_core::dcp::create_dcp(&config);
@@ -5943,6 +5975,7 @@ fn run() {
                 recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
                 watermark: None,
+                encode_threads,
             };
             dcpwizard_core::j2k_transcode::transcode_dcp(&config)
         }
@@ -6536,7 +6569,7 @@ fn run() {
             let addr = dcpwizard_core::job_queue::daemon_addr();
             println!("Starting dcpwizard daemon on {addr}...");
             let queue = dcpwizard_core::job_queue::JobQueue::new();
-            dcpwizard_core::job_queue::start_daemon_ipc(&queue)
+            dcpwizard_core::job_queue::start_daemon_ipc(&queue, encode_threads)
         }
 
         Commands::SubtitleConvert {
@@ -6865,6 +6898,7 @@ fn run() {
                         &media_dir,
                         output.as_deref(),
                         package_signer(&signer_opts).as_ref(),
+                        encode_threads,
                     )
                 } else if json {
                     println!("{}", serde_json::to_string_pretty(&timeline).unwrap());
@@ -7013,6 +7047,7 @@ fn run() {
                 recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
                 watermark: Some(mark),
+                encode_threads,
             };
             dcpwizard_core::j2k_transcode::transcode_dcp(&config)
         }
@@ -7289,7 +7324,13 @@ fn run() {
                 );
                 // route the packaged mp4 through the encode + create path so the
                 // deliverable is a real DCP, not just an mp4.
-                trailer_to_dcp(&result.output_file, &result.output_dir, fps, &content_title)
+                trailer_to_dcp(
+                    &result.output_file,
+                    &result.output_dir,
+                    fps,
+                    &content_title,
+                    encode_threads,
+                )
             }
         }
 
@@ -7783,6 +7824,7 @@ fn run() {
                 output_dir: PathBuf::from(&output),
                 subtitle_language,
                 signer: package_signer(&signer_opts),
+                encode_threads,
                 ..Default::default()
             };
             let code = dcpwizard_core::multi_cpl::create_multi_composition(&config, &comps);

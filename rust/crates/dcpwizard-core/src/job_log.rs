@@ -28,6 +28,14 @@ pub fn accelerator_status(requested: bool, active: bool, error: Option<&str>) ->
     }
 }
 
+pub fn encode_threads_status(encode_threads: u32) -> String {
+    let count = postkit::grok_encoder::encode_thread_count(encode_threads);
+    if encode_threads == crate::preferences::AUTOMATIC_ENCODE_THREADS {
+        return format!("{count} (automatic)");
+    }
+    count.to_string()
+}
+
 pub struct JobLog(std::fs::File);
 
 impl JobLog {
@@ -58,6 +66,14 @@ mod tests {
             "requested, inactive: the plugin did not initialise"
         );
         assert_eq!(accelerator_status(true, false, None), "requested, inactive");
+    }
+
+    #[test]
+    fn the_thread_count_says_when_it_was_chosen_automatically() {
+        assert_eq!(encode_threads_status(2), "2");
+        let automatic = encode_threads_status(crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        assert!(automatic.ends_with(" (automatic)"), "{automatic}");
+        assert_ne!(automatic, "0 (automatic)");
     }
 
     #[test]

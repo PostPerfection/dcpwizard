@@ -378,7 +378,7 @@ finds the plugin source under the shared `Grok/grok` workspace.
 
 A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
 
-**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it beside the package as `<output>.log`, so `--output /x/my_dcp` logs to `/x/my_dcp.log`. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device.
+**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it beside the package as `<output>.log`, so `--output /x/my_dcp` logs to `/x/my_dcp.log`. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device. `--threads N` sets the encoder threads, and the same count sizes the accelerator plugin's host threads. 0, or no flag and no saved setting, runs one thread per available CPU. The job log prints the count as `Encode threads: N`.
 
 ```bash
 dcpwizard --gpu create \
@@ -388,7 +388,7 @@ dcpwizard --gpu create \
   --twok --frame-rate 24 --content-type FTR
 ```
 
-**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin is missing it reads `GPU encoding unavailable` and the checkbox turns off.
+**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin is missing it reads `GPU encoding unavailable` and the checkbox turns off. The *Encode threads* field below it is stored as `"encodeThreads"` and sets the encoder threads for the GUI and the CLI, and the same count sizes the accelerator plugin's host threads. An empty field saves 0, which runs one thread per available CPU.
 
 Then **Open** (Ctrl+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
 

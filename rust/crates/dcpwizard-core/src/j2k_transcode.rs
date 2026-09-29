@@ -45,6 +45,9 @@ pub struct DcpTranscodeConfig {
     /// rebuilds it.
     #[serde(skip)]
     pub watermark: Option<Arc<postkit::subtitle_raster::SubtitleBurn>>,
+    // the running process's setting, never read from a job
+    #[serde(skip)]
+    pub encode_threads: u32,
 }
 
 /// One MXF that ships in the output DCP (declared in CPL/PKL/ASSETMAP).
@@ -497,6 +500,7 @@ fn transcode_picture(
         fps: postkit::encode::FrameRate::whole(fps),
         source_colour: postkit::encode::SourceColour::AlreadyPq,
         watermark: config.watermark.clone(),
+        encode_threads: config.encode_threads,
         ..Default::default()
     };
     let result = postkit::encode::encode_loaded_frames(

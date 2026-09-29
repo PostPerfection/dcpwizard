@@ -244,6 +244,7 @@ fn reel_to_dcp(
     work: &Path,
     dcp_dir: &Path,
     signer: Option<&crate::package_signature::PackageSigner>,
+    encode_threads: u32,
 ) -> Result<(), String> {
     use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
     use std::sync::Arc;
@@ -263,6 +264,7 @@ fn reel_to_dcp(
     let params = CompressParams {
         edit_rate: postkit::encode::FrameRate::whole(fps),
         apply_xyz_transform: true,
+        encode_threads,
         ..CompressParams::default()
     };
     let cancel = Arc::new(AtomicBool::new(false));
@@ -310,6 +312,7 @@ fn reel_to_dcp(
         audio_path,
         subtitle_language: "en".to_string(),
         signer: signer.cloned(),
+        encode_threads,
         ..Default::default()
     };
     if crate::dcp::create_dcp(&config) != 0 {
@@ -327,6 +330,7 @@ pub fn assemble_dcp(
     plan: &ReelPlan,
     output_dir: &Path,
     signer: Option<&crate::package_signature::PackageSigner>,
+    encode_threads: u32,
 ) -> i32 {
     let groups = group_reels(plan);
     if groups.is_empty() {
@@ -355,7 +359,7 @@ pub fn assemble_dcp(
         let work = work_root.join(format!("reel_{}", i + 1));
         let dcp_dir = work.join("dcp");
         tracing::info!("conform reel {}: {}", i + 1, group.reel_name);
-        if let Err(e) = reel_to_dcp(group, fps, &work, &dcp_dir, reel_signer) {
+        if let Err(e) = reel_to_dcp(group, fps, &work, &dcp_dir, reel_signer, encode_threads) {
             tracing::error!("{e}");
             let _ = std::fs::remove_dir_all(&work_root);
             return 1;

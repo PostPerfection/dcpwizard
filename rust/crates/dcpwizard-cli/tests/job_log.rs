@@ -113,6 +113,14 @@ fn a_cpu_create_logs_the_accelerator_off_and_no_frames_on_the_device() {
         log.contains("Accelerator: off"),
         "a run that asked for no device says so: {log}"
     );
+    let thread_line = log
+        .lines()
+        .find(|line| line.starts_with("Encode threads: "))
+        .unwrap_or_else(|| panic!("the log has to name the encode threads: {log}"));
+    assert!(
+        thread_line.ends_with(" (automatic)"),
+        "with no preferences file the thread count is chosen automatically: {thread_line}"
+    );
     assert!(
         log.contains(&format!("[ENCODE] Frames on the device: 0 of {FRAMES}")),
         "the encode has to report the count against the frames it encoded: {log}"

@@ -5,6 +5,7 @@
 //! preview the wizard shows.
 
 use dcpwizard_core::dcp::{DcpConfig, create_dcp};
+use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
 use postkit::colour::{ColourSpace, DcdmTransform};
 use postkit::j2k::J2kProfile;
 use std::path::{Path, PathBuf};
@@ -38,8 +39,15 @@ fn red_frame_dir(dir: &Path, width: u32, height: u32) -> PathBuf {
     let j2k = dir.join("j2k");
     std::fs::create_dir_all(&j2k).unwrap();
     let seed = dir.join("seed.j2c");
-    dcpwizard_core::pad::generate_solid_frame(width, height, FPS, SOURCE_RED, &seed)
-        .expect("encode red frame");
+    dcpwizard_core::pad::generate_solid_frame(
+        width,
+        height,
+        FPS,
+        SOURCE_RED,
+        AUTOMATIC_ENCODE_THREADS,
+        &seed,
+    )
+    .expect("encode red frame");
     for i in 0..FRAMES {
         std::fs::copy(&seed, j2k.join(format!("frame_{i:05}.j2c"))).unwrap();
     }

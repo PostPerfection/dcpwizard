@@ -17,6 +17,7 @@
 - **Every CPL of a versions manifest carries the given markers**: `create --versions` wrote the default FFOC/LFOC pair into each version and dropped the `--marker` placements, and now each version's CPL carries them.
 
 ### Added
+- **An encode threads setting**: `--threads N` and the GUI's *Encode threads* field, saved as `encodeThreads`, set how many threads the encoder runs and size the accelerator plugin's host threads to the same count. 0 or an empty field runs one per available CPU, and the job log prints the count on an `Encode threads:` line.
 - **The GUI build panel places CPL markers**: a Markers group adds rows of an ST 429-10 label and a frame number or HH:MM:SS:FF position, which replace the default FFOC/LFOC pair the way `create --marker` does.
 
 ## [1.4.0] - 2026-09-28

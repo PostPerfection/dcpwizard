@@ -5,6 +5,7 @@
 
 use dcpwizard_core::conform::{assemble_dcp, build_reel_plan, parse_timeline};
 use dcpwizard_core::package_signature::PackageSigner;
+use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -90,7 +91,7 @@ fn a_single_reel_conform_signs_the_dcp_it_moves_out() {
 
     let out = root.path().join("dcp");
     assert_eq!(
-        assemble_dcp(&plan, &out, Some(&signer)),
+        assemble_dcp(&plan, &out, Some(&signer), AUTOMATIC_ENCODE_THREADS),
         0,
         "signed single-reel conform"
     );
@@ -125,7 +126,7 @@ fn a_multi_reel_conform_signs_the_assembled_cpl() {
 
     let out = root.path().join("dcp");
     assert_eq!(
-        assemble_dcp(&plan, &out, Some(&signer)),
+        assemble_dcp(&plan, &out, Some(&signer), AUTOMATIC_ENCODE_THREADS),
         0,
         "signed multi-reel conform"
     );
@@ -164,7 +165,7 @@ fn an_unusable_signer_fails_before_encoding() {
 
     let out = root.path().join("dcp");
     assert_ne!(
-        assemble_dcp(&plan, &out, Some(&signer)),
+        assemble_dcp(&plan, &out, Some(&signer), AUTOMATIC_ENCODE_THREADS),
         0,
         "an unusable signer must fail the conform"
     );
@@ -197,7 +198,11 @@ fn two_reel_edl_conforms_to_a_dcp() {
     assert_eq!(plan.reels.len(), 2, "two resolved reels");
 
     let out = root.path().join("dcp");
-    assert_eq!(assemble_dcp(&plan, &out, None), 0, "conform assembly");
+    assert_eq!(
+        assemble_dcp(&plan, &out, None, AUTOMATIC_ENCODE_THREADS),
+        0,
+        "conform assembly"
+    );
 
     // the reel plan artifact is kept next to the assembled DCP
     // (written by the CLI, not assemble_dcp; assert the DCP structure instead)
