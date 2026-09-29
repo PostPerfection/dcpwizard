@@ -143,6 +143,9 @@ pub struct DcpConfig {
     /// Library items joined on as reels after the feature's.
     #[serde(default)]
     pub tail_items: Vec<crate::library::AttachedItem>,
+    // the running process's setting, never read from a job
+    #[serde(skip)]
+    pub encode_threads: u32,
 }
 
 impl DcpConfig {
@@ -598,7 +601,7 @@ pub fn create_dcp_with_progress(
             let black = config
                 .output_dir
                 .join(format!(".dcpwizard_pad_{picture_uuid}.j2c"));
-            crate::pad::generate_solid_frame(bw, bh, fps, pad_rgb, &black)?;
+            crate::pad::generate_solid_frame(bw, bh, fps, pad_rgb, config.encode_threads, &black)?;
             let mut files =
                 Vec::with_capacity(head_frames as usize + left_frames.len() + tail_frames as usize);
             files.extend(std::iter::repeat_n(black.clone(), head_frames as usize));

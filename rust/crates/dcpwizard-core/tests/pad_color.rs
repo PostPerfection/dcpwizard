@@ -3,6 +3,7 @@
 //! the in-memory decoder, and check the X'Y'Z' code values match an independently
 //! computed expectation within tolerance.
 
+use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
 use std::path::Path;
 
 const W: u32 = 48;
@@ -47,7 +48,7 @@ fn pad_color_frame_carries_expected_xyz() {
         let j2c = dir
             .path()
             .join(format!("solid_{}_{}_{}.j2c", rgb8[0], rgb8[1], rgb8[2]));
-        dcpwizard_core::pad::generate_solid_frame(W, H, FPS, rgb16, &j2c)
+        dcpwizard_core::pad::generate_solid_frame(W, H, FPS, rgb16, AUTOMATIC_ENCODE_THREADS, &j2c)
             .expect("encode solid frame");
 
         let got = decode_first_pixel(&j2c);

@@ -331,7 +331,7 @@ fn write_jobs_file(path: &Path, jobs: &[&Job]) {
 }
 
 /// Start the job queue processor in a background thread.
-pub fn start_job_queue(queue: &JobQueue) {
+pub fn start_job_queue(queue: &JobQueue, encode_threads: u32) {
     if let Ok(mut running) = queue.running.lock() {
         if *running {
             tracing::warn!("Job queue is already running");
@@ -392,7 +392,7 @@ pub fn start_job_queue(queue: &JobQueue) {
                 let (tx, rx) = mpsc::channel();
                 let worker_job = job.clone();
                 std::thread::spawn(move || {
-                    let outcome = process_job(&worker_job, &control);
+                    let outcome = process_job(&worker_job, &control, encode_threads);
                     let _ = tx.send(outcome);
                 });
 
@@ -485,10 +485,13 @@ fn from_exit_code(code: i32, operation: &str) -> Result<(), String> {
     ))
 }
 
-fn process_job(job: &Job, control: &JobControl) -> Result<(), String> {
+fn process_job(job: &Job, control: &JobControl, encode_threads: u32) -> Result<(), String> {
     match job.job_type {
         JobType::CreateDcp => {
-            let config = parse_params::<crate::dcp::DcpConfig>(&job.params, "CreateDcp")?;
+            let config = crate::dcp::DcpConfig {
+                encode_threads,
+                ..parse_params(&job.params, "CreateDcp")?
+            };
             crate::dcp::create_dcp_with_progress(&config, control)
         }
         JobType::VerifyDcp => {
@@ -513,8 +516,10 @@ fn process_job(job: &Job, control: &JobControl) -> Result<(), String> {
             from_exit_code(crate::import::import_video(&config), "importing the video")
         }
         JobType::EncodeJ2k => {
-            let encode =
-                parse_params::<crate::encode::ImageSequenceEncode>(&job.params, "EncodeJ2k")?;
+            let encode = crate::encode::ImageSequenceEncode {
+                encode_threads,
+                ..parse_params(&job.params, "EncodeJ2k")?
+            };
             let report = |progress: &postkit::pipeline::PipelineProgress| {
                 crate::dcp::ProgressSink::stage(
                     control,
@@ -557,7 +562,7 @@ pub fn daemon_addr() -> String {
 /// Start the daemon IPC listener.
 /// Binds a TCP listener on localhost and processes client requests.
 /// This blocks the current thread.
-pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
+pub fn start_daemon_ipc(queue: &JobQueue, encode_threads: u32) -> i32 {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -576,7 +581,7 @@ pub fn start_daemon_ipc(queue: &JobQueue) -> i32 {
     queue.load_jobs_file();
 
     // Start the job processor thread
-    start_job_queue(queue);
+    start_job_queue(queue, encode_threads);
 
     for stream in listener.incoming() {
         match stream {
@@ -704,7 +709,7 @@ mod tests {
 
         let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
         let id = queue.submit(JobType::VerifyDcp, missing_dcp.to_str().unwrap());
-        start_job_queue(&queue);
+        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
 
         let deadline = std::time::Instant::now() + FAILURE_POLL_LIMIT;
         let failed = loop {
@@ -744,7 +749,7 @@ mod tests {
 
         let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
         let id = queue.submit(JobType::CreateDcp, &params);
-        start_job_queue(&queue);
+        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
 
         let deadline = std::time::Instant::now() + FAILURE_POLL_LIMIT;
         let failed = loop {
@@ -848,7 +853,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let frames = blocking_codestream_directory(dir.path());
         let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
-        start_job_queue(&queue);
+        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
 
         let finished_output = dir.path().join("finished");
         let started = std::time::Instant::now();

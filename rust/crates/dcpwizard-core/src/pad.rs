@@ -95,6 +95,7 @@ pub fn generate_solid_frame(
     height: u32,
     fps: u32,
     rgb: [u16; 3],
+    encode_threads: u32,
     out: &Path,
 ) -> Result<(), String> {
     use postkit::grok_encoder::{self, CompressParams, RawFrame};
@@ -121,6 +122,7 @@ pub fn generate_solid_frame(
 
     let params = CompressParams {
         edit_rate: postkit::encode::FrameRate::whole(fps.max(1)),
+        encode_threads,
         ..CompressParams::default()
     };
 
@@ -130,7 +132,7 @@ pub fn generate_solid_frame(
         .join(format!(".dcpwizard_solid_{}", uuid::Uuid::new_v4()));
     let cancel = Arc::new(AtomicBool::new(false));
 
-    grok_encoder::initialize(0);
+    grok_encoder::initialize(encode_threads);
     let mut produced = false;
     let result = grok_encoder::encode_pipeline(
         &work,
@@ -169,7 +171,14 @@ pub fn generate_solid_frame(
 
 /// Encode one black frame (convenience for `generate_solid_frame` with rgb 0,0,0).
 pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Result<(), String> {
-    generate_solid_frame(width, height, fps, [0, 0, 0], out)
+    generate_solid_frame(
+        width,
+        height,
+        fps,
+        [0, 0, 0],
+        crate::preferences::AUTOMATIC_ENCODE_THREADS,
+        out,
+    )
 }
 
 /// Sound is padded and sliced at frame edges, which only lands on whole samples

@@ -110,7 +110,13 @@ fn build_one_item_reel(
     );
 
     let j2k_dir = work.join("j2k");
-    let frames = encode_item_picture(item, format, config.max_bitrate_mbps, &j2k_dir)?;
+    let frames = encode_item_picture(
+        item,
+        format,
+        config.max_bitrate_mbps,
+        config.encode_threads,
+        &j2k_dir,
+    )?;
 
     let picture_uuid = uuid::Uuid::new_v4();
     let picture_name = format!("item_picture_{picture_uuid}.mxf");
@@ -244,6 +250,7 @@ fn encode_item_picture(
     item: &AttachedItem,
     format: &JobFormat,
     bitrate_mbps: u32,
+    encode_threads: u32,
     out_dir: &Path,
 ) -> Result<u64, String> {
     let (width, height) = (format.geometry.stored_width, format.geometry.stored_height);
@@ -303,9 +310,10 @@ fn encode_item_picture(
                 .then(|| crate::encode::video_codestream_byte_cap(format.fps, bitrate_mbps, false)),
             edit_rate: rate,
             apply_xyz_transform: ITEM_COLOUR_ROUTE.compressor_transform(),
+            encode_threads,
             ..CompressParams::default()
         };
-        grok_encoder::initialize(0);
+        grok_encoder::initialize(encode_threads);
         let cancel = Arc::new(AtomicBool::new(false));
         let result = grok_encoder::encode_video_pipeline_resumable(
             &item.media,

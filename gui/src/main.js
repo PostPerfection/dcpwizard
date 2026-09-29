@@ -135,12 +135,13 @@ const PREFS_KEY = "dcpwizard-preferences";
 // peak bitrate failure, and validators warn from 230 up
 const DEFAULT_BANDWIDTH_MBPS = 230;
 const DEFAULT_FRAMERATE = 24;
+const AUTOMATIC_ENCODE_THREADS = 0;
 
 const PREF_DEFAULTS = {
   standard: "SMPTE", resolution: "2K", framerate: DEFAULT_FRAMERATE,
   encrypt: false, stereo3d: false, validate: true,
   creator: "", facility: "", bandwidth: DEFAULT_BANDWIDTH_MBPS, gpu: false,
-  gpuLicense: "", gpuRegistrationUrl: "",
+  gpuLicense: "", gpuRegistrationUrl: "", encodeThreads: AUTOMATIC_ENCODE_THREADS,
   signingCert: "", signingKey: "", outputDir: "", isdcfNaming: false,
   channels: "5.1", showHintsBeforeBuild: true,
 };
@@ -192,6 +193,7 @@ async function initializePreferences() {
     preferences.gpu,
     preferences.gpuLicense,
     preferences.gpuRegistrationUrl,
+    preferences.encodeThreads,
   );
   await loadComponentVersions(invoke);
 }
@@ -211,6 +213,7 @@ function loadSettings() {
     "set-output-dir": prefs.outputDir,
     "set-gpu-license": prefs.gpuLicense,
     "set-gpu-registration-url": prefs.gpuRegistrationUrl,
+    "set-encode-threads": prefs.encodeThreads || "",
   };
   for (const [id, val] of Object.entries(map)) {
     const el = document.getElementById(id);
@@ -225,12 +228,13 @@ function loadSettings() {
 }
 
 // grok routes every compress and decompress in the process
-async function applyGpuSetting(enabled, license, registrationUrl) {
+async function applyGpuSetting(enabled, license, registrationUrl, encodeThreads) {
   try {
     const active = await invoke("set_gpu", {
       enabled,
       license: license || null,
       registrationUrl: registrationUrl || null,
+      encodeThreads,
     });
     if (enabled && !active) throw new Error("Grok did not enable the GPU");
     return true;
@@ -293,8 +297,15 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     gpu: !!document.getElementById("set-gpu")?.checked,
     gpuLicense: document.getElementById("set-gpu-license")?.value.trim() || "",
     gpuRegistrationUrl: document.getElementById("set-gpu-registration-url")?.value.trim() || "",
+    encodeThreads:
+      parseInt(document.getElementById("set-encode-threads")?.value) || AUTOMATIC_ENCODE_THREADS,
   };
-  if (!await applyGpuSetting(prefs.gpu, prefs.gpuLicense, prefs.gpuRegistrationUrl)) return;
+  if (!await applyGpuSetting(
+    prefs.gpu,
+    prefs.gpuLicense,
+    prefs.gpuRegistrationUrl,
+    prefs.encodeThreads,
+  )) return;
   if (!await savePrefs(prefs)) return;
   refreshIsdcfPreview();
   setStatus("Settings saved");

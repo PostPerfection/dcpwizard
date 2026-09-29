@@ -12,6 +12,9 @@ pub struct ImageSequenceEncode {
     /// 0 encodes at the default ratio
     pub bandwidth_mbps: u32,
     pub fps: u32,
+    // the running process's setting, never read from a job
+    #[serde(skip)]
+    pub encode_threads: u32,
 }
 
 /// Compress a still sequence into `<output_dir>/j2k` at the bandwidth's bytes a frame.
@@ -45,6 +48,7 @@ fn image_sequence_encode_options(
         codestream_byte_cap: Some(
             target_codestream_bytes.map_or(dci_cap, |target| dci_cap.min(target)),
         ),
+        encode_threads: encode.encode_threads,
         ..Default::default()
     }
 }
@@ -225,6 +229,7 @@ mod tests {
             output_dir: PathBuf::from("out"),
             bandwidth_mbps,
             fps: 24,
+            encode_threads: crate::preferences::AUTOMATIC_ENCODE_THREADS,
         }
     }
 
@@ -234,6 +239,19 @@ mod tests {
         assert_eq!(options.target_codestream_bytes, Some(1_197_916));
         assert_eq!(options.compression_ratio, DEFAULT_COMPRESSION_RATIO);
         assert_eq!(options.codestream_byte_cap, Some(1_197_916));
+    }
+
+    #[test]
+    fn the_still_sequence_encode_runs_on_the_threads_it_is_given() {
+        const ENCODE_THREADS: u32 = 3;
+        let encode = ImageSequenceEncode {
+            encode_threads: ENCODE_THREADS,
+            ..image_sequence(0)
+        };
+        assert_eq!(
+            image_sequence_encode_options(&encode).encode_threads,
+            ENCODE_THREADS
+        );
     }
 
     #[test]
