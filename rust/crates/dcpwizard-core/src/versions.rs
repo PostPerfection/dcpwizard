@@ -201,6 +201,20 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
         tracing::error!("Atmos is not supported with reel splitting");
         return -1;
     }
+    let given_markers = if config.markers.is_empty() {
+        None
+    } else if ranges.len() > 1 {
+        tracing::error!("{}", crate::preflight::MARKERS_REFUSED_ON_SPLIT);
+        return -1;
+    } else {
+        match crate::markers::markers_for_composition(&config.markers, fps, total_frames) {
+            Ok(markers) => Some(markers),
+            Err(e) => {
+                tracing::error!("{e}");
+                return -1;
+            }
+        }
+    };
     tracing::info!(
         "Building {} version(s) over {total_frames} frames in {} reel(s)",
         versions.len(),
@@ -664,7 +678,10 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
                 ..Default::default()
             });
         }
-        crate::cpl::apply_default_markers(&mut cpl_reels);
+        match given_markers.as_ref() {
+            Some(markers) => cpl_reels[0].markers = markers.clone(),
+            None => crate::cpl::apply_default_markers(&mut cpl_reels),
+        }
 
         // sound layout for this version's CompositionMetadataAsset
         let main_sound = own_audio

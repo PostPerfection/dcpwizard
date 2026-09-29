@@ -169,7 +169,7 @@ pub struct PlannedPicture {
 type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
 
 // cheapest and most specific first: the first refusal printed is the one to fix
-const PLAN_CHECKS: [PlanCheck; 24] = [
+const PLAN_CHECKS: [PlanCheck; 25] = [
     check_precompressed_colourspace,
     check_precompressed_picture,
     check_video_decodable,
@@ -185,6 +185,7 @@ const PLAN_CHECKS: [PlanCheck; 24] = [
     check_stereo_hdr_dci,
     check_reel_splitting,
     check_library_items,
+    check_markers,
     check_audio_map,
     check_audio_channels,
     check_loudness_target,
@@ -482,13 +483,21 @@ pub fn check_reel_split_support(content: &ReelSplitContent) -> Result<(), String
         return Err("--hdr-dci is not supported with reel splitting".to_string());
     }
     if content.markers {
-        return Err(
-            "--marker is not supported with reel splitting: a marker offset is relative to \
-             its own reel. A split composition gets the default FFOC/LFOC pair"
-                .to_string(),
-        );
+        return Err(MARKERS_REFUSED_ON_SPLIT.to_string());
     }
     Ok(())
+}
+
+pub const MARKERS_REFUSED_ON_SPLIT: &str = "--marker is not supported with reel splitting: a \
+    marker offset is relative to its own reel. A split composition gets the default FFOC/LFOC pair";
+
+// the packaged length is only known after the encode, where the offsets are checked against it
+const MARKER_LENGTH_NOT_KNOWN_YET: u64 = u64::MAX;
+
+fn check_markers(plan: &CreatePlan) -> Result<(), String> {
+    plan.markers.iter().try_for_each(|spec| {
+        crate::markers::parse_marker_arg(spec, plan.fps, MARKER_LENGTH_NOT_KNOWN_YET).map(|_| ())
+    })
 }
 
 fn check_audio_map(plan: &CreatePlan) -> Result<(), String> {
@@ -801,6 +810,26 @@ mod tests {
         );
 
         plan.geometry.container = Some((1920, 1080));
+        assert_eq!(check_before_encode(&plan), Ok(()));
+    }
+
+    #[test]
+    fn a_marker_spec_that_does_not_parse_is_refused_before_the_encode() {
+        let dir = tempfile::tempdir().unwrap();
+        let codestreams = dir.path().join("j2k");
+        write_codestreams(&codestreams, 1, 2048, 1080);
+        let mut plan = plan_with_picture(codestreams);
+
+        plan.markers = vec!["BOGUS=1".into()];
+        let error = only_refusal(&plan);
+        assert!(error.contains("unknown marker label 'BOGUS'"), "{error}");
+
+        plan.markers = vec!["FFEC=abc".into()];
+        let error = only_refusal(&plan);
+        assert!(error.contains("invalid frame 'abc'"), "{error}");
+
+        plan.markers = vec!["FFEC=00:58:12:03".into()];
+        assert_eq!(check_markers(&plan), Ok(()));
         assert_eq!(check_before_encode(&plan), Ok(()));
     }
 

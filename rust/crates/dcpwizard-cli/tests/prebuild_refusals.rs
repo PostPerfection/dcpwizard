@@ -656,6 +656,20 @@ fn a_loudness_target_that_does_not_parse_is_refused_by_the_check() {
     );
 }
 
+#[test]
+fn a_marker_label_that_does_not_exist_is_refused_by_the_check() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+
+    create_is_refused(
+        checked_create(config_home.path(), &source, &out).args(["--marker", "BOGUS=1"]),
+        &out,
+        &["unknown marker label 'BOGUS'", REFUSED_CHECK],
+    );
+}
+
 const QUALITY_PSNR_OUT_OF_RANGE: &str = "1000";
 const QUALITY_PSNR_REFUSAL: &str = "--quality-psnr 1000 is outside the range";
 

@@ -84,6 +84,7 @@ pub fn run() {
             pipeline::retitle_dcp,
             pipeline::disk_space,
             pipeline::list_profiles,
+            pipeline::marker_labels,
             pipeline::detect_source_crop,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,

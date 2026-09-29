@@ -8,6 +8,7 @@ import { documentDir, join } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
+import { markerSpecs } from "./marker-specs.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -939,6 +940,61 @@ document.getElementById("prop-browse-ccap")?.addEventListener("click", async () 
   if (path) document.getElementById("prop-ccap").value = path;
 });
 
+// === Markers ===
+
+const markerLabelsRequest = invoke("marker_labels");
+let markerNextId = 1;
+const markerRows = [];
+
+function markerRowElement(markerRow, labels) {
+  const element = document.createElement("div");
+  element.className = "field-row marker-row";
+  element.dataset.id = markerRow.id;
+  element.innerHTML = `
+    <div class="prop-field">
+      <label>Marker</label>
+      <select class="marker-label"></select>
+    </div>
+    <div class="prop-field">
+      <label>Position</label>
+      <input type="text" class="marker-position" placeholder="frames or HH:MM:SS:FF">
+    </div>
+    <button class="btn-sm marker-remove" type="button" title="Remove marker">✕</button>
+  `;
+  const select = element.querySelector(".marker-label");
+  for (const label of labels) {
+    const option = document.createElement("option");
+    option.value = label;
+    option.textContent = label;
+    select.appendChild(option);
+  }
+  select.value = markerRow.label;
+  return element;
+}
+
+document.getElementById("prop-add-marker")?.addEventListener("click", async () => {
+  const labels = await markerLabelsRequest;
+  const markerRow = { id: markerNextId++, label: labels[0], position: "" };
+  markerRows.push(markerRow);
+  document.getElementById("prop-markers").appendChild(markerRowElement(markerRow, labels));
+});
+
+document.getElementById("prop-markers")?.addEventListener("input", (e) => {
+  const element = e.target.closest(".marker-row");
+  const markerRow = markerRows.find(r => r.id === parseInt(element?.dataset.id));
+  if (!markerRow) return;
+  if (e.target.classList.contains("marker-label")) markerRow.label = e.target.value;
+  if (e.target.classList.contains("marker-position")) markerRow.position = e.target.value;
+});
+
+document.getElementById("prop-markers")?.addEventListener("click", (e) => {
+  if (!e.target.classList.contains("marker-remove")) return;
+  const element = e.target.closest(".marker-row");
+  const index = markerRows.findIndex(r => r.id === parseInt(element.dataset.id));
+  markerRows.splice(index, 1);
+  element.remove();
+});
+
 // === ISDCF naming and metadata ===
 
 let ratingNextId = 1;
@@ -1233,6 +1289,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       splitAt: document.getElementById("prop-split-at")?.value || null,
       splitChapters: document.getElementById("prop-split-chapters")?.checked || false,
       versions: document.getElementById("prop-versions")?.value || null,
+      markers: markerSpecs(markerRows),
       hdrDci: document.getElementById("prop-hdr-dci")?.checked || false,
       hdrSource: document.getElementById("prop-hdr-source")?.value || "auto",
       hdrPeakNits: parseFloat(document.getElementById("prop-hdr-peak-nits")?.value) || null,

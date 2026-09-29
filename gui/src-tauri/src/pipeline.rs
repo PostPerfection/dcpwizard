@@ -383,6 +383,9 @@ pub struct JobConfig {
     split_chapters: bool,
     // one CPL per entry over shared essence; empty keeps the single-CPL path
     versions: Vec<dcpwizard_core::versions::VersionSpec>,
+    // LABEL=timecode specs, empty for the default FFOC/LFOC pair
+    #[serde(default)]
+    markers: Vec<String>,
     // DCI HDR Addendum: stamp ST 2084 PQ / P3-D65 on the picture MXF
     hdr_dci: bool,
     // how the source reaches the encoder: display RGB, through an HDR-to-DCI
@@ -595,6 +598,7 @@ pub async fn submit_job(
     split_at: Option<String>,
     split_chapters: Option<bool>,
     versions: Option<String>,
+    markers: Option<Vec<String>>,
     hdr_dci: Option<bool>,
     hdr_source: Option<String>,
     hdr_peak_nits: Option<f32>,
@@ -944,6 +948,7 @@ pub async fn submit_job(
         reel_split_frames,
         split_chapters,
         versions,
+        markers: markers.unwrap_or_default(),
         hdr_dci,
         source_colour,
         allow_generic_hdr_tonemap,
@@ -1085,8 +1090,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         source_colour: job.source_colour.clone(),
         allow_generic_hdr_tonemap: job.allow_generic_hdr_tonemap,
         atmos: job.atmos.as_ref().map(PathBuf::from),
-        // the panel places no markers, so a composition gets the default pair
-        markers: Vec::new(),
+        markers: job.markers.clone(),
         standard: standard_of(&job.standard),
         content_type: content_type_of(&job.content_kind),
         encrypt: job.encrypt,
@@ -1163,6 +1167,11 @@ fn profile_panel_list() -> Vec<ProfilePanelSettings> {
 #[tauri::command]
 pub async fn list_profiles() -> Vec<ProfilePanelSettings> {
     profile_panel_list()
+}
+
+#[tauri::command]
+pub fn marker_labels() -> Vec<&'static str> {
+    dcpwizard_core::markers::MARKER_LABELS.to_vec()
 }
 
 /// The black borders a source carries, and what the picture plan around them
@@ -2174,6 +2183,7 @@ fn build_dcp_config(
         },
         reel_length_minutes: job.reel_length_minutes,
         reel_split_frames,
+        markers: job.markers.clone(),
         sign_language_lang: job.sign_language_tag.clone(),
         sign_language_main_channels,
         hdr_dci: job.hdr_dci,
@@ -2966,6 +2976,7 @@ mod tests {
             reel_split_frames: Vec::new(),
             split_chapters: false,
             versions: Vec::new(),
+            markers: Vec::new(),
             hdr_dci: false,
             source_colour: postkit::encode::SourceColour::DisplayRgb,
             allow_generic_hdr_tonemap: false,
@@ -3709,6 +3720,25 @@ mod tests {
 
         assert_eq!(config.reel_length_minutes, 20);
         assert_eq!(config.reel_split_frames, vec![240]);
+    }
+
+    #[test]
+    fn the_panels_markers_reach_the_check_and_the_build_in_order() {
+        let markers = vec!["FFEC=00:58:12:03".to_string(), "FFMC=84000".to_string()];
+        let job = JobConfig {
+            markers: markers.clone(),
+            ..test_job()
+        };
+        let config = build_dcp_config(
+            &job,
+            PathBuf::from("/out/j2k"),
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(config.markers, markers);
+        assert_eq!(job_plan(&job).markers, markers);
     }
 
     #[test]

@@ -52,6 +52,15 @@ REEL_CROSSING_TIMEOUT_MULTIPLE = 3
 SEEK_TICK_LEFT_PERCENT = 20
 SEEK_TICK_ID = "test-seek-tick"
 
+# ST 429-10 defines these ten, in this order
+MARKER_LABELS = ["FFOC", "LFOC", "FFTC", "LFTC", "FFOI", "LFOI", "FFEC", "LFEC", "FFMC", "LFMC"]
+PICKED_MARKER = "FFEC"
+PICKED_MARKER_POSITION = "00:00:03:00"
+MARKER_POSITION_INPUT = "#prop-markers .marker-row .marker-position"
+MARKER_LABEL_SELECT = "#prop-markers .marker-row .marker-label"
+# shift+tab lands on the select without opening its popup, where typing picks an option
+PREVIOUS_FIELD_CHORD = "shift+Tab"
+
 XDG_DIRECTORIES = {
     "XDG_CONFIG_HOME": "config",
     "XDG_DATA_HOME": "data",
@@ -73,6 +82,14 @@ COMPONENT_VERSIONS = """
 return [...document.querySelectorAll("#component-versions .component-version")].map(
   (row) => [row.querySelector("span").textContent, row.querySelector("output").textContent],
 );
+"""
+
+MARKER_ROWS = """
+return [...document.querySelectorAll("#prop-markers .marker-row")].map((row) => ({
+  labels: [...row.querySelectorAll(".marker-label option")].map((option) => option.value),
+  label: row.querySelector(".marker-label").value,
+  position: row.querySelector(".marker-position").value,
+}));
 """
 
 PLAYHEAD_LEFT = """
@@ -470,6 +487,31 @@ def test_the_settings_page_lists_the_component_versions(window):
     assert versions["PostKit"] == package_version(REPOSITORY_ROOT / "extern/postkit/Cargo.toml")
     for name, version in rows:
         assert version and version != UNAVAILABLE_VERSION, f"{name} has no version: {version!r}"
+
+
+def test_a_marker_row_offers_the_ten_labels_and_takes_a_position(window):
+    session = window.session
+    assert session.execute(MARKER_ROWS) == []
+
+    window.click("#prop-add-marker")
+    wait_until(
+        "the marker row never appeared",
+        lambda: session.find(MARKER_POSITION_INPUT),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(MARKER_POSITION_INPUT)
+    window.type_text(PICKED_MARKER_POSITION)
+    window.press(PREVIOUS_FIELD_CHORD)
+    window.type_text(PICKED_MARKER)
+    wait_until(
+        f"the marker select never took {PICKED_MARKER}",
+        lambda: session.property(MARKER_LABEL_SELECT, "value") == PICKED_MARKER,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    assert session.execute(MARKER_ROWS) == [
+        {"labels": MARKER_LABELS, "label": PICKED_MARKER, "position": PICKED_MARKER_POSITION}
+    ]
 
 
 def package_version(manifest):

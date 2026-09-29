@@ -141,6 +141,16 @@
   margin-bottom: 4px;
 }
 
+/* Marker rows: an ST 429-10 label plus its position */
+.marker-row {
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.marker-row .marker-remove {
+  flex: 0 0 auto;
+  margin-bottom: 4px;
+}
+
 /* Advisory findings shown before a build starts */
 .hints-dialog {
   position: fixed;

@@ -2,6 +2,7 @@
 //! MainMarkers asset, and dcpdoctor's Bv2.1 marker checks pass on it.
 
 use dcpwizard_core::dcp::{DcpConfig, create_dcp};
+use dcpwizard_core::versions::{VersionSpec, create_versioned_dcp};
 use std::path::{Path, PathBuf};
 
 const FPS: u32 = 24;
@@ -32,6 +33,31 @@ fn base_config(root: &Path, out: &Path) -> DcpConfig {
         j2k_dir: Some(make_frames(&root.join("frames"))),
         ..Default::default()
     }
+}
+
+fn read_cpls(dir: &Path) -> Vec<String> {
+    let mut cpls: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("CPL_"))
+        })
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect();
+    cpls.sort();
+    cpls
+}
+
+fn first_main_markers(cpl: &str) -> &str {
+    let start = cpl.find("<MainMarkers>").expect("CPL carries MainMarkers");
+    let end = start
+        + cpl[start..]
+            .find("</MainMarkers>")
+            .expect("MainMarkers closes");
+    &cpl[start..end]
 }
 
 fn read_cpl(dir: &Path) -> String {
@@ -124,4 +150,38 @@ fn a_marker_past_the_composition_is_refused() {
         ..base_config(dir.path(), &out)
     };
     assert_ne!(create_dcp(&config), 0, "an out-of-range marker must fail");
+}
+
+#[test]
+fn every_version_cpl_carries_the_given_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("dcp");
+    let config = DcpConfig {
+        markers: vec!["FFEC=00:00:00:03".into()],
+        ..base_config(dir.path(), &out)
+    };
+    let versions: Vec<VersionSpec> = ["English", "French"]
+        .into_iter()
+        .map(|title| VersionSpec {
+            title: title.into(),
+            subtitle: None,
+            subtitle_language: None,
+            ccap: None,
+            audio: None,
+            kind: None,
+        })
+        .collect();
+    assert_eq!(create_versioned_dcp(&config, &versions), 0);
+
+    let cpls = read_cpls(&out);
+    assert_eq!(cpls.len(), versions.len());
+    for cpl in &cpls {
+        let markers = first_main_markers(cpl);
+        assert!(markers.contains("<Label>FFEC</Label>"), "{markers}");
+        assert!(markers.contains("<Offset>3</Offset>"), "{markers}");
+        assert!(
+            !markers.contains("<Label>FFOC</Label>"),
+            "given markers replace the default pair: {markers}"
+        );
+    }
 }

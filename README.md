@@ -44,7 +44,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **ISDCF content titles** via `create --isdcf-name`: the title is rebuilt to the ISDCF naming convention from what the package actually carries (content type, container aspect, audio and text languages, channel ladder, territory and rating, resolution, studio, date, facility, standard). `--audio-lang`, `--rating AGENCY=LABEL` (repeatable), `--content-version` (repeatable), `--studio`, `--territory-type`, `--isdcf-date`, `--temp-version`, `--pre-release`, `--red-band`, `--two-d-version-of-three-d` and `--version-file` feed it, and the metadata among them lands in the CPL with or without the naming flag
 - **Ratings and content version in the CPL**: `--rating` fills the `RatingList` and the first `--content-version` is the `ContentVersion` LabelText
 - **Bv2.1 CompositionMetadataAsset** (ST 429-16) in the first reel of SMPTE CPLs, with `MainSoundConfiguration` derived from the packaged channel count
-- **CPL markers** (ST 429-7 `MainMarkers`) in every created composition: FFOC/LFOC by default, or place any of the ten defined markers with `create --marker LABEL=timecode` (repeatable, frame number or HH:MM:SS:FF; single-reel only)
+- **CPL markers** (ST 429-7 `MainMarkers`) in every created composition: FFOC/LFOC by default, or place any of the ten defined markers with `create --marker LABEL=timecode` (repeatable, frame number or HH:MM:SS:FF; single-reel only). The GUI build panel has a Markers group with the same rules
 - **Re-ingest packaging** via `ingest-package <dir>`: rebuild ASSETMAP and PKL to cover every asset file present (for exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets), no re-wrap
 - **SHA-1 hashing** for integrity verification
 
@@ -104,6 +104,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **DCP verification**, validate structure, hashes, XML schemas
 - **Markers**, FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC; the
   default set is FFOC/LFOC, place any of the others with `--marker LABEL=timecode`
+  or from the Markers group in the GUI build panel, with the same rules
 
 ### HDR & Dolby Vision
 - **HDR detection**, auto-detect SDR, HDR10, HDR10+, Dolby Vision, HLG from source
