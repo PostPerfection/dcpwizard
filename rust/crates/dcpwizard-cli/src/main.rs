@@ -802,7 +802,7 @@ struct CreatePictureOpts {
     #[arg(long)]
     auto_crop_threshold: Option<f32>,
     /// Cut the source to the container's aspect so the picture fills the frame
-    /// instead of being letterboxed. Needs --container or --twok/--fourk.
+    /// instead of being letterboxed
     #[arg(long)]
     fill_crop: bool,
     /// Turn the source's fields into progressive frames
@@ -2811,17 +2811,27 @@ fn encode_geometry(
     }
 }
 
-/// The DCI family the package declares: a named container names its own, and
-/// `--twok`/`--fourk` decide only when there is no container.
-fn config_resolution(fourk: bool, container: (u32, u32)) -> dcpwizard_core::Resolution {
+/// The DCI family the package declares: a named container names its own,
+/// `--twok`/`--fourk` decide when there is no container, and with neither the
+/// source's size does, the family the container it is fitted onto falls in.
+fn config_resolution(
+    fourk: bool,
+    twok: bool,
+    container: (u32, u32),
+    source_raster: Option<(u32, u32)>,
+) -> dcpwizard_core::Resolution {
     if container != NO_CONTAINER {
         return dcpwizard_core::Resolution::for_raster(container.0, container.1);
     }
     if fourk {
-        dcpwizard_core::Resolution::FourK
-    } else {
-        dcpwizard_core::Resolution::TwoK
+        return dcpwizard_core::Resolution::FourK;
     }
+    if twok {
+        return dcpwizard_core::Resolution::TwoK;
+    }
+    source_raster
+        .map(|(width, height)| dcpwizard_core::Resolution::for_raster(width, height))
+        .unwrap_or_default()
 }
 
 /// One `-vf` argument, or None when nothing has to happen while decoding.
@@ -4493,7 +4503,12 @@ fn run() {
                     audio_input_order: audio_input_order?,
                     versions_specs: versions_specs?,
                     fourk: fourk?,
-                    package_resolution: config_resolution(fourk?, container?),
+                    package_resolution: config_resolution(
+                        fourk?,
+                        twok,
+                        container?,
+                        source_info.as_ref().map(|info| (info.width, info.height)),
+                    ),
                     frame_rate: frame_rate?,
                     video_bit_rate: video_bit_rate?,
                     hdr_dcdm_colour: hdr_dcdm_colour?,
@@ -4633,8 +4648,6 @@ fn run() {
             else {
                 unreachable!("a flag that did not parse left a refusal, and a refusal exits above");
             };
-            let package_is_four_k = package_resolution == dcpwizard_core::Resolution::FourK;
-
             // scheduled start: block until the wall-clock time before any work.
             if let Some(target) = start_at {
                 tracing::info!("Scheduled start: waiting until {target}");
@@ -4869,16 +4882,6 @@ fn run() {
                     }
                 };
 
-                // reject an illegal fps/resolution combo before the encode runs
-                if let Err(e) = dcpwizard_core::hfr::validate_fps_resolution(
-                    fps,
-                    package_is_four_k,
-                    std_val == dcpwizard_core::Standard::Smpte,
-                ) {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
-                }
-
                 // the source is fitted onto the forced raster while it decodes,
                 // so the encode raster is what the plan produces, never the
                 // source size on its own
@@ -4899,6 +4902,24 @@ fn run() {
                 tracing::info!("Picture: {}", resolved_picture.plan.describe());
                 width = resolved_picture.encode_width;
                 height = resolved_picture.encode_height;
+                // a crop can move the fitted container across the family line
+                let package_resolution =
+                    if twok || fourk || (container_width, container_height) != NO_CONTAINER {
+                        package_resolution
+                    } else {
+                        dcpwizard_core::Resolution::for_raster(width, height)
+                    };
+                let package_is_four_k = package_resolution == dcpwizard_core::Resolution::FourK;
+
+                // reject an illegal fps/resolution combo before the encode runs
+                if let Err(e) = dcpwizard_core::hfr::validate_fps_resolution(
+                    fps,
+                    package_is_four_k,
+                    std_val == dcpwizard_core::Standard::Smpte,
+                ) {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
 
                 if let Some(ref info) = video_info {
                     tracing::info!(
@@ -7742,7 +7763,8 @@ fn run() {
                         std::process::exit(1);
                     }
                 };
-            let resolution = config_resolution(fourk, (container_width, container_height));
+            let resolution =
+                config_resolution(fourk, false, (container_width, container_height), None);
             let ct = resolve_content_type(content_type.as_deref()).unwrap_or_else(|e| {
                 tracing::error!("{e}");
                 std::process::exit(1);
@@ -7871,7 +7893,7 @@ mod tests {
         let scope_4k = resolve_container(Some("4k-scope"), None, false).unwrap();
         assert_eq!(scope_4k, (4096, 1716));
         assert_eq!(
-            config_resolution(false, scope_4k),
+            config_resolution(false, false, scope_4k, None),
             dcpwizard_core::Resolution::FourK,
             "a 4K container is a 4K package without --fourk"
         );
@@ -7880,17 +7902,34 @@ mod tests {
         let scope_2k = resolve_container(Some("2k-scope"), None, true).unwrap();
         assert_eq!(scope_2k, (2048, 858));
         assert_eq!(
-            config_resolution(true, scope_2k),
+            config_resolution(true, false, scope_2k, None),
             dcpwizard_core::Resolution::TwoK
         );
 
         assert_eq!(
-            config_resolution(true, NO_CONTAINER),
+            config_resolution(true, false, NO_CONTAINER, None),
             dcpwizard_core::Resolution::FourK
         );
         assert_eq!(
-            config_resolution(false, NO_CONTAINER),
+            config_resolution(false, false, NO_CONTAINER, None),
             dcpwizard_core::Resolution::TwoK
+        );
+    }
+
+    #[test]
+    fn with_nothing_named_the_source_size_names_the_dci_family() {
+        assert_eq!(
+            config_resolution(false, false, NO_CONTAINER, Some((4096, 1716))),
+            dcpwizard_core::Resolution::FourK
+        );
+        assert_eq!(
+            config_resolution(false, false, NO_CONTAINER, Some((1920, 1080))),
+            dcpwizard_core::Resolution::TwoK
+        );
+        assert_eq!(
+            config_resolution(false, true, NO_CONTAINER, Some((4096, 1716))),
+            dcpwizard_core::Resolution::TwoK,
+            "--twok scales a 4K source down"
         );
     }
 

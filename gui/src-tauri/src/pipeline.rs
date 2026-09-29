@@ -24,7 +24,7 @@ const FRAME_RATE_DENOMINATOR: u32 = 1;
 const DEFAULT_FRAME_RATE: (&str, u32) = FRAME_RATES[0];
 
 const DEFAULT_STANDARD: &str = "smpte";
-const DEFAULT_RESOLUTION: &str = "2k-full";
+const DEFAULT_RESOLUTION: &str = "auto";
 const DEFAULT_COLOUR: &str = "xyz";
 const DEFAULT_CONTENT_KIND: &str = "feature";
 const DEFAULT_CHANNELS: &str = "5.1";
@@ -717,13 +717,6 @@ pub async fn submit_job(
     if postkit::encode::detect_input_type(&video) == postkit::encode::InputType::J2kSequence {
         dcpwizard_core::source_picture::check_precompressed_picture(&picture)?;
     }
-    let panel_resolution = resolution.as_deref().unwrap_or(DEFAULT_RESOLUTION);
-    if picture.fill_crop && container_of(panel_resolution) == NO_CONTAINER {
-        return Err(
-            "Fill container needs a picture resolution to fill: choose one instead of Auto".into(),
-        );
-    }
-
     // the map places every channel by hand, and each of these places channels
     // its own way, so two of them would fight over the same lanes
     let audio_map = audio_map.filter(|spec| !spec.trim().is_empty());
@@ -4026,6 +4019,13 @@ mod tests {
         let auto = geometry_for_resolution("auto");
         assert_eq!(auto.forced_raster, None);
         assert_eq!(auto.container, None);
+    }
+
+    #[test]
+    fn the_default_resolution_keeps_the_source_raster() {
+        let default = geometry_for_resolution(DEFAULT_RESOLUTION);
+        assert_eq!(default.forced_raster, None);
+        assert_eq!(default.container, None);
     }
 
     #[test]

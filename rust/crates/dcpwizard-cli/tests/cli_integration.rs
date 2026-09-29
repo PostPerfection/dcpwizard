@@ -930,15 +930,22 @@ fn create_refuses_two_ways_of_choosing_a_crop() {
 }
 
 #[test]
-fn create_refuses_a_fill_crop_with_no_aspect_to_fill() {
+fn create_fits_a_source_with_nothing_named_onto_the_nearest_container() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("hd.mp4");
     write_test_video(&video, 1920, 1080);
 
-    create_with(&dir, &video, &["--fill-crop"])
+    create_with(&dir, &video, &[])
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("--container"));
+        .success()
+        .stdout(predicate::str::contains(
+            "scale to 1920x1080, pad to 1998x1080 at (38,0)",
+        ));
+    let filled = TempDir::new().unwrap();
+    create_with(&filled, &video, &["--fill-crop"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pad to 1998x1080 at (0,0)"));
 }
 
 #[test]

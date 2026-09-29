@@ -85,7 +85,7 @@ fn encode_solid(rgb16: [u16; 3], route: XyzRoute, dir: &Path) -> std::path::Path
         1,
         &cancel,
         &Arc::new(grok_encoder::PhaseClocks::default()),
-        || {
+        |_| {
             if produced {
                 return None;
             }

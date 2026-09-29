@@ -1068,7 +1068,7 @@ function isdcfNameRequest() {
   return {
     title: document.getElementById("prop-title")?.value?.trim() || "",
     standard: document.getElementById("prop-standard")?.value || "smpte",
-    resolution: document.getElementById("prop-resolution")?.value || "2k-full",
+    resolution: document.getElementById("prop-resolution")?.value || "auto",
     framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
     contentKind: document.getElementById("prop-content-kind")?.value || "feature",
     audioPath: reel?.sound?.path || null,
@@ -1226,7 +1226,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       audioPath: audio,
       validate: document.getElementById("prop-validate")?.checked ?? true,
       standard: document.getElementById("prop-standard")?.value || "smpte",
-      resolution: document.getElementById("prop-resolution")?.value || "2k-full",
+      resolution: document.getElementById("prop-resolution")?.value || "auto",
       framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
       bandwidth: parseInt(document.getElementById("prop-bandwidth")?.value) || DEFAULT_BANDWIDTH_MBPS,
       qualityPsnr: parseFloat(document.getElementById("prop-quality-psnr")?.value) || null,

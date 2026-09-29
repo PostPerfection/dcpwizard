@@ -110,6 +110,9 @@ fn build_dcp() -> Fixture {
             wav.to_str().unwrap(),
             "-o",
             package.to_str().unwrap(),
+            // the export is compared pixel for pixel with the master
+            "--container-dims",
+            &format!("{WIDTH}x{HEIGHT}"),
         ])
         .assert()
         .success();

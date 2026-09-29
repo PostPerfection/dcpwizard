@@ -79,13 +79,49 @@ pub struct ResolvedPicture {
     pub encode_height: u32,
 }
 
+const TWO_K_CONTAINERS: [(u32, u32); 3] = [(2048, 858), (1998, 1080), (2048, 1080)];
+const FOUR_K_CONTAINERS: [(u32, u32); 3] = [(4096, 1716), (3996, 2160), (4096, 2160)];
+
+pub fn nearest_named_container(width: u32, height: u32) -> (u32, u32) {
+    let [scope, flat, full] = match crate::Resolution::for_raster(width, height) {
+        crate::Resolution::TwoK => TWO_K_CONTAINERS,
+        crate::Resolution::FourK => FOUR_K_CONTAINERS,
+    };
+    let aspect = f64::from(width) / f64::from(height);
+    let distance = |(container_width, container_height): (u32, u32)| {
+        (f64::from(container_width) / f64::from(container_height) - aspect).abs()
+    };
+    [flat, full].into_iter().fold(scope, |nearest, container| {
+        if distance(container) < distance(nearest) {
+            container
+        } else {
+            nearest
+        }
+    })
+}
+
+fn cropped_raster(
+    crop: Crop,
+    rotation: Rotation,
+    source_width: u32,
+    source_height: u32,
+) -> Result<(u32, u32), String> {
+    let plan = PictureProcessing {
+        crop,
+        rotation,
+        ..PictureProcessing::default()
+    }
+    .plan(source_width, source_height)?;
+    Ok((plan.output_width, plan.output_height))
+}
+
 /// Resolve the picture flags against a source of `source_width`x`source_height`.
 ///
 /// The fit box is the container's active area when one was given, else the
 /// forced raster. A forced raster is what turns the fit on: the picture is
-/// scaled into the box and centred on the raster with black around it. Without
-/// one, nothing is scaled and the encode raster is whatever the crop and the
-/// rotation leave.
+/// scaled into the box and centred on the raster with black around it. With
+/// neither, the cropped and rotated source is fitted onto its nearest named
+/// container, see [`nearest_named_container`].
 pub fn resolve_picture(
     options: &SourcePictureOptions,
     source: &Path,
@@ -100,37 +136,49 @@ pub fn resolve_picture(
         options.fill_crop,
     )?;
 
-    let fit_box = geometry.container.or(geometry.forced_raster);
-    let crop = match (options.auto_crop, options.fill_crop, fit_box) {
-        (true, _, _) => detect_crop(
-            source,
-            options.auto_crop_threshold,
-            is_image_sequence,
-            source_width,
-            source_height,
-        )?,
-        (_, true, Some(box_size)) => {
-            fill_crop(source_width, source_height, box_size, options.rotation)
+    let detected = options
+        .auto_crop
+        .then(|| {
+            detect_crop(
+                source,
+                options.auto_crop_threshold,
+                is_image_sequence,
+                source_width,
+                source_height,
+            )
+        })
+        .transpose()?;
+    let (geometry, fit_box) = match geometry.container.or(geometry.forced_raster) {
+        Some(fit_box) => (*geometry, fit_box),
+        None => {
+            let (width, height) = cropped_raster(
+                detected.unwrap_or(options.crop),
+                options.rotation,
+                source_width,
+                source_height,
+            )?;
+            let container = nearest_named_container(width, height);
+            let geometry = EncodeGeometry {
+                forced_raster: Some(container),
+                container: Some(container),
+            };
+            (geometry, container)
         }
-        (_, true, None) => {
-            return Err(
-                "--fill-crop cuts the source to the aspect it has to fill, and nothing \
-                        here names that aspect: pass --container or --twok/--fourk"
-                    .to_string(),
-            );
-        }
-        _ => options.crop,
+    };
+    let crop = match (detected, options.fill_crop) {
+        (Some(detected), _) => detected,
+        (None, true) => fill_crop(source_width, source_height, fit_box, options.rotation),
+        (None, false) => options.crop,
     };
 
-    let fit = match (geometry.forced_raster, fit_box) {
-        (Some((raster_width, raster_height)), Some((box_width, box_height))) => Some(Fit {
-            box_width,
-            box_height,
+    let fit = geometry
+        .forced_raster
+        .map(|(raster_width, raster_height)| Fit {
+            box_width: fit_box.0,
+            box_height: fit_box.1,
             raster_width,
             raster_height,
-        }),
-        _ => None,
-    };
+        });
 
     let processing = PictureProcessing {
         deinterlace: options.deinterlace,
@@ -171,6 +219,7 @@ mod tests {
     const HD_HEIGHT: u32 = 1080;
     const TWO_K_RASTER: (u32, u32) = (2048, 1080);
     const TWO_K_SCOPE: (u32, u32) = (2048, 858);
+    const TWO_K_FLAT: (u32, u32) = (1998, 1080);
 
     fn resolve(
         options: &SourcePictureOptions,
@@ -187,15 +236,31 @@ mod tests {
     }
 
     #[test]
-    fn nothing_asked_for_leaves_the_source_at_its_own_raster() {
+    fn nothing_asked_for_fits_the_source_onto_the_nearest_named_container() {
         let resolved =
             resolve(&SourcePictureOptions::default(), &EncodeGeometry::default()).unwrap();
-        assert!(resolved.processing.is_identity());
-        assert!(resolved.plan.is_identity());
         assert_eq!(
-            (resolved.encode_width, resolved.encode_height),
-            (HD_WIDTH, HD_HEIGHT)
+            resolved.processing.fit,
+            Some(Fit {
+                box_width: TWO_K_FLAT.0,
+                box_height: TWO_K_FLAT.1,
+                raster_width: TWO_K_FLAT.0,
+                raster_height: TWO_K_FLAT.1,
+            })
         );
+        assert_eq!((resolved.encode_width, resolved.encode_height), TWO_K_FLAT);
+    }
+
+    #[test]
+    fn the_nearest_named_container_keeps_the_family_and_takes_the_closest_aspect() {
+        assert_eq!(nearest_named_container(4096, 1716), (4096, 1716));
+        assert_eq!(nearest_named_container(4096, 2160), (4096, 2160));
+        assert_eq!(nearest_named_container(3840, 2160), (3996, 2160));
+        assert_eq!(nearest_named_container(2560, 1080), (4096, 1716));
+        assert_eq!(nearest_named_container(2048, 1080), (2048, 1080));
+        assert_eq!(nearest_named_container(1920, 1080), TWO_K_FLAT);
+        assert_eq!(nearest_named_container(1920, 800), TWO_K_SCOPE);
+        assert_eq!(nearest_named_container(1280, 720), TWO_K_FLAT);
     }
 
     #[test]
@@ -358,17 +423,17 @@ mod tests {
     }
 
     #[test]
-    fn a_fill_crop_with_no_aspect_to_fill_is_refused() {
-        let error = resolve(
+    fn a_fill_crop_with_nothing_named_fills_the_nearest_named_container() {
+        let resolved = resolve(
             &SourcePictureOptions {
                 fill_crop: true,
                 ..SourcePictureOptions::default()
             },
             &EncodeGeometry::default(),
         )
-        .unwrap_err();
-        assert!(error.contains("--container"), "{error}");
-        assert!(error.contains("--twok"), "{error}");
+        .unwrap();
+        assert!(!resolved.processing.crop.is_none());
+        assert_eq!((resolved.encode_width, resolved.encode_height), TWO_K_FLAT);
     }
 
     #[test]
@@ -444,7 +509,10 @@ mod tests {
                 flip_horizontal: true,
                 ..SourcePictureOptions::default()
             },
-            &EncodeGeometry::default(),
+            &EncodeGeometry {
+                forced_raster: Some((HD_WIDTH, HD_HEIGHT)),
+                container: Some((HD_WIDTH, HD_HEIGHT)),
+            },
         )
         .unwrap();
         assert_eq!(resolved.plan.filters, vec!["yadif", "hqdn3d", "hflip"]);
