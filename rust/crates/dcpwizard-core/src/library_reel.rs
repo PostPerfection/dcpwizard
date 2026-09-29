@@ -287,6 +287,7 @@ fn encode_item_picture(
             filters: &resolved.plan.filters,
             apply_xyz_transform: ITEM_COLOUR_ROUTE.compressor_transform(),
             rsiz: postkit::encode::default_rsiz(),
+            encode_threads,
             colour_transform: ITEM_COLOUR_ROUTE.frame_transform()?,
             burn: None,
             watermark: None,
