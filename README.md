@@ -6,7 +6,7 @@
 
 Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
 
-Version 1.3 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
+Version 1.4.0 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
 
 ## Overview
 
@@ -155,7 +155,7 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
-The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits, `LD_LIBRARY_PATH` does not have to be set. On Linux nothing else has to be installed. The macOS archive needs `brew install openssl@3 xerces-c`, and the Windows zip carries libcrypto and the VC++ runtime.
+The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits, `LD_LIBRARY_PATH` does not have to be set. On Linux nothing else has to be installed. The macOS archive vendors its non-system libraries under `lib/` and runs without Homebrew, and the Windows zip carries libcrypto and the VC++ runtime.
 
 The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. The package manager pulls in the rest: libmpv for the preview player, ffmpeg for video import, xmlsec1 and xmllint for verification, curl for certificate fetching.
 
@@ -178,7 +178,7 @@ GPU encoding and preview decode need Grok's accelerator plugin, a commercial pro
 ./scripts/build-fedora-rpm.sh /path/to/grok/install
 ```
 
-The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-1.3.3-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
+The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-1.4.0-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
 
 That rpm needs two more things on the target machine: the RPM Fusion NVIDIA driver, and a Grok licence entered under Settings. The CUDA runtime is linked into the plugin, so the CUDA toolkit and the NVIDIA Container Toolkit are not needed:
 
@@ -194,7 +194,7 @@ sudo reboot
 ./scripts/build-ubuntu-deb.sh /path/to/grok/source 86
 ```
 
-The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_1.3.3-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
+The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_1.4.0-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
 
 **GPU encoding on macOS.** A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
 
@@ -202,7 +202,7 @@ The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example 
 ./scripts/build-macos-dmg.sh /path/to/grok/install
 ```
 
-The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-1.3.3-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
+The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-1.4.0-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
 
 ### Install from source
 
@@ -472,8 +472,9 @@ dcpwizard create --title "My Feature" --video movie.mov --output ./dcp --split-c
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container 2k-flat
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp --container-dims 1920x1080
 
-# Fit an HD master into the scope container: the black bars are cropped off and
-# the picture is scaled to 2048x858, which is the raster the DCP is encoded at
+# Fit an HD master into the scope container: 1920x1080 is cropped about the
+# centre to the scope aspect at 1920x804, scaled to 2048x856 because the scale
+# floors to even pixels, and padded onto the 2048x858 raster the DCP is encoded at
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
     --container 2k-scope --fill-crop --deinterlace
 
@@ -543,7 +544,7 @@ dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
 dcpwizard create --title "My Film" --video movie.mov \
     --output ./dcp --ccap captions.srt --ccap-language en
 
-# Accessibility channels: label sound channel 6 as HI and 7 as VI-N
+# Accessibility channels: label 0-based index 6 as HI and 7 as VI-N (1-based channels 7 and 8)
 dcpwizard create --title "My Film" --video ./j2k --audio ./8ch.wav \
     --output ./dcp --hi-channel 6 --vi-channel 7
 
@@ -709,7 +710,8 @@ dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
     --subtitle-rtl auto --subtitle-wrap 42 --subtitle-font NotoSansArabic.ttf
 
 # How the packaged track looks: 50-point yellow text with no effect and a
-# 200 ms fade each way. --ccap keeps the default appearance.
+# 200 ms fade each way, rounded to whole frames (5 frames, 208 ms, at 24 fps).
+# --ccap keeps the default appearance.
 dcpwizard create --title "My Film" --video ./j2k --output ./dcp \
     --subtitle subs.srt --subtitle-font-size 50 --subtitle-colour FFFF00 \
     --subtitle-effect none --subtitle-fade-up 200 --subtitle-fade-down 200
@@ -719,7 +721,9 @@ dcpwizard create --title "My Film" --video master.mov --output ./dcp \
     --burn-subtitle subs.srt --burn-colour FFFF00 --burn-effect outline \
     --burn-font-size 8 --burn-outline-width 6
 
-# Edit a standalone subtitle file (any parsable format), written back as SRT
+# Edit a standalone SRT, ASS, PAC, MKS, FCPXML or Interop PNG XML file, written
+# back as SRT. SMPTE DCST XML is wrapped unchanged and is not one of them, nor is
+# Interop XML without images
 dcpwizard subtitle-edit --input subs.srt --list
 dcpwizard subtitle-edit --input subs.srt --shift-ms -500 --output shifted.srt
 dcpwizard subtitle-edit --input subs.srt --index 3 --text "Fixed line" \
@@ -989,7 +993,7 @@ not running.
 dcpwizard/
 ├── rust/                # Rust workspace
 │   ├── crates/
-│   │   ├── dcpwizard-core/  # Core library, 89 modules, DCP creation, encoding, encryption, KDM, QC
+│   │   ├── dcpwizard-core/  # Core library, 87 modules, DCP creation, encoding, encryption, KDM, QC
 │   │   └── dcpwizard-cli/   # CLI binary (dcpwizard)
 │   └── Cargo.toml
 ├── gui/                 # Tauri 2 desktop application

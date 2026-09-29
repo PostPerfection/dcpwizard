@@ -11,6 +11,7 @@
 - **`transcode` and `queue add import-video` refuse an image format they do not know**: an unknown format wrote TIFF, and now the job fails naming the formats it takes.
 - **The job log is written beside the package**: `create` and the GUI wrote `dcpwizard.log` inside the package folder, where the ASSETMAP does not list it, so dcpdoctor reported `foreign_file_in_package` on every package, and now the log is `<output>.log` next to the folder.
 - **An ASS override tag warning prints once per run**: the hints, the pre-build checks and the packaging each read the file and printed every dropped tag, and now the packaging or the burn prints it once, as `create --check` does.
+- **The README and the site match the 1.4.0 code**: the opening line and the GPU package names say 1.4.0, the macOS CLI archive runs without Homebrew, the `--fill-crop` scope sizes, the 0-based HI and VI-N indexes, the frame-rounded fade, the `subtitle-edit` inputs and the 87 module count are stated as the code has them, and the site's `batch add` example is the README's config and says the daemon has to be running.
 
 ## [1.4.0] - 2026-09-28
 
