@@ -271,6 +271,15 @@ imfwizard. What the traces said, and what is still owed:
   and frames reach the device one at a time through the single callback thread.
   On that machine the levers are the kernel's occupancy and the copies on the
   callback thread.
+- The same tester on DCP Wizard 1.4.0 with grok 20.4.14, reported 2026-09-30, on a
+  build with the host cuts, the encode threads setting and the single MQ launch
+  but neither kernel round above, EXPO on, source read from an ntfs-3g mount:
+  82 fps at one minute of the same 4K encode, from 46.5. The host sat at 44% with
+  no core above 88% and the card at 92 to 94% drawing 93 to 95 of its 250 W, so
+  that machine is device bound where the laptop is host bound, and the two kernel
+  rounds are unmeasured there. Their second encode of the same source ran faster,
+  which is the page cache taking over from the FUSE read. The run on the build with
+  both rounds is owed, second run or a source on /dev/shm.
 - Sizing the context stream by `precision + GPUP_BIBO_EXTRA_BITS` bit planes, as
   the decoder's output buffer already is, would cut it by about 40%, but only if
   the bit plane coder can never exceed that count, which is unchecked.
