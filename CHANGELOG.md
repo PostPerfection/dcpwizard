@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **Black and frozen run detection during an encode is opt-in**: every video encode ran ffmpeg's `blackdetect` and `freezedetect` on a branch of the decode, on the filter thread that bounds a GPU encode. `--detect-picture-findings` and the GUI's *Report black and frozen runs while encoding*, saved as `detectPictureFindings`, turn it on, `--no-detect-picture-findings` overrides the saved setting, and the job log prints `Picture findings: on` or `off`. `report --scan-picture` is unchanged.
 - **The package is fitted onto the nearest named container by default**: `create` with no `--container`, `--twok` or `--fourk`, and the GUI's Resolution control, which now starts on Auto, pick the 2K or 4K family from the source size and the scope, flat or full container nearest its aspect, the way DCP-o-matic does. A 4096x1716 master builds a 4K scope package and a 1920x1080 one a 2K flat package, where `create` encoded the source at its own raster and the GUI scaled it onto 2K Full. `--fill-crop` and the GUI's Fill container no longer need a container named.
 - **`watch` and `transcode` run postkit's code**: the watch folder loop is `postkit::watch` and `transcode` runs ffmpeg through `postkit::transcode::run_ffmpeg_until_cancelled`, the same code IMF Wizard runs.
 - **The Windows release installs the msi too**: after the NSIS check, the release workflow uninstalls the NSIS install, installs the msi, checks it carries every staged dll and runs the sidecar from it, then uninstalls it.

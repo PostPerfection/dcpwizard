@@ -2226,9 +2226,10 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     log_to(&log_file, &format!("Title: {}", job.title));
     log_to(&log_file, &format!("Input: {}", job.video_path.display()));
     log_to(&log_file, &format!("Output: {}", output.display()));
-    let encode_threads = dcpwizard_core::preferences::load_preferences()
-        .map_err(|e| format!("Cannot load the preferences: {e}"))?
-        .encode_threads;
+    let preferences = dcpwizard_core::preferences::load_preferences()
+        .map_err(|e| format!("Cannot load the preferences: {e}"))?;
+    let encode_threads = preferences.encode_threads;
+    let detect_picture_findings = preferences.detect_picture_findings;
     log_to(
         &log_file,
         &format!("Accelerator: {}", guikit::gpu::accelerator_status()),
@@ -2238,6 +2239,13 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         &format!(
             "Encode threads: {}",
             dcpwizard_core::job_log::encode_threads_status(encode_threads)
+        ),
+    );
+    log_to(
+        &log_file,
+        &format!(
+            "Picture findings: {}",
+            dcpwizard_core::job_log::picture_findings_status(detect_picture_findings)
         ),
     );
     log_to(
@@ -2361,6 +2369,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
         picture: resolved_picture.processing.clone(),
         rsiz: postkit::encode::default_rsiz(),
         encode_threads,
+        detect_picture_findings,
     };
 
     // the picture MXF is written as the frames finish where the job allows it, so
@@ -2603,6 +2612,7 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     );
     config.picture_mxf = picture_mxf;
     config.encode_threads = encode_threads;
+    config.detect_picture_findings = detect_picture_findings;
 
     if job.versions.is_empty() {
         if let Err(message) =

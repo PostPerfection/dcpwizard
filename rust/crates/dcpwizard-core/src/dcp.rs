@@ -143,9 +143,11 @@ pub struct DcpConfig {
     /// Library items joined on as reels after the feature's.
     #[serde(default)]
     pub tail_items: Vec<crate::library::AttachedItem>,
-    // the running process's setting, never read from a job
+    // the running process's settings, never read from a job
     #[serde(skip)]
     pub encode_threads: u32,
+    #[serde(skip)]
+    pub detect_picture_findings: bool,
 }
 
 impl DcpConfig {

@@ -140,7 +140,7 @@ breadth, QC detectors, and the render-farm/cloud story. Items worth landing here
 
 ### Pad and picture findings off ffmpeg's filter thread (specced 2026-09-29, parked)
 
-Every video encode runs ffmpeg with `pad,split[picture][detect];[detect]blackdetect,
+A video encode with picture findings on runs ffmpeg with `pad,split[picture][detect];[detect]blackdetect,
 freezedetect,nullsink;[picture]null` (PK/src/picture_processing.rs builds the pad,
 `with_detection_branch` in PK/src/picture_findings.rs adds the detectors). libavfilter
 runs one graph on one thread and pad and freezedetect have no slice threading, so that
@@ -148,17 +148,15 @@ thread copies the whole 4K frame once and reads it twice per frame. On spain-doc
 (EPYC, 4x4090) ffmpeg alone delivered 15 fps with the graph and 52 without; on the
 6900HX laptop with the 3060 it delivers 70 fps with the graph and the GPU is the bound at
 30 fps, so nothing below is a win there. It matters only where the card outruns the
-decode: the 5070 tester's decoder wait was 38 s of a 63 s encode. Measure ffmpeg alone
+decode, which the EPYC box does and the 5070 tester's machine does not (see the entry
+above). Measure ffmpeg alone
 with the exact graph into `cat` before starting any of it.
 
-- Preference to turn picture findings off: `StreamEncodeOptions` gains
-  `picture_findings: bool`, a `picture_findings` preference beside `gpu`, `create
-  --no-picture-findings`, one job-log line beside `[ENCODE] Frames on the device`.
-- CPU path detects on a downscaled branch before the pad: split first, `scale=iw/8:ih/8:
-  flags=area` into the detectors, pad only the picture branch. Changes what the
-  detectors judge (source only, no bars, 8x8 averaged so a noisy static shot reads as
-  frozen sooner). Baseline to beat on the CPU path: decoder wait 6 s of 19 s on the
-  box.
+- CPU path splits before the pad: the detectors judge the source, and the pad runs only
+  on the picture branch. The detectors stay at full scale: an 8x8 area downscale cut 5
+  of 108 CPU seconds on the laptop but averages grain away, so a grainy static shot
+  reads as frozen sooner. Baseline to beat on the CPU path: decoder wait 6 s of 19 s on
+  the box.
 
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)
 

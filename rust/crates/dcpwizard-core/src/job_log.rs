@@ -36,6 +36,10 @@ pub fn encode_threads_status(encode_threads: u32) -> String {
     count.to_string()
 }
 
+pub fn picture_findings_status(detect_picture_findings: bool) -> &'static str {
+    if detect_picture_findings { "on" } else { "off" }
+}
+
 pub struct JobLog(std::fs::File);
 
 impl JobLog {

@@ -30,6 +30,7 @@ pub struct Preferences {
     pub gpu_license: String,
     pub gpu_registration_url: String,
     pub encode_threads: u32,
+    pub detect_picture_findings: bool,
     #[serde(alias = "signing_certificate_path")]
     pub signing_cert: String,
     #[serde(alias = "signing_key_path")]
@@ -61,6 +62,7 @@ impl Default for Preferences {
             gpu_license: String::new(),
             gpu_registration_url: DEFAULT_GPU_REGISTRATION_URL.to_string(),
             encode_threads: AUTOMATIC_ENCODE_THREADS,
+            detect_picture_findings: false,
             signing_cert: String::new(),
             signing_key: String::new(),
             output_dir: String::new(),
@@ -187,6 +189,18 @@ mod tests {
 
         assert_eq!(preferences.encode_threads, AUTOMATIC_ENCODE_THREADS);
         assert!(!preferences.additional.contains_key("encodeThreads"));
+    }
+
+    #[test]
+    fn a_file_without_the_findings_setting_leaves_the_picture_unscanned() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = format!(r#"{{"version":{CURRENT_PREFERENCES_VERSION},"gpu":true}}"#);
+        postkit::preferences::write_preferences_file(&path, &contents).unwrap();
+
+        let preferences = load_preferences_from(&path).unwrap().unwrap();
+
+        assert!(!preferences.detect_picture_findings);
     }
 
     #[test]

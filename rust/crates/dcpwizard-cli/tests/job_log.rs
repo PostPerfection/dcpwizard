@@ -122,6 +122,10 @@ fn a_cpu_create_logs_the_accelerator_off_and_no_frames_on_the_device() {
         "with no preferences file the thread count is chosen automatically: {thread_line}"
     );
     assert!(
+        log.lines().any(|line| line == "Picture findings: off"),
+        "with no preferences file the picture is not scanned: {log}"
+    );
+    assert!(
         log.contains(&format!("[ENCODE] Frames on the device: 0 of {FRAMES}")),
         "the encode has to report the count against the frames it encoded: {log}"
     );
