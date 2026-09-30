@@ -138,9 +138,62 @@ breadth, QC detectors, and the render-farm/cloud story. Items worth landing here
 - Waveform and vectorscope in the preview. Transkoder implies scopes ("HDR
   analyzer") but never enumerates them. guikit, both wizards.
 
+### GPU rate: where the frames go (measured 2026-09-29)
+
+The encode threads setting landed in grok 20.4.14 (`grk_plugin_init_info::num_threads`,
+automatic count from the affinity mask), the plugin, postkit, guikit, dcpwizard and
+imfwizard. What the traces said, and what is still owed:
+
+- The laptop is host bound, not device bound. Nsight Compute on the 3060 shows
+  `mqcoder_rc` at 5 to 15% SM busy: one thread per code block, 219 blocks of 32
+  threads a launch (one 4K channel), 0.46 waves on 30 SMs, warps stalled on
+  latency. nvidia-smi's 100% only means a kernel was resident. The 20 s Toms clip
+  used 180 CPU seconds of encoder process for 480 frames, ffmpeg another 45, so
+  the 8 cores were saturated and the frame reader waited on ffmpeg's pipe 15 s of 18.
+  The device idles 55% of the mqcoder time on one launch at a time, so the kernel's
+  own occupancy is not the next lever on any card until the host feeds it faster.
+- Host cuts made on 2026-09-29, uncommitted in ~/src/Grok/grok and its plugin
+  submodule, output byte-identical to before, 30.1 to 36 fps on the laptop and 180
+  to 116 CPU seconds:
+  grok rate control searches the slope on per-slope tables of body bytes and hull
+  passes, measures packets without a budget to learn header bytes, verifies the
+  chosen threshold and the one below it (2 to 3 simulations a frame instead of 10),
+  and skips the final simulation when the verified layout is the final one.
+  Precincts hold their code blocks in one array, size pass storage from the band's
+  bit depth, and allocate the 4 KB code stream slot per block only when grok's own
+  T1 asks for it. The bit writer packs header fields a byte at a time. The plugin
+  copies only each block's coded bytes and pass entries out of the 66 MB device
+  buffer, its memory estimate no longer triples the context stream and the DWT
+  scratch, and it keeps a quarter of the card free while taking up to 12 frames
+  in flight. The 31 postkit grok tests and the cap e2e tests pass.
+- Levers left, by measured share of the 147 CPU seconds a run now takes: ffmpeg 30%
+  (DNxHR decode 15, the pad on the single filter thread 6, the raw pipe 6; the two
+  detectors cost under 1%), grok's packet header coder 10% (three header passes a
+  frame plus the real write), the plugin's two host copies of every incoming frame
+  7% (planes into a staging buffer, then into pinned memory inside the CUDA host
+  callback, where no CUDA call is allowed), the plugin to grok pass sync 9% across
+  four stages (PassInfo to gpup_tile, to grk_plugin_tile, to grok's passes, then the
+  hull), kernel page faults 8%. A 1 MB pipe buffer, jemalloc, mimalloc, tcmalloc and
+  8 or 12 encoder threads changed nothing.
+- Profiling needs root for GPU counters on this Fedora (`RmProfilingAdminOnly: 1`):
+  `sudo /tmp/bench/ncu_mq.sh`, or `options nvidia NVreg_RestrictProfilingToAdminUsers=0`
+  in modprobe.d and a reboot. build-gpu's `libgrokj2k.so.1` symlink pointed at the
+  20.4.13 build until ninja relinked the core, so a run can load a stale core library
+  after a version bump: check `readlink bin/libgrokj2k.so.1`.
+- spain-docker is shared: `/proc/loadavg` in the container is host-wide and swung the
+  same encode between 22 and 44 fps. No timing from it counts without the load beside
+  it. `~/bench/quiet_matrix.sh` there waits for a quiet minute and runs the matrix.
+- Uncompiled: the plugin's OpenCL and Metal encoder and decoder constructors gained
+  the thread count without a build, and the affinity helper's Windows branch was only
+  compiled under mingw.
+- imfwizard's settings field, `set_gpu` round trip and `Encode threads:` log line have
+  tests but no desktop run. dcpwizard's field was looked at in a headless render only.
+- postkit's `grokj2k-sys` git tag stays at v20.4.3 (bindgen reads the installed header),
+  and the settings page's Resolution preference is read by nothing.
+
 ### Pad and picture findings off ffmpeg's filter thread (specced 2026-09-29, parked)
 
-Every video encode runs ffmpeg with `pad,split[picture][detect];[detect]blackdetect,
+A video encode with picture findings on runs ffmpeg with `pad,split[picture][detect];[detect]blackdetect,
 freezedetect,nullsink;[picture]null` (PK/src/picture_processing.rs builds the pad,
 `with_detection_branch` in PK/src/picture_findings.rs adds the detectors). libavfilter
 runs one graph on one thread and pad and freezedetect have no slice threading, so that
@@ -148,17 +201,15 @@ thread copies the whole 4K frame once and reads it twice per frame. On spain-doc
 (EPYC, 4x4090) ffmpeg alone delivered 15 fps with the graph and 52 without; on the
 6900HX laptop with the 3060 it delivers 70 fps with the graph and the GPU is the bound at
 30 fps, so nothing below is a win there. It matters only where the card outruns the
-decode: the 5070 tester's decoder wait was 38 s of a 63 s encode. Measure ffmpeg alone
+decode, which the EPYC box does and the 5070 tester's machine does not (see the entry
+above). Measure ffmpeg alone
 with the exact graph into `cat` before starting any of it.
 
-- Preference to turn picture findings off: `StreamEncodeOptions` gains
-  `picture_findings: bool`, a `picture_findings` preference beside `gpu`, `create
-  --no-picture-findings`, one job-log line beside `[ENCODE] Frames on the device`.
-- CPU path detects on a downscaled branch before the pad: split first, `scale=iw/8:ih/8:
-  flags=area` into the detectors, pad only the picture branch. Changes what the
-  detectors judge (source only, no bars, 8x8 averaged so a noisy static shot reads as
-  frozen sooner). Baseline to beat on the CPU path: decoder wait 6 s of 19 s on the
-  box.
+- CPU path splits before the pad: the detectors judge the source, and the pad runs only
+  on the picture branch. The detectors stay at full scale: an 8x8 area downscale cut 5
+  of 108 CPU seconds on the laptop but averages grain away, so a grainy static shot
+  reads as frozen sooner. Baseline to beat on the CPU path: decoder wait 6 s of 19 s on
+  the box.
 - grok API and CUDA plugin: `grk_plugin_batch_memory_info` grows canvas size, pad
   offset and an optional per-frame stats callback (black fraction, ceil(w/8) x
   ceil(h/8) box-averaged luma thumbnail); the preprocess kernel writes the canvas and

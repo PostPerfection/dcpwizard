@@ -115,6 +115,7 @@ fn build_one_item_reel(
         format,
         config.max_bitrate_mbps,
         config.encode_threads,
+        config.detect_picture_findings,
         &j2k_dir,
     )?;
 
@@ -251,6 +252,7 @@ fn encode_item_picture(
     format: &JobFormat,
     bitrate_mbps: u32,
     encode_threads: u32,
+    detect_picture_findings: bool,
     out_dir: &Path,
 ) -> Result<u64, String> {
     let (width, height) = (format.geometry.stored_width, format.geometry.stored_height);
@@ -312,6 +314,7 @@ fn encode_item_picture(
             edit_rate: rate,
             apply_xyz_transform: ITEM_COLOUR_ROUTE.compressor_transform(),
             encode_threads,
+            detect_picture_findings,
             ..CompressParams::default()
         };
         grok_encoder::initialize(encode_threads);

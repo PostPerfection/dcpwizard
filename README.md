@@ -101,6 +101,7 @@ Free and open-source alternative to easyDCP Creator+.
 ### Quality Control
 - **Integrated QC** via dcpdoctor (SMPTE Bv2.1 compliance checking)
 - **HTML QC report** generation, with a Sound level section: Leq(m) per ISO 21727 for every sound track, against the content kind's limit (82 dB advertisement, 85 dB trailer). `report --scan-picture` adds a Picture section, decoding each picture track for black and frozen runs; it is off by default because the J2K decode is ffmpeg's software one and a feature takes hours, and a report made without it says the picture was not scanned
+- **Black and frozen runs while encoding**, opt in with `--detect-picture-findings` or the GUI's *Report black and frozen runs while encoding*, saved as `detectPictureFindings`. ffmpeg's `blackdetect` and `freezedetect` run on a branch of the decode, and each run of 2 seconds or more is logged as a warning. It is off by default because the branch runs on ffmpeg's single filter thread, which slows a GPU encode. `--no-detect-picture-findings` overrides the saved setting, and the job log prints `Picture findings: on` or `off`
 - **DCP verification**, validate structure, hashes, XML schemas
 - **Markers**, FFOC, LFOC, FFTC, LFTC, FFOI, LFOI, FFEC, LFEC, FFMC, LFMC; the
   default set is FFOC/LFOC, place any of the others with `--marker LABEL=timecode`

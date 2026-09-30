@@ -143,7 +143,7 @@ const PREF_DEFAULTS = {
   creator: "", facility: "", bandwidth: DEFAULT_BANDWIDTH_MBPS, gpu: false,
   gpuLicense: "", gpuRegistrationUrl: "", encodeThreads: AUTOMATIC_ENCODE_THREADS,
   signingCert: "", signingKey: "", outputDir: "", isdcfNaming: false,
-  channels: "5.1", showHintsBeforeBuild: true,
+  channels: "5.1", showHintsBeforeBuild: true, detectPictureFindings: false,
 };
 
 let currentPreferences = { ...PREF_DEFAULTS };
@@ -223,6 +223,8 @@ function loadSettings() {
   if (naming) naming.checked = prefs.isdcfNaming;
   const showHints = document.getElementById("set-show-hints");
   if (showHints) showHints.checked = prefs.showHintsBeforeBuild;
+  const detectPictureFindings = document.getElementById("set-detect-picture-findings");
+  if (detectPictureFindings) detectPictureFindings.checked = prefs.detectPictureFindings;
   const gpu = document.getElementById("set-gpu");
   if (gpu) gpu.checked = prefs.gpu;
 }
@@ -294,6 +296,7 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     outputDir: document.getElementById("set-output-dir")?.value,
     isdcfNaming: document.getElementById("set-isdcf-naming")?.checked || false,
     showHintsBeforeBuild: !!document.getElementById("set-show-hints")?.checked,
+    detectPictureFindings: !!document.getElementById("set-detect-picture-findings")?.checked,
     gpu: !!document.getElementById("set-gpu")?.checked,
     gpuLicense: document.getElementById("set-gpu-license")?.value.trim() || "",
     gpuRegistrationUrl: document.getElementById("set-gpu-registration-url")?.value.trim() || "",
