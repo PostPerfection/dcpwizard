@@ -172,6 +172,23 @@ imfwizard. What the traces said, and what is still owed:
   threads competing for the laptop's 8 cores. So the laptop is bound by frame
   supply (ffmpeg, the pipe, the submit copy) with the device close behind, and
   device side work needs a benchmark that feeds frames from memory to measure.
+- Frames fed from memory (a local, uncommitted hook in postkit's video reader
+  loops the first 60 decoded frames and ffmpeg sits idle after them), 60 s Toms
+  clip, two rounds: 73 to 76 fps steady, against 49 to 50.5 from the pipe. With
+  the same ffmpeg decode running beside the memory-fed encode at 50 fps
+  (`-readrate 2.1`): 59 to 62 fps writing to /dev/null, 64 piping into `cat`. The
+  side decode could not hold 50 fps next to the encoder and took 32 to 34 s for
+  1440 frames. So the pipe run is bound by the DNxHR decode sharing the 8 cores
+  with the encoder, and the pipe costs little. Decoding in process would save only
+  the pipe, which is not worth libav on three platforms and the licence question.
+- The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
+  DCP Wizard 1.3.3, so before the changes above): a 4K encode at 37% CPU with no
+  core above 68%, and the card at 97% utilization drawing 75 of its ~250 W. They
+  report ffmpeg decoding the Toms clip at 500 fps. Neither side is full there,
+  which matches the device picture here: the MQ kernel fills little of the card,
+  and frames reach the device one at a time through the single callback thread.
+  On that machine the levers are the kernel's occupancy and the copies on the
+  callback thread.
 - Sizing the context stream by `precision + GPUP_BIBO_EXTRA_BITS` bit planes, as
   the decoder's output buffer already is, would cut it by about 40%, but only if
   the bit plane coder can never exceed that count, which is unchecked.
