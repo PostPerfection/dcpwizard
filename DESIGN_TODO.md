@@ -181,6 +181,60 @@ imfwizard. What the traces said, and what is still owed:
   1440 frames. So the pipe run is bound by the DNxHR decode sharing the 8 cores
   with the encoder, and the pipe costs little. Decoding in process would save only
   the pipe, which is not worth libav on three platforms and the licence question.
+- Dropping the plugin's second host copy of each incoming frame gains nothing on the
+  laptop (measured 2026-09-30). A trial build skipped that copy once each upload slot
+  held a real frame. Frames fed from memory, 60 s Toms clip, three alternating pairs:
+  64.4, 61.8 and 58.2 fps with the copy, 61.9, 57.5 and 54.5 without, all six falling
+  as the GPU heated. Fed from memory the laptop is device bound, so the copy is not
+  its limit. Unmeasured on the 5070.
+- Fed from memory the laptop is device bound, not host bound: six of its eight cores
+  gave 63.5 and 62.7 fps against 65.0 and 63.4 on all eight (2026-09-30). The device
+  kernels overlap and keep it busy, and the MQ coder takes about 60% of their time.
+  Nsight Compute on the MQ coder alone: 1.5% of DRAM bandwidth, SMs active 61% of
+  the launch, 11 of 32 threads active per warp, because each thread codes one code
+  block and blocks differ in work. Three trials, all with byte-identical output,
+  none faster: larger thread blocks (65.8 against 64.9 fps, launches overlap more but
+  each runs longer), ordering code blocks by work so a warp's blocks finish together
+  (62.5 against 64.4, the launch slows from 16.1 to 17.8 ms as neighbouring threads
+  stop reading neighbouring rows), and the same ordering within runs of 256 blocks
+  (62.3 against 64.3).
+- The MQ coder codes 5.25 MB a frame and the finished frame keeps 1.30 MB, so rate
+  control discards 75% of the coded bytes, mostly the lowest bit planes where nearly
+  every coefficient is coded (20 s Toms clip, 250 Mbit/s, 2026-09-30). Stopping each
+  block's coding once its pass slope falls below a threshold predicted from the
+  previous frame was expected to cut that work on every machine, at the cost of output
+  that is no longer byte-identical to today's. Matching the plugin's per-pass context counts
+  against the passes grok's rate control keeps, over 60 frames: 26.5% of the MQ
+  coder's work (24.6 to 26.9% by frame) is in kept passes, 29% of passes are kept,
+  and 62% of code blocks that have passes keep none of them. So with a perfect
+  prediction the MQ work falls by up to three quarters, the device time a frame by up
+  to about 44%. A scene change from detailed content to a simple frame is the risk:
+  the predicted threshold is too high and the frame lands under budget. A
+  margin below the prediction and a re-encode without the cut when a frame comes in
+  under budget with truncated blocks cover it.
+- Measured 2026-09-30, and it does not pay: a trial build stopped a block once all
+  three passes of a bit plane fell below a fixed threshold, after the second full
+  plane, lowest three resolutions excluded. Threshold 0 reproduced base byte for byte.
+  grok's own final threshold on the 60 s Toms clip sits at 51029 to 51211 in its log
+  slope units (about 51063 mean, dumped per frame from rate control). Frames fed
+  from memory, four alternating rounds each, steady fps: base 64.3, 64.3, 64.4 and
+  60.9 (GPU at 78 C by then), grok's threshold 65.3, 64.9, 64.9, 64.3, a quarter of
+  it 64.1, 64.2, 63.8, 63.4, four times it 66.5, 66.8, 66.2, 65.8. PSNR of the
+  decoded 12-bit XYZ against the base output over 120 frames, minimum and mean:
+  73.1 and 84.7 dB at grok's threshold, 73.1 and 84.9 at a quarter and a sixteenth,
+  72.0 and 77.1 at four times it with the file 0.2% smaller, so under budget. Even
+  dropping far more than rate control keeps buys 2 fps.
+- Why, from the per block work dumps of the sorted trial: with the natural block
+  order the slowest block in each warp sums to 1.48 times the ideal, so perfect
+  grouping would cut per warp MQ work by a third at most, and the sorted trial
+  reached 1.01 and still ran slower. Neither the amount of MQ work nor its spread
+  across warps sets the kernel time, so early termination and block grouping are
+  both closed. What remains from the Nsight Compute run is 11 of 32 lanes active
+  per warp (the arithmetic coder's lanes diverge per symbol) and SMs idle 39% of the
+  launch. Next step is a measurement: Nsight Compute with source level stall and
+  divergence counters on the MQ kernel, to see which instructions the lanes wait on.
+- For the laptop none of the device work shows in a real encode: fed from the pipe it
+  is bound by the DNxHR decode on the CPU at about 50 fps.
 - The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
   DCP Wizard 1.3.3, so before the changes above): a 4K encode at 37% CPU with no
   core above 68%, and the card at 97% utilization drawing 75 of its ~250 W. They
