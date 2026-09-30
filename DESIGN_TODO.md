@@ -246,6 +246,21 @@ imfwizard. What the traces said, and what is still owed:
   plugin for CUDA on 2026-09-30, Metal and OpenCL/HIP owed. The other lever is
   overlapping consecutive frames' MQ launches, which the trace shows at 2 to 3 ms
   today because a frame's MQ starts only when its own bit plane coding is done.
+- A second round on the same chain (2026-09-30, byte identical output, each step
+  measured launch by launch against the previous one on the 5 s clip): the kernel's
+  total MQ time fell another 39%, so about half of where the day started. Most of it
+  came from taking branches off the per symbol path, a table lookup for the context
+  classification and keeping the coded bytes in registers. Fed from memory the 60 s
+  Toms run went only from 68 to 69 fps, because the laptop is now host bound: the
+  same run on 6 of its 8 CPUs gives 48 fps and on 4 gives 39, where before the round
+  6 CPUs cost 1.5 fps. The device trace shows it 100% busy over three frame slots
+  with MQ launches every 11 ms, about 90 fps of device throughput, and the next
+  frame's bit plane coding already runs inside the current MQ launch. What sets the
+  device period is the chain per frame slot: MQ 8.5 ms, the copy of the whole 79 MB
+  code stream buffer off the device 7 ms, the callback and the 34 MB upload 3 ms,
+  preprocess, DWT, bit planar and BPC 12.5 ms, about 34 ms for three slots. Copying
+  only the used code stream bytes off the device would cut about 6 ms from that
+  chain. Metal and OpenCL/HIP still owe the whole round.
 - For the laptop none of the device work shows in a real encode: fed from the pipe it
   is bound by the DNxHR decode on the CPU at about 50 fps.
 - The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
