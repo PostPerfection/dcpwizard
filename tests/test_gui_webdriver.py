@@ -482,7 +482,7 @@ def test_the_settings_page_lists_the_component_versions(window):
     )
     names = [name for name, _ in rows]
     versions = dict(rows)
-    assert names == ["DCP Wizard", "PostKit", "Grok", "FFmpeg", "mpv"]
+    assert names == ["DCP Wizard", "PostKit", "Grok", "Grok plugin", "FFmpeg", "mpv"]
     assert versions["DCP Wizard"] == package_version(REPOSITORY_ROOT / "gui/src-tauri/Cargo.toml")
     assert versions["PostKit"] == package_version(REPOSITORY_ROOT / "extern/postkit/Cargo.toml")
     for name, version in rows:
