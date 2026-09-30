@@ -144,37 +144,82 @@ The encode threads setting landed in grok 20.4.14 (`grk_plugin_init_info::num_th
 automatic count from the affinity mask), the plugin, postkit, guikit, dcpwizard and
 imfwizard. What the traces said, and what is still owed:
 
-- The laptop is host bound, not device bound. Nsight Compute on the 3060 shows
-  `mqcoder_rc` at 5 to 15% SM busy: one thread per code block, 219 blocks of 32
-  threads a launch (one 4K channel), 0.46 waves on 30 SMs, warps stalled on
-  latency. nvidia-smi's 100% only means a kernel was resident. The 20 s Toms clip
-  used 180 CPU seconds of encoder process for 480 frames, ffmpeg another 45, so
-  the 8 cores were saturated and the frame reader waited on ffmpeg's pipe 15 s of 18.
-  The device idles 55% of the mqcoder time on one launch at a time, so the kernel's
-  own occupancy is not the next lever on any card until the host feeds it faster.
-- Host cuts made on 2026-09-29, uncommitted in ~/src/Grok/grok and its plugin
-  submodule, output byte-identical to before, 30.1 to 36 fps on the laptop and 180
-  to 116 CPU seconds:
-  grok rate control searches the slope on per-slope tables of body bytes and hull
-  passes, measures packets without a budget to learn header bytes, verifies the
-  chosen threshold and the one below it (2 to 3 simulations a frame instead of 10),
-  and skips the final simulation when the verified layout is the final one.
-  Precincts hold their code blocks in one array, size pass storage from the band's
-  bit depth, and allocate the 4 KB code stream slot per block only when grok's own
-  T1 asks for it. The bit writer packs header fields a byte at a time. The plugin
-  copies only each block's coded bytes and pass entries out of the 66 MB device
-  buffer, its memory estimate no longer triples the context stream and the DWT
-  scratch, and it keeps a quarter of the card free while taking up to 12 frames
-  in flight. The 31 postkit grok tests and the cap e2e tests pass.
-- Levers left, by measured share of the 147 CPU seconds a run now takes: ffmpeg 30%
-  (DNxHR decode 15, the pad on the single filter thread 6, the raw pipe 6; the two
-  detectors cost under 1%), grok's packet header coder 10% (three header passes a
-  frame plus the real write), the plugin's two host copies of every incoming frame
-  7% (planes into a staging buffer, then into pinned memory inside the CUDA host
-  callback, where no CUDA call is allowed), the plugin to grok pass sync 9% across
-  four stages (PassInfo to gpup_tile, to grk_plugin_tile, to grok's passes, then the
-  hull), kernel page faults 8%. A 1 MB pipe buffer, jemalloc, mimalloc, tcmalloc and
-  8 or 12 encoder threads changed nothing.
+- The laptop is now device bound. An Nsight Systems trace of the 20 s Toms clip at
+  40 fps has a kernel running for 94% of the encode span, `mqcoder_rc` summing
+  16.9 s of kernel time in 9 s of wall time, two launches overlapping for half of
+  it. btop shows the CPUs below full and the GPU at full. Nsight Compute showed
+  each `mqcoder_rc` launch at 5 to 15% SM busy: one thread per code block, 219
+  blocks of 32 threads a launch, 0.46 waves on 30 SMs, warps stalled on latency.
+  So the kernel's occupancy is the next lever. Before the host cuts the device
+  idled 55% of the mqcoder time.
+- One MQ launch for all three channels: at 4K the plugin launched the MQ coder once
+  per channel (`splitChannelsAcrossBPC_MQKernelRuns` above `threshold_2k_4k`) so the
+  channels could share one context stream, which is sized for 31 bit planes, 250 MB
+  per 4K channel. On CUDA the plugin now takes one launch when the three channel
+  stream fits a surface's 65536 rows and two frames of it fit the card. The 656
+  block launch takes 12 ms where a 219 block launch took 10.5. Steady state on the
+  60 s Toms clip went from 48.3 to 49.7 fps to 50.2 to 51.4, output byte-identical.
+  Two frames in flight run as fast as three or six, in either mode. OpenCL, HIP and
+  Metal keep the size threshold, since latke has no image height limit to check
+  and Metal textures stop at 16384 rows.
+- With the single launch, frames run one at a time on the device: MQ launches
+  overlap 3% of the time and the device idles 11%. Each frame's upload waits on a
+  CUDA host callback, and CUDA runs every host callback on one thread. That thread
+  copies the 28 MB input into pinned memory (4 to 13 ms) and the used code stream
+  off the device buffer (8 ms), so it was busy back to back. Splitting both copies
+  over four threads cut the second to 3.9 ms, but the upload callbacks then waited
+  9.4 ms on average for a filled frame, and steady state fell 2 fps from the extra
+  threads competing for the laptop's 8 cores. So the laptop is bound by frame
+  supply (ffmpeg, the pipe, the submit copy) with the device close behind, and
+  device side work needs a benchmark that feeds frames from memory to measure.
+- Sizing the context stream by `precision + GPUP_BIBO_EXTRA_BITS` bit planes, as
+  the decoder's output buffer already is, would cut it by about 40%, but only if
+  the bit plane coder can never exceed that count, which is unchecked.
+- Host cuts, all committed (grok 84ee560c and 1fd7053b, plugin a78da57), output
+  byte-identical: 30.1 to 40.3 fps on the 20 s Toms clip (4096x1716, 250 Mbit/s)
+  and from 180 CPU seconds for the encoder process plus 45 for ffmpeg to 122
+  for both together (101 user, 21 sys).
+  Rate control searches the slope on per-slope tables of body bytes and hull passes
+  and verifies two thresholds instead of bisecting with full simulations. Precincts
+  hold their code blocks in one array and allocate the 4 KB code slot only for
+  grok's own T1. The bit writer packs header fields a byte at a time. Codecs are
+  reused across batch frames. The plugin copies only each block's coded bytes and
+  pass entries off the device and writes its final pass records into grok's pass
+  storage, so grok takes them without a copy. Its memory estimate uses the real
+  buffers and keeps a quarter of the card free while taking up to 12 frames in
+  flight. Black and frozen detection is opt-in, so ffmpeg's graph is only the pad.
+- Levers left, by share of perf samples in one run (121 CPU seconds, 41.6 fps under
+  perf): ffmpeg 30% (DNxHR decode 19% over 16 threads, the raw pipe write 7%, the
+  pad on the filter thread 3%). In the encoder process: the plugin to grok pass
+  handoff 12% (the plugin's per-block pass sync 5.4%, grok's convex hull 5% with
+  its `log`, the tile wrapper update and grok's per-block synch 1.5%), grok's packet
+  header coder 13% (three header passes a frame plus the real write), grok's slope
+  search 9%, libc memmove 7% (the plugin's two host copies of every incoming frame
+  by the earlier trace, callers not resolved in this one), the used code stream
+  copy off the device 2.4%, and kernel time 15%, spread over pipe reads, page
+  faults and syscalls. A 1 MB pipe buffer, jemalloc, mimalloc, tcmalloc and 8 or
+  12 encoder threads changed nothing.
+- The plugin running grok's convex hull on each block as it writes the passes, so
+  grok skips its own hull, was tried: 40.5 against 40.1 fps over three alternating
+  pairs, 1 to 3 user CPU seconds less, picture essence byte-identical.
+- Pass records and hull on the device: a kernel after the last MQ launch reads
+  each block's `PassInfo` entries and its coded bytes and writes grok's pass
+  records (pass count, bit planes, the 0xFF trimmed rate, length, cumulative
+  distortion in double with the band's MSE weight, no FMA so it matches the host
+  bit for bit), then the convex hull. grok then skips `compress_synch_with_plugin`'s
+  pass work and `RateControl::convexHull` for plugin tiles. The hull's `slopeToLog`
+  calls `log`, and CUDA's double `log` is not correctly rounded, so a slope that
+  lands on a 16-bit step can differ from glibc's. Either compare every frame's
+  records against the host path in a debug run, or return the double slope and
+  keep `slopeToLog` on the host. Kernel pattern: the plugin's MQ wrapper and its
+  CUDA launch (`MQ_RC_CUDA`).
+- Device compaction of the tile buffer: pack the used code bytes and pass entries
+  on the device before the copy, so the host copy is one `memcpy` instead of the
+  per-block loop in `copyUsedCodeStream`.
+- Decode in process: link libavcodec instead of piping raw frames from ffmpeg,
+  which removes the pipe write and read (9% together) and one copy of each frame.
+- With codec reuse, a `GRK_PLUGIN_STATE_DEBUG` run whose CPU T1 writes passes
+  writes into the plugin's pass array after frame 1. Normal runs are unaffected.
 - Profiling needs root for GPU counters on this Fedora (`RmProfilingAdminOnly: 1`):
   `sudo /tmp/bench/ncu_mq.sh`, or `options nvidia NVreg_RestrictProfilingToAdminUsers=0`
   in modprobe.d and a reboot. build-gpu's `libgrokj2k.so.1` symlink pointed at the
