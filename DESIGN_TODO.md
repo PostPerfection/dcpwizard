@@ -233,6 +233,19 @@ imfwizard. What the traces said, and what is still owed:
   per warp (the arithmetic coder's lanes diverge per symbol) and SMs idle 39% of the
   launch. Next step is a measurement: Nsight Compute with source level stall and
   divergence counters on the MQ kernel, to see which instructions the lanes wait on.
+- That measurement (2026-09-30) settled it: one SM is busy for the whole MQ launch
+  while the average SM works 61% of it, and replaying the per block work dumps
+  through the SM slots gives the launch time as the single longest code block
+  (1122 work units against a mean of 105) in every block order. The kernel is a
+  serial chain per code block and the longest chain is the frame's critical path.
+  DCI fixes cinema code blocks at 32x32, so the chain cannot be split. The lever
+  that remains is the number of dependent instructions per coded symbol. Three
+  cuts to that chain in the plugin's MQ kernel (byte identical output) took the
+  launch from 15.0 to 12.5 ms and the memory-fed 60 s Toms run from 64 to 68 fps,
+  4 to 4.5 fps ahead of base in every one of four alternating pairs. Landed in the
+  plugin for CUDA on 2026-09-30, Metal and OpenCL/HIP owed. The other lever is
+  overlapping consecutive frames' MQ launches, which the trace shows at 2 to 3 ms
+  today because a frame's MQ starts only when its own bit plane coding is done.
 - For the laptop none of the device work shows in a real encode: fed from the pipe it
   is bound by the DNxHR decode on the CPU at about 50 fps.
 - The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
