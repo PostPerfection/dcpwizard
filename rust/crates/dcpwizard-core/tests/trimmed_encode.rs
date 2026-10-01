@@ -69,7 +69,6 @@ fn encode(
         frames,
         WIDTH,
         HEIGHT,
-        &postkit::probe::probe_pixel_format(clip),
         &Arc::new(AtomicBool::new(false)),
         false,
         None,

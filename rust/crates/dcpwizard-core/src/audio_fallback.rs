@@ -4,14 +4,10 @@
 //! Both produce the 48 kHz 24-bit PCM a DCP sound track carries, so whatever
 //! comes out of here can be processed and wrapped like a supplied WAV.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const SAMPLE_RATE: u32 = 48_000;
 const BITS_PER_SAMPLE: u16 = 24;
-/// A RIFF header declares its sizes in 32 bits, and the header itself takes 36
-/// of the bytes the RIFF size counts.
-const MAX_RIFF_PAYLOAD_BYTES: u64 = u32::MAX as u64 - 36;
 
 /// Pull the video's own audio out to a 48 kHz 24-bit WAV in `work_dir`, every
 /// channel as the source carries it. None when the source has no audio stream.
@@ -28,6 +24,7 @@ pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<Pa
         .arg(video)
         .arg("-vn")
         .args(["-c:a", "pcm_s24le", "-ar", &SAMPLE_RATE.to_string()])
+        .args(["-rf64", "auto"])
         .arg(&output)
         .output()
         .map_err(|e| format!("failed to run ffmpeg to extract the source's audio: {e}"))?;
@@ -45,40 +42,24 @@ pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<Pa
 /// sample-accurate at the frame edge so it lines up with the picture.
 pub fn write_silent_wav(output: &Path, channels: u32, frames: u64, fps: u32) -> Result<(), String> {
     crate::pad::check_frame_aligned_sample_rate(SAMPLE_RATE, fps)?;
-    let block_align = (BITS_PER_SAMPLE / 8) as u64 * channels as u64;
-    let payload = frames * (SAMPLE_RATE / fps) as u64 * block_align;
-    if payload > MAX_RIFF_PAYLOAD_BYTES {
-        return Err(format!(
-            "{channels} channels of silence over {frames} frames is {payload} bytes, more than a \
-             WAV can declare"
-        ));
-    }
-
-    let mut header = Vec::with_capacity(44);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&((36 + payload) as u32).to_le_bytes());
-    header.extend_from_slice(b"WAVEfmt ");
-    header.extend_from_slice(&16u32.to_le_bytes());
-    header.extend_from_slice(&1u16.to_le_bytes());
-    header.extend_from_slice(&(channels as u16).to_le_bytes());
-    header.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    header.extend_from_slice(&((SAMPLE_RATE as u64 * block_align) as u32).to_le_bytes());
-    header.extend_from_slice(&(block_align as u16).to_le_bytes());
-    header.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&(payload as u32).to_le_bytes());
-
-    let mut file =
-        std::fs::File::create(output).map_err(|e| format!("cannot create {output:?}: {e}"))?;
-    file.write_all(&header).map_err(|e| e.to_string())?;
+    let spec = postkit::wav_io::WavSpec {
+        channels: channels as u16,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: BITS_PER_SAMPLE,
+        sample_format: postkit::wav_io::SampleFormat::Int,
+    };
+    let sample_frames = frames * (SAMPLE_RATE / fps) as u64;
+    let cannot_write = |e: std::io::Error| format!("cannot write {output:?}: {e}");
+    let mut writer = postkit::wav_io::WavWriter::create_plain_pcm(output, spec, sample_frames)
+        .map_err(cannot_write)?;
     let zeros = vec![0u8; 1 << 16];
-    let mut remaining = payload;
+    let mut remaining = sample_frames * (BITS_PER_SAMPLE / 8) as u64 * channels as u64;
     while remaining > 0 {
         let take = remaining.min(zeros.len() as u64) as usize;
-        file.write_all(&zeros[..take]).map_err(|e| e.to_string())?;
+        writer.write_bytes(&zeros[..take]).map_err(cannot_write)?;
         remaining -= take as u64;
     }
-    Ok(())
+    writer.finalize().map_err(cannot_write)
 }
 
 #[cfg(test)]

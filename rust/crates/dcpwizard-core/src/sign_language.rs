@@ -221,20 +221,9 @@ pub fn build_slvs_sound(
 
 /// Leading channel count of a 24-bit 48 kHz WAV, for the SLVS soundfield layout.
 fn main_audio_channels(path: &Path) -> Result<u32, String> {
-    let data = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    if data.len() < 24 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
-        return Err(format!("{} is not a RIFF/WAVE file", path.display()));
-    }
-    let mut pos = 12usize;
-    while pos + 8 <= data.len() {
-        let size = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
-        let body = pos + 8;
-        if &data[pos..pos + 4] == b"fmt " && size >= 16 && body + 4 <= data.len() {
-            return Ok(u16::from_le_bytes(data[body + 2..body + 4].try_into().unwrap()) as u32);
-        }
-        pos = body + size + (size & 1);
-    }
-    Err(format!("{} has no fmt chunk", path.display()))
+    let layout = postkit::wav_io::WavLayout::read(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok(layout.spec.channels as u32)
 }
 
 /// Interleave a 16-channel 24-bit 48 kHz WAV: the SLVS mono PCM stream goes on
@@ -283,32 +272,17 @@ pub fn write_16ch_slvs_wav(
 /// it to a 16-channel interleaved buffer (silent fill channels). Errors on any
 /// non-48 kHz / non-24-bit / >16-channel input.
 pub fn widen_wav_to_16ch(path: &Path) -> Result<Vec<u8>, String> {
-    let data = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    if data.len() < 44 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
-        return Err(format!("{} is not a RIFF/WAVE file", path.display()));
-    }
-    let mut pos = 12usize;
-    let mut channels = 0u16;
-    let mut bits = 0u16;
-    let mut rate = 0u32;
-    let mut payload: &[u8] = &[];
-    while pos + 8 <= data.len() {
-        let size = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap()) as usize;
-        let body = pos + 8;
-        if body + size > data.len() {
-            break;
-        }
-        match &data[pos..pos + 4] {
-            b"fmt " if size >= 16 => {
-                channels = u16::from_le_bytes(data[body + 2..body + 4].try_into().unwrap());
-                rate = u32::from_le_bytes(data[body + 4..body + 8].try_into().unwrap());
-                bits = u16::from_le_bytes(data[body + 14..body + 16].try_into().unwrap());
-            }
-            b"data" => payload = &data[body..body + size],
-            _ => {}
-        }
-        pos = body + size + (size & 1);
-    }
+    use std::io::{Read, Seek, SeekFrom};
+    let cannot_read = |e: std::io::Error| format!("cannot read {}: {e}", path.display());
+    let layout = postkit::wav_io::WavLayout::read(path).map_err(cannot_read)?;
+    let channels = layout.spec.channels;
+    let rate = layout.spec.sample_rate;
+    let bits = layout.bytes_per_sample * 8;
+    let mut payload = vec![0u8; layout.data.size as usize];
+    let mut file = std::fs::File::open(path).map_err(cannot_read)?;
+    file.seek(SeekFrom::Start(layout.data.body_offset()))
+        .map_err(cannot_read)?;
+    file.read_exact(&mut payload).map_err(cannot_read)?;
     if rate != SAMPLE_RATE || bits != 24 {
         return Err(format!(
             "sign-language sound expects 48 kHz 24-bit main audio, got {rate} Hz {bits}-bit"
@@ -331,24 +305,18 @@ pub fn widen_wav_to_16ch(path: &Path) -> Result<Vec<u8>, String> {
 /// Write a canonical PCM WAV (little-endian, format 1) with the given channel
 /// count at 24-bit / 48 kHz from an interleaved sample buffer.
 fn write_wav_24_48k(path: &Path, channels: u16, data: &[u8]) -> Result<(), String> {
-    let bits = 24u16;
-    let block_align = (bits / 8) * channels;
-    let byte_rate = SAMPLE_RATE * block_align as u32;
-    let mut w = Vec::with_capacity(44 + data.len());
-    w.extend_from_slice(b"RIFF");
-    w.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
-    w.extend_from_slice(b"WAVEfmt ");
-    w.extend_from_slice(&16u32.to_le_bytes());
-    w.extend_from_slice(&1u16.to_le_bytes());
-    w.extend_from_slice(&channels.to_le_bytes());
-    w.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    w.extend_from_slice(&byte_rate.to_le_bytes());
-    w.extend_from_slice(&block_align.to_le_bytes());
-    w.extend_from_slice(&bits.to_le_bytes());
-    w.extend_from_slice(b"data");
-    w.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    w.extend_from_slice(data);
-    std::fs::write(path, &w).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    let spec = postkit::wav_io::WavSpec {
+        channels,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: 24,
+        sample_format: postkit::wav_io::SampleFormat::Int,
+    };
+    let frames = (data.len() / (BYTES_PER_SAMPLE * channels as usize)) as u64;
+    let cannot_write = |e: std::io::Error| format!("cannot write WAV {}: {e}", path.display());
+    let mut writer =
+        postkit::wav_io::WavWriter::create_plain_pcm(path, spec, frames).map_err(cannot_write)?;
+    writer.write_bytes(data).map_err(cannot_write)?;
+    writer.finalize().map_err(cannot_write)
 }
 
 #[cfg(test)]

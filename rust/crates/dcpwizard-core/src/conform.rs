@@ -217,6 +217,7 @@ fn trim_audio(
         cmd.args(["-af", &filter]);
     }
     cmd.args(["-vn", "-acodec", "pcm_s24le", "-ar", "48000"])
+        .args(["-rf64", "auto"])
         .arg(dst);
     match cmd.output() {
         Ok(o) if o.status.success() && dst.exists() => Ok(true),

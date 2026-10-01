@@ -3910,6 +3910,7 @@ fn trailer_to_dcp(
             .args(["-y", "-i"])
             .arg(mp4)
             .args(["-vn", "-acodec", "pcm_s24le", "-ar", "48000"])
+            .args(["-rf64", "auto"])
             .arg(&wav)
             .output();
         match demux {
@@ -5331,7 +5332,6 @@ fn run() {
                     encode_frames,
                     width,
                     height,
-                    &source_pixel_format,
                     hdr_dcdm_colour
                         .as_ref()
                         .unwrap_or(&postkit::encode::SourceColour::DisplayRgb),
@@ -5430,7 +5430,6 @@ fn run() {
                         encode_frames,
                         width,
                         height,
-                        &postkit::probe::probe_pixel_format(&re_path),
                         &cancel,
                         false,
                         picture_filter.as_deref(),
@@ -5465,6 +5464,7 @@ fn run() {
                         .arg("pcm_s24le")
                         .arg("-ar")
                         .arg("48000")
+                        .args(["-rf64", "auto"])
                         .arg(&wav_out)
                         .output();
                     match demux {
@@ -6086,6 +6086,7 @@ fn run() {
                     .arg("pcm_s24le")
                     .arg("-ar")
                     .arg("48000")
+                    .args(["-rf64", "auto"])
                     .arg(&wav_out)
                     .output();
                 match demux {

@@ -733,8 +733,8 @@ pub fn planned_picture_frames(plan: &CreatePlan) -> Option<u64> {
 }
 
 pub(crate) fn read_wav_spec(path: &Path) -> Result<hound::WavSpec, String> {
-    hound::WavReader::open(path)
-        .map(|reader| reader.spec())
+    postkit::wav_io::WavLayout::read(path)
+        .map(|layout| layout.spec)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 

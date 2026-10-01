@@ -199,7 +199,7 @@ fn the_header_names_the_machine_the_source_and_every_setting_and_the_log_ends_do
     );
     assert!(
         log.lines().any(|line| {
-            line.starts_with("[ENCODE] decoding to the pipe pixel_format=")
+            line.starts_with("[ENCODE] decoding to pixel_format=")
                 && line.ends_with(" hardware_decode=false")
         }),
         "the encode names the pixel format it decodes to: {log}"
