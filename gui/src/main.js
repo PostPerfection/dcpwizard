@@ -16,7 +16,7 @@ import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js"
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
-import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS } from "./project-form.js";
+import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
@@ -768,7 +768,6 @@ async function openDcp(dir) {
   }
 
   const name = dir.split(/[/\\]/).pop();
-  document.getElementById("project-name").textContent = name;
   project.title = name;
   document.getElementById("prop-title").value = name;
   setStatus(`Opened: ${dir}`);
@@ -1903,7 +1902,6 @@ function setProjectTitle(title) {
 
 document.getElementById("prop-title")?.addEventListener("input", (e) => {
   const title = e.target.value.trim();
-  document.getElementById("project-name").textContent = title || "Untitled Project";
   project.title = title;
 });
 
@@ -2052,7 +2050,6 @@ async function restoreBuildPanel(saved) {
   nextCplId = Math.max(0, ...project.compositions.map((composition) => composition.id)) + 1;
   markerNextId = markerRows.length + 1;
   ratingNextId = ratings.length + 1;
-  document.getElementById("project-name").textContent = project.title || "Untitled Project";
   document.getElementById("prop-profile").value = "";
   applyProfile("");
 
@@ -2454,6 +2451,8 @@ renderReels();
 const buildPanelDefaults = serializeBuildPanel();
 initProjects({
   wizard: "dcpwizard",
+  projectFileVersion: PROJECT_FILE_VERSION,
+  projectFileMigrations: PROJECT_FILE_MIGRATIONS,
   applicationName: "DCP Wizard",
   packageNoun: "DCP",
   outputFields: OUTPUT_FIELDS,
