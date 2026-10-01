@@ -18,6 +18,8 @@ import { loadComponentVersions } from "../../extern/guikit/src/component-version
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
+import { initAssetStripResize } from "./asset-strip-resize.js";
+initAssetStripResize();
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
