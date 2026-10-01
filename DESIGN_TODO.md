@@ -237,7 +237,13 @@ imfwizard. What the traces said, and what is still owed:
   cuts to that chain in the plugin's MQ kernel (byte identical output) took the
   launch from 15.0 to 12.5 ms and the memory-fed 60 s Toms run from 64 to 68 fps,
   4 to 4.5 fps ahead of base in every one of four alternating pairs. Landed in the
-  plugin for CUDA on 2026-09-30, Metal and OpenCL/HIP owed. The other lever is
+  plugin for CUDA on 2026-09-30 and ported to Metal on 2026-10-01 (plugin 7febff1,
+  checked by compiling the Metal source as C++ and running old and new kernels on
+  CPU threads, byte identical over about 50 million symbols, not yet run on a
+  Metal GPU). The OpenCL and HIP builds of the plugin do not encode today for
+  reasons older than the rounds: OpenCL enumerates no devices and builds no
+  kernels from source, HIP does not compile on ROCm 6.4. The rounds are moot there
+  until those backends work. The other lever is
   overlapping consecutive frames' MQ launches, which the trace shows at 2 to 3 ms
   today because a frame's MQ starts only when its own bit plane coding is done.
 - A second round on the same chain (2026-09-30, byte identical output, each step
@@ -254,7 +260,7 @@ imfwizard. What the traces said, and what is still owed:
   code stream buffer off the device 7 ms, the callback and the 34 MB upload 3 ms,
   preprocess, DWT, bit planar and BPC 12.5 ms, about 34 ms for three slots. Copying
   only the used code stream bytes off the device would cut about 6 ms from that
-  chain. Metal and OpenCL/HIP still owe the whole round.
+  chain. Metal has the round as of 2026-10-01, OpenCL and HIP wait on working backends.
 - Landed 2026-10-01 for CUDA (plugin 8b0e27f, latke 92ee512, grok 86905d67): a
   kernel on the code stream buffer's own stream writes each block's used bytes and
   pass entries straight into the pinned host buffer, so the 83 MB copy off the
