@@ -1,44 +1,50 @@
+use postkit::preferences::PrefsMigration;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 pub const CURRENT_PREFERENCES_VERSION: u32 = 2;
+const FIRST_MIGRATION_VERSION: u32 = 2;
 pub const DEFAULT_GPU_REGISTRATION_URL: &str = "https://grokcompression.com/api/register";
 pub const AUTOMATIC_ENCODE_THREADS: u32 = 0;
+const DEFAULT_BANDWIDTH_MBPS: u32 = 230;
+const SNAKE_CASE_RENAMES: [(&str, &str); 10] = [
+    ("default_standard", "standard"),
+    ("default_resolution", "resolution"),
+    ("default_frame_rate", "framerate"),
+    ("creator_name", "creator"),
+    ("isdcf_facility_code", "facility"),
+    ("default_bandwidth_mbps", "bandwidth"),
+    ("signing_certificate_path", "signingCert"),
+    ("signing_key_path", "signingKey"),
+    ("default_output_dir", "outputDir"),
+    ("default_channel_config", "channels"),
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub version: u32,
-    #[serde(alias = "default_standard")]
     pub standard: String,
-    #[serde(alias = "default_resolution")]
     pub resolution: String,
-    #[serde(alias = "default_frame_rate")]
     pub framerate: u32,
     pub encrypt: bool,
     pub stereo3d: bool,
     pub validate: bool,
-    #[serde(alias = "creator_name")]
     pub creator: String,
-    #[serde(alias = "isdcf_facility_code")]
     pub facility: String,
-    #[serde(alias = "default_bandwidth_mbps")]
     pub bandwidth: u32,
     pub gpu: bool,
     pub gpu_license: String,
     pub gpu_registration_url: String,
     pub encode_threads: u32,
     pub detect_picture_findings: bool,
-    #[serde(alias = "signing_certificate_path")]
     pub signing_cert: String,
-    #[serde(alias = "signing_key_path")]
     pub signing_key: String,
-    #[serde(alias = "default_output_dir")]
     pub output_dir: String,
     pub isdcf_naming: bool,
-    #[serde(alias = "default_channel_config")]
     pub channels: String,
     pub show_hints_before_build: bool,
     #[serde(flatten)]
@@ -57,7 +63,7 @@ impl Default for Preferences {
             validate: true,
             creator: String::new(),
             facility: String::new(),
-            bandwidth: 230,
+            bandwidth: DEFAULT_BANDWIDTH_MBPS,
             gpu: false,
             gpu_license: String::new(),
             gpu_registration_url: DEFAULT_GPU_REGISTRATION_URL.to_string(),
@@ -86,16 +92,65 @@ pub fn load_preferences_if_present() -> io::Result<Option<Preferences>> {
     load_preferences_from(&preferences_path())
 }
 
+pub fn preference_migrations() -> Vec<PrefsMigration> {
+    vec![PrefsMigration {
+        version: FIRST_MIGRATION_VERSION,
+        description: "rename snake_case keys, cap bandwidth, make gpu a boolean".to_string(),
+        apply: Box::new(migrate_to_version_two),
+    }]
+}
+
+fn migrate_to_version_two(json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<Value>(json) else {
+        return json.to_string();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return json.to_string();
+    };
+    for (snake_case_name, camel_case_name) in SNAKE_CASE_RENAMES {
+        if let Some(stored) = object.remove(snake_case_name) {
+            object.entry(camel_case_name).or_insert(stored);
+        }
+    }
+    let bandwidth_above_default = object
+        .get("bandwidth")
+        .and_then(Value::as_f64)
+        .is_some_and(|bandwidth| bandwidth > f64::from(DEFAULT_BANDWIDTH_MBPS));
+    if bandwidth_above_default {
+        object.insert("bandwidth".to_string(), Value::from(DEFAULT_BANDWIDTH_MBPS));
+    }
+    let gpu_not_boolean = object.get("gpu").is_some_and(|gpu| !gpu.is_boolean());
+    if gpu_not_boolean {
+        object.insert("gpu".to_string(), Value::Bool(false));
+    }
+    value.to_string()
+}
+
+fn newer_file_error(stored_version: u32) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "preferences file version {stored_version} is newer than supported version {CURRENT_PREFERENCES_VERSION}"
+        ),
+    )
+}
+
 pub fn load_preferences_from(path: &Path) -> io::Result<Option<Preferences>> {
     let Some(contents) = postkit::preferences::read_preferences_file(path)? else {
         return Ok(None);
     };
     let stored_version = postkit::preferences::prefs_version(&contents);
-    let mut preferences: Preferences = serde_json::from_str(&contents)
+    if stored_version > CURRENT_PREFERENCES_VERSION {
+        return Err(newer_file_error(stored_version));
+    }
+    // migration hides the parse error of invalid json
+    serde_json::from_str::<Value>(&contents)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let migrated = postkit::preferences::migrate_preferences(&contents, &preference_migrations());
+    let preferences: Preferences = serde_json::from_str(&migrated)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
 
     if stored_version < CURRENT_PREFERENCES_VERSION {
-        preferences.version = CURRENT_PREFERENCES_VERSION;
         save_preferences_to(&preferences, path)?;
     }
 
@@ -117,6 +172,13 @@ pub fn save_preferences_to(preferences: &Preferences, path: &Path) -> io::Result
         ));
     }
 
+    if let Some(existing) = postkit::preferences::read_preferences_file(path)? {
+        let existing_version = postkit::preferences::prefs_version(&existing);
+        if existing_version > CURRENT_PREFERENCES_VERSION {
+            return Err(newer_file_error(existing_version));
+        }
+    }
+
     let mut current = preferences.clone();
     current.version = CURRENT_PREFERENCES_VERSION;
     let contents = serde_json::to_string_pretty(&current).map_err(io::Error::other)?;
@@ -124,8 +186,13 @@ pub fn save_preferences_to(preferences: &Preferences, path: &Path) -> io::Result
 }
 
 pub fn reset_preferences() -> io::Result<Preferences> {
+    reset_preferences_to(&preferences_path())
+}
+
+pub fn reset_preferences_to(path: &Path) -> io::Result<Preferences> {
     let preferences = Preferences::default();
-    save_preferences(&preferences)?;
+    let contents = serde_json::to_string_pretty(&preferences).map_err(io::Error::other)?;
+    postkit::preferences::write_preferences_file(path, &contents)?;
     Ok(preferences)
 }
 
@@ -217,21 +284,114 @@ mod tests {
     }
 
     #[test]
-    fn newer_file_is_not_rewritten() {
+    fn newer_file_is_refused_until_reset() {
         let directory = TempDir::new().unwrap();
         let path = directory.path().join("preferences.json");
         let contents = r#"{"version":99,"creator":"Future","futureField":true}"#;
         postkit::preferences::write_preferences_file(&path, contents).unwrap();
 
+        let error = load_preferences_from(&path).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("version 99"));
+        assert!(save_preferences_to(&Preferences::default(), &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), contents.as_bytes());
+
+        reset_preferences_to(&path).unwrap();
+
+        let reset = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            postkit::preferences::prefs_version(&reset),
+            CURRENT_PREFERENCES_VERSION
+        );
+    }
+
+    #[test]
+    fn the_migration_steps_run_from_the_first_to_the_current_version() {
+        let versions: Vec<u32> = preference_migrations()
+            .iter()
+            .map(|migration| migration.version)
+            .collect();
+
+        let expected: Vec<u32> = (FIRST_MIGRATION_VERSION..=CURRENT_PREFERENCES_VERSION).collect();
+        assert_eq!(versions, expected);
+    }
+
+    const EVERY_SNAKE_CASE_KEY: &str = r#""default_standard":"Interop","default_resolution":"4K","default_frame_rate":25,"creator_name":"Studio","isdcf_facility_code":"FAC","default_bandwidth_mbps":180,"signing_certificate_path":"/keys/cert.pem","signing_key_path":"/keys/key.pem","default_output_dir":"/out","default_channel_config":"7.1""#;
+
+    fn assert_every_snake_case_key_renamed(preferences: &Preferences, path: &Path) {
+        assert_eq!(preferences.standard, "Interop");
+        assert_eq!(preferences.resolution, "4K");
+        assert_eq!(preferences.framerate, 25);
+        assert_eq!(preferences.creator, "Studio");
+        assert_eq!(preferences.facility, "FAC");
+        assert_eq!(preferences.bandwidth, 180);
+        assert_eq!(preferences.signing_cert, "/keys/cert.pem");
+        assert_eq!(preferences.signing_key, "/keys/key.pem");
+        assert_eq!(preferences.output_dir, "/out");
+        assert_eq!(preferences.channels, "7.1");
+        assert!(preferences.additional.is_empty());
+
+        let saved = postkit::preferences::read_preferences_file(path)
+            .unwrap()
+            .unwrap();
+        let saved: serde_json::Map<String, Value> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(saved["version"], CURRENT_PREFERENCES_VERSION);
+        for (snake_case_name, camel_case_name) in SNAKE_CASE_RENAMES {
+            assert!(!saved.contains_key(snake_case_name), "{snake_case_name}");
+            assert!(saved.contains_key(camel_case_name), "{camel_case_name}");
+        }
+        assert_eq!(saved["creator"], "Studio");
+        assert_eq!(saved["signingCert"], "/keys/cert.pem");
+    }
+
+    #[test]
+    fn version_one_snake_case_keys_are_renamed() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = format!(r#"{{"version":1,{EVERY_SNAKE_CASE_KEY}}}"#);
+        postkit::preferences::write_preferences_file(&path, &contents).unwrap();
+
         let preferences = load_preferences_from(&path).unwrap().unwrap();
 
-        assert_eq!(preferences.version, 99);
-        assert_eq!(
-            postkit::preferences::read_preferences_file(&path)
-                .unwrap()
-                .unwrap(),
-            contents
-        );
-        assert!(save_preferences_to(&preferences, &path).is_err());
+        assert_every_snake_case_key_renamed(&preferences, &path);
+    }
+
+    #[test]
+    fn unversioned_snake_case_keys_are_renamed() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = format!("{{{EVERY_SNAKE_CASE_KEY}}}");
+        postkit::preferences::write_preferences_file(&path, &contents).unwrap();
+
+        let preferences = load_preferences_from(&path).unwrap().unwrap();
+
+        assert_every_snake_case_key_renamed(&preferences, &path);
+    }
+
+    #[test]
+    fn camel_case_key_wins_over_its_snake_case_name() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = r#"{"version":1,"creator_name":"Old","creator":"New"}"#;
+        postkit::preferences::write_preferences_file(&path, contents).unwrap();
+
+        let preferences = load_preferences_from(&path).unwrap().unwrap();
+
+        assert_eq!(preferences.creator, "New");
+        assert!(!preferences.additional.contains_key("creator_name"));
+    }
+
+    #[test]
+    fn version_one_bandwidth_is_capped_and_gpu_made_boolean() {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = r#"{"version":1,"default_bandwidth_mbps":500,"gpu":"yes"}"#;
+        postkit::preferences::write_preferences_file(&path, contents).unwrap();
+
+        let preferences = load_preferences_from(&path).unwrap().unwrap();
+
+        assert_eq!(preferences.bandwidth, DEFAULT_BANDWIDTH_MBPS);
+        assert!(!preferences.gpu);
     }
 }

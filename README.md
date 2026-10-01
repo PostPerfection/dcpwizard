@@ -323,7 +323,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Drag & drop file import (video, audio, subtitle)
 - Keyboard shortcuts (Ctrl+N/O/B/P/I, Ctrl+1–7 for views, Space/arrows/Home during preview). Ctrl+K opens the shortcut list, where clicking a shortcut rebinds it (Backspace clears, Escape cancels) and the rebindings are saved
 - Recent projects quick-access list
-- Projects: New (Ctrl+N) picks where the `.dcpwizard` file lives and starts from the default panel named after it. Save (Ctrl+S), Save As (Ctrl+Shift+S) and Open (Ctrl+O) write and read the whole build panel, with the sources, reels, markers, ratings, idents and output folder but not Settings. Every build also writes `<title>.dcpwizard` beside the package and saves the open project, Recent lists these files, and unsaved changes are kept as a draft in the app data folder that comes back on the next launch
+- Projects: New (Ctrl+N) picks where the `.dcpwizard` file lives and starts from the default panel named after it. Save (Ctrl+S), Save As (Ctrl+Shift+S) and Open (Ctrl+O) write and read the whole build panel, with the sources, reels, markers, ratings, idents and output folder but not Settings. Every build also writes `<title>.dcpwizard` beside the package and saves the open project, Recent lists these files, and unsaved changes are kept as a draft in the app data folder that comes back on the next launch. A file saved by an older version is upgraded on open and rewritten on Save, one saved by a newer version is refused
 - Right-click context menus on assets (Preview, Remove, Show in Files)
 - Asset filter / search
 - Auto-detect framerate and resolution from imported video (via ffprobe)

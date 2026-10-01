@@ -1,15 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { register } from 'node:module';
 import test from 'node:test';
 
 import {
   FORM_CONTROLS,
   OUTPUT_FIELDS,
   TEXT_FIELDS,
+  PROJECT_FILE_VERSION,
+  PROJECT_FILE_MIGRATIONS,
   serializeForm,
   restoreFormState,
   audioMapCells,
 } from '../src/project-form.js';
+
+register('../../extern/guikit/test/tauri-plugins-hooks.mjs', import.meta.url);
+
+const { readProjectFile } = await import('../../extern/guikit/src/project.js');
 
 // the profile only fills other controls, the threshold only drives Auto-crop
 const CONTROLS_NOT_SAVED = ['prop-profile', 'prop-auto-crop-threshold'];
@@ -121,6 +128,29 @@ test('a field missing from the file takes the panel default', () => {
   assert.deepEqual(reopened.project.assets, []);
   assert.deepEqual(reopened.markerRows, []);
   assert.deepEqual(reopened.joinedItems, { head: [], tail: [] });
+});
+
+test('a version 1 project file opens and restores its saved fields', () => {
+  const text = readFileSync(new URL('./fixtures/Film-version-1.dcpwizard', import.meta.url), 'utf8');
+  const { form, version } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+
+  const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  assert.equal(version, 1);
+  assert.deepEqual(notRestored, []);
+  assert.equal(reopened.controls.get('prop-title').value, 'Film');
+  assert.equal(reopened.controls.get('prop-resolution').value, '2k-flat');
+  assert.equal(reopened.controls.get('prop-audio-channels').value, '6');
+  assert.equal(reopened.controls.get('prop-encrypt').checked, true);
+  assert.equal(reopened.controls.get('prop-key-out').value, '/home/user/DCP/Film-keys.json');
+  assert.equal(form.audioMap, '1:L,2:R@-3');
+  const [picture, sound] = reopened.project.assets;
+  assert.equal(picture.path, '/media/film.mov');
+  assert.deepEqual(reopened.project.compositions[0].reels, [{ id: 1, picture, sound, subtitle: null }]);
+  assert.deepEqual(reopened.markerRows, [{ id: 1, label: 'FFEC', position: '00:58:12:03' }]);
+  assert.deepEqual(reopened.ratings, [{ id: 1, agency: 'http://www.mpaa.org/2003-ratings', label: 'PG-13' }]);
+  assert.deepEqual(reopened.joinedItems, { head: ['Studio logo'], tail: [] });
 });
 
 function selectOffering(label, values, value) {
