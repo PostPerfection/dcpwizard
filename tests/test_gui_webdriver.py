@@ -87,6 +87,7 @@ COMPOSITION_METADATA = [
     ("#prop-luminance", "luminance", "48", "Luminance"),
 ]
 LUMINANCE_UNITS_SELECT = "#prop-luminance-units"
+TOOLBAR_PROJECT_LABEL = "#project-name"
 # typing this into the select picks the unit after it
 LUMINANCE_UNITS_TYPED = "candela"
 LUMINANCE_UNITS = "candela-per-square-metre"
@@ -634,6 +635,8 @@ def fill_composition_metadata(window):
         lambda: window.session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS,
         REACTION_TIMEOUT_SECONDS,
     )
+    # shortcuts stay off while a field has focus
+    window.click(TOOLBAR_PROJECT_LABEL)
 
 
 def composition_metadata_in(cpl_path):
