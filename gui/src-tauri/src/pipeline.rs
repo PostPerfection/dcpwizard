@@ -83,7 +83,11 @@ pub struct IsdcfNameRequest {
     pub resolution: Option<String>,
     pub framerate: Option<String>,
     pub content_kind: Option<String>,
+    pub video_path: Option<String>,
     pub audio_path: Option<String>,
+    pub audio_channel_dir: Option<String>,
+    pub audio_map: Option<String>,
+    pub upmix: Option<String>,
     pub subtitle: Option<String>,
     pub subtitle_language: Option<String>,
     pub burn_subtitle: Option<String>,
@@ -92,6 +96,7 @@ pub struct IsdcfNameRequest {
     pub right_eye: Option<String>,
     pub atmos: Option<String>,
     pub facility: Option<String>,
+    pub composition_metadata: CompositionMetadataFields,
     pub naming: NamingMetadata,
     pub source_width: Option<u32>,
     pub source_height: Option<u32>,
@@ -199,6 +204,46 @@ fn territory_type_of(
 
 /// The ISDCF content title for what the panel currently holds.
 fn isdcf_name_for(request: &IsdcfNameRequest) -> Result<String, String> {
+    let composition = composition_metadata_of(&request.composition_metadata)?;
+    let (config, options) = isdcf_naming_facts(request, &composition)?;
+    let upmix = parse_upmixer(request.upmix.as_deref())?.is_some();
+    isdcf_naming(request, &config, &options, upmix).name()
+}
+
+fn isdcf_naming<'a>(
+    request: &'a IsdcfNameRequest,
+    config: &'a dcpwizard_core::dcp::DcpConfig,
+    options: &'a dcpwizard_core::isdcf_title::IsdcfNamingOptions,
+    upmix: bool,
+) -> dcpwizard_core::isdcf_title::IsdcfNaming<'a> {
+    dcpwizard_core::isdcf_title::IsdcfNaming {
+        config,
+        options,
+        // prepare_audio routes a channel directory in place of the sound file
+        sound: dcpwizard_core::isdcf_title::SoundtrackSource {
+            audio: filled(&request.audio_channel_dir)
+                .or(filled(&request.audio_path))
+                .map(Path::new),
+            picture: filled(&request.video_path).map(Path::new),
+            audio_map: filled(&request.audio_map),
+            upmix,
+            hi_channel: None,
+            vi_channel: None,
+        },
+        burnt_in_subtitle: filled(&request.burn_subtitle).is_some(),
+    }
+}
+
+fn isdcf_naming_facts(
+    request: &IsdcfNameRequest,
+    composition: &CompositionMetadata,
+) -> Result<
+    (
+        dcpwizard_core::dcp::DcpConfig,
+        dcpwizard_core::isdcf_title::IsdcfNamingOptions,
+    ),
+    String,
+> {
     let resolution = request.resolution.as_deref().unwrap_or(DEFAULT_RESOLUTION);
     let picture_raster = if resolution == "auto" {
         request.picture_raster.or(request_picture_raster(request)?)
@@ -244,7 +289,14 @@ fn isdcf_name_for(request: &IsdcfNameRequest) -> Result<String, String> {
             .ccap_language
             .clone()
             .unwrap_or_else(|| DEFAULT_LANGUAGE.into()),
-        facility: request.facility.clone().filter(|code| !code.is_empty()),
+        version_number: composition.version_number,
+        chain: composition.chain.clone(),
+        // build_dcp_config falls back to the Settings code the same way
+        facility: composition
+            .facility
+            .clone()
+            .or_else(|| request.facility.clone().filter(|code| !code.is_empty())),
+        luminance: composition.luminance.clone(),
         audio_language: request
             .naming
             .audio_language
@@ -270,20 +322,7 @@ fn isdcf_name_for(request: &IsdcfNameRequest) -> Result<String, String> {
         version_file: request.naming.version_file,
     };
 
-    // the panel has no accessibility channel fields, so the summary is the
-    // selected WAV's channel count and nothing else
-    let channel_count = match some_path(&request.audio_path) {
-        Some(path) => postkit::wav_io::channel_count(&path)?,
-        None => 0,
-    };
-    let sound = dcpwizard_core::isdcf_title::soundtrack_summary(channel_count, None, None);
-
-    Ok(dcpwizard_core::isdcf_title::isdcf_title(
-        &config,
-        &options,
-        &sound,
-        some_path(&request.burn_subtitle).is_some(),
-    ))
+    Ok((config, options))
 }
 
 /// The ISDCF content title the panel would build, for the live preview.
@@ -401,43 +440,51 @@ pub struct JobConfig {
     tail_items: Vec<dcpwizard_core::library::AttachedItem>,
 }
 
-fn apply_isdcf_name_to_job(
-    job: &mut JobConfig,
-    picture_raster: Option<(u32, u32)>,
-) -> Result<(), String> {
-    if !job.naming.isdcf_naming {
-        return Ok(());
-    }
-    let request = IsdcfNameRequest {
-        title: job.title.clone(),
-        standard: Some(job.standard.clone()),
-        resolution: Some(job.resolution.clone()),
-        framerate: Some(job.framerate.clone()),
-        content_kind: Some(job.content_kind.clone()),
-        audio_path: job.audio_path.clone(),
-        subtitle: job.subtitle.clone(),
-        subtitle_language: Some(job.subtitle_language.clone()),
-        burn_subtitle: job.burn_subtitle.clone(),
-        ccap: job.ccap.clone(),
-        ccap_language: Some(job.ccap_language.clone()),
-        right_eye: job.right_eye.clone(),
-        atmos: job.atmos.clone(),
-        facility: job.facility.clone(),
-        naming: job.naming.clone(),
-        picture_raster,
-        ..Default::default()
-    };
-    job.title = isdcf_name_for(&request)?;
-    Ok(())
-}
-
 // the panel sends the folder the package goes in, not the package folder
 fn apply_package_name_to_job(
     job: &mut JobConfig,
     picture_raster: Option<(u32, u32)>,
 ) -> Result<(), String> {
-    job.output_dir = dcpwizard_core::package_dir::new_package_dir(&job.output_dir, &job.title)?;
-    apply_isdcf_name_to_job(job, picture_raster)
+    let package = if job.naming.isdcf_naming {
+        let request = IsdcfNameRequest {
+            title: job.title.clone(),
+            standard: Some(job.standard.clone()),
+            resolution: Some(job.resolution.clone()),
+            framerate: Some(job.framerate.clone()),
+            content_kind: Some(job.content_kind.clone()),
+            video_path: Some(job.video_path.to_string_lossy().into_owned()),
+            audio_path: job.audio_path.clone(),
+            audio_channel_dir: job.audio_channel_dir.clone(),
+            audio_map: job.audio_map.clone(),
+            subtitle: job.subtitle.clone(),
+            subtitle_language: Some(job.subtitle_language.clone()),
+            burn_subtitle: job.burn_subtitle.clone(),
+            ccap: job.ccap.clone(),
+            ccap_language: Some(job.ccap_language.clone()),
+            right_eye: job.right_eye.clone(),
+            atmos: job.atmos.clone(),
+            facility: job.facility.clone(),
+            naming: job.naming.clone(),
+            picture_raster,
+            ..Default::default()
+        };
+        let (config, options) = isdcf_naming_facts(&request, &job.composition_metadata)?;
+        let naming = isdcf_naming(&request, &config, &options, job.upmix.is_some());
+        dcpwizard_core::package_dir::new_package(
+            &job.output_dir,
+            &dcpwizard_core::package_dir::PackageName::Isdcf(naming),
+            false,
+        )?
+    } else {
+        dcpwizard_core::package_dir::new_package(
+            &job.output_dir,
+            &dcpwizard_core::package_dir::PackageName::Title(&job.title),
+            false,
+        )?
+    };
+    job.title = package.title;
+    job.output_dir = package.dir;
+    Ok(())
 }
 
 // ─── Queue state (managed by Tauri) ────────────────────────────────────────
@@ -485,7 +532,7 @@ fn parsed_field<T: std::str::FromStr>(
 }
 
 // the ST 429-16 identity fields as the panel sends them, luminance as "<value> <units>"
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CompositionMetadataFields {
     version_number: Option<String>,
@@ -1317,7 +1364,11 @@ pub async fn disk_space(path: String) -> Result<DiskSpace, String> {
 /// is renamed too when it is still named after the old title. Returns the
 /// package path, which changes when the folder is renamed.
 #[tauri::command]
-pub async fn retitle_dcp(path: String, title: String) -> Result<String, String> {
+pub async fn retitle_dcp(
+    path: String,
+    title: String,
+    isdcf_naming: Option<bool>,
+) -> Result<String, String> {
     let dir = PathBuf::from(&path);
     if !dcpwizard_core::package_dir::holds_dcp(&dir) {
         return Err(format!("{path} does not hold a DCP"));
@@ -1330,6 +1381,7 @@ pub async fn retitle_dcp(path: String, title: String) -> Result<String, String> 
         .first()
         .map(|cpl| cpl.content_title.clone())
         .ok_or_else(|| format!("No CPL found in {path}"))?;
+    let title = retitled_content_title(&old_title, title, isdcf_naming.unwrap_or(false));
 
     let config = dcpwizard_core::edit::EditConfig {
         input: dir.clone(),
@@ -1361,6 +1413,14 @@ pub async fn retitle_dcp(path: String, title: String) -> Result<String, String> 
         })?;
     }
     Ok(renamed.to_string_lossy().into_owned())
+}
+
+// with ISDCF naming on the typed title replaces the title part of the ISDCF name
+fn retitled_content_title(old_title: &str, typed_title: String, isdcf_naming: bool) -> String {
+    if !isdcf_naming {
+        return typed_title;
+    }
+    dcpwizard_core::isdcf_name::retitled_isdcf_name(old_title, &typed_title).unwrap_or(typed_title)
 }
 
 fn retitled_package_dir(dir: &Path, old_title: &str, new_title: &str) -> Option<PathBuf> {
@@ -3300,7 +3360,7 @@ mod tests {
     }
 
     #[test]
-    fn the_package_folder_keeps_the_typed_title_when_isdcf_naming_is_on() {
+    fn the_package_folder_takes_the_isdcf_name_when_isdcf_naming_is_on() {
         let mut job = JobConfig {
             title: "My Film".into(),
             output_dir: PathBuf::from("/out/deliveries"),
@@ -3312,7 +3372,138 @@ mod tests {
         };
         apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
         assert!(job.title.starts_with("MyFilm_"), "{}", job.title);
-        assert_eq!(job.output_dir, PathBuf::from("/out/deliveries/My Film"));
+        assert_eq!(
+            job.output_dir,
+            Path::new("/out/deliveries").join(&job.title)
+        );
+    }
+
+    #[test]
+    fn the_isdcf_name_spells_the_composition_metadata_the_cpl_carries() {
+        let fields = CompositionMetadataFields {
+            version_number: Some("3".into()),
+            chain: Some("Odeon".into()),
+            facility: Some("Post House".into()),
+            ..Default::default()
+        };
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            composition_metadata: composition_metadata_of(&fields).unwrap(),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..test_job()
+        };
+        let request = IsdcfNameRequest {
+            title: "My Film".into(),
+            resolution: Some("2k-flat".into()),
+            composition_metadata: fields,
+            naming: job.naming.clone(),
+            ..Default::default()
+        };
+        let preview = isdcf_name_for(&request).unwrap();
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert!(
+            job.title.starts_with("MyFilm_FTR-3-Odeon_"),
+            "{}",
+            job.title
+        );
+        assert!(job.title.ends_with("_POS_SMPTE_OV"), "{}", job.title);
+        assert_eq!(preview, job.title);
+    }
+
+    #[test]
+    fn an_existing_isdcf_named_package_is_refused_by_its_folder() {
+        let output = tempfile::tempdir().unwrap();
+        let job = JobConfig {
+            title: "My Film".into(),
+            output_dir: output.path().to_path_buf(),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..test_job()
+        };
+        let mut first = job.clone();
+        apply_package_name_to_job(&mut first, Some((1998, 1080))).unwrap();
+        std::fs::create_dir_all(&first.output_dir).unwrap();
+        std::fs::write(first.output_dir.join("ASSETMAP.xml"), b"x").unwrap();
+        let mut second = job;
+        let error = apply_package_name_to_job(&mut second, Some((1998, 1080))).unwrap_err();
+        assert!(
+            error.starts_with(&format!(
+                "A DCP already exists at {}.",
+                first.output_dir.display()
+            )),
+            "{error}"
+        );
+    }
+
+    fn source_with_five_one_sound(dir: &Path) -> PathBuf {
+        let path = dir.join("source.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=24",
+            ])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=5.1:sample_rate=48000",
+            ])
+            .args(["-t", "1", "-c:a", "aac"])
+            .arg(&path)
+            .output()
+            .expect("ffmpeg has to run");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        path
+    }
+
+    #[test]
+    fn the_preview_names_the_sources_own_five_one_sound_when_no_wav_is_picked() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_five_one_sound(dir.path());
+        let request = IsdcfNameRequest {
+            title: "My Film".into(),
+            resolution: Some("2k-flat".into()),
+            video_path: Some(source.to_string_lossy().into_owned()),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let name = isdcf_name_for(&request).unwrap();
+        assert!(name.contains("_XX-XX_51_2K_"), "{name}");
+    }
+
+    #[test]
+    fn the_build_names_the_sources_own_five_one_sound_when_no_wav_is_picked() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_five_one_sound(dir.path());
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            video_path: source,
+            output_dir: dir.path().to_path_buf(),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..test_job()
+        };
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert!(job.title.contains("_XX-XX_51_2K_"), "{}", job.title);
     }
 
     #[test]
@@ -3368,7 +3559,7 @@ mod tests {
             },
             ..test_job()
         };
-        apply_isdcf_name_to_job(&mut job, Some((4096, 1716))).unwrap();
+        apply_package_name_to_job(&mut job, Some((4096, 1716))).unwrap();
         assert!(job.title.contains("_S_"), "{}", job.title);
         assert!(job.title.contains("_4K_"), "{}", job.title);
     }
@@ -3439,6 +3630,21 @@ mod tests {
         assert_eq!(
             retitled_package_dir(Path::new("/out/My_ Film"), "My: Film.", "Next: Film."),
             Some(PathBuf::from("/out/Next_ Film"))
+        );
+    }
+
+    #[test]
+    fn a_retitle_with_isdcf_naming_on_renames_to_the_new_isdcf_name() {
+        let old_name = "MyFilm_FTR-1_F_EN-XX_51_2K_20260901_SMPTE_OV";
+        let title = retitled_content_title(old_name, "Next Film".into(), true);
+        assert_eq!(title, "NextFilm_FTR-1_F_EN-XX_51_2K_20260901_SMPTE_OV");
+        assert_eq!(
+            retitled_package_dir(&Path::new("/out").join(old_name), old_name, &title),
+            Some(Path::new("/out").join(&title))
+        );
+        assert_eq!(
+            retitled_content_title(old_name, "Next Film".into(), false),
+            "Next Film"
         );
     }
 

@@ -525,6 +525,24 @@ pub fn isdcf_name(input: &IsdcfNameInput) -> String {
     name
 }
 
+const PACKAGE_KIND_SUFFIXES: [&str; 2] = ["_OV", "_VF"];
+
+// name with its title part built from new_title, None when name is no ISDCF name
+pub fn retitled_isdcf_name(name: &str, new_title: &str) -> Option<String> {
+    let (title_part, rest) = name.split_once('_')?;
+    let ends_like_a_name = PACKAGE_KIND_SUFFIXES
+        .iter()
+        .any(|suffix| rest.ends_with(suffix));
+    if !ends_like_a_name || mangled_title(title_part) != title_part {
+        return None;
+    }
+    let new_title_part = mangled_title(new_title);
+    if new_title_part.is_empty() {
+        return None;
+    }
+    Some(format!("{new_title_part}_{rest}"))
+}
+
 fn content_type_label(content_type: ContentType) -> &'static str {
     match content_type {
         ContentType::Feature => "FTR",
@@ -1282,5 +1300,21 @@ mod tests {
         assert_eq!(aspect_label((4096, 1716)), "S");
         assert_eq!(aspect_label((3996, 2160)), "F");
         assert_eq!(aspect_label((4096, 2160)), "C");
+    }
+
+    #[test]
+    fn a_retitle_rebuilds_the_title_part_and_keeps_the_rest() {
+        assert_eq!(
+            retitled_isdcf_name("MyFilm_FTR-1_F_EN-XX_51_2K_20260901_SMPTE_OV", "Next film")
+                .as_deref(),
+            Some("NextFilm_FTR-1_F_EN-XX_51_2K_20260901_SMPTE_OV")
+        );
+    }
+
+    #[test]
+    fn a_title_that_is_no_isdcf_name_is_not_retitled_as_one() {
+        assert_eq!(retitled_isdcf_name("My Film", "Next Film"), None);
+        assert_eq!(retitled_isdcf_name("My Film_Delivery", "Next Film"), None);
+        assert_eq!(retitled_isdcf_name("MyFilm_FTR-1_SMPTE_OV", "  "), None);
     }
 }

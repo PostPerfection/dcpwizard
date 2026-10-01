@@ -52,6 +52,82 @@ pub fn new_package_dir(output: &Path, title: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+pub enum PackageName<'a> {
+    Title(&'a str),
+    Isdcf(crate::isdcf_title::IsdcfNaming<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Package {
+    pub title: String,
+    pub dir: PathBuf,
+}
+
+// the folder takes the content title, which ISDCF naming replaces with the
+// ISDCF name, the way DCP-o-matic names it with Film::dcp_name
+pub fn new_package(output: &Path, name: &PackageName, resume: bool) -> Result<Package, String> {
+    let title = match name {
+        PackageName::Title(title) => title.to_string(),
+        PackageName::Isdcf(naming) => naming.name()?,
+    };
+    if let PackageName::Isdcf(naming) = name
+        && resume
+        && !package_dir(output, &title)?.exists()
+    {
+        return resumed_isdcf_package(output, naming, &title);
+    }
+    Ok(Package {
+        dir: new_package_dir(output, &title)?,
+        title,
+    })
+}
+
+// the name carries the day it was made, so a resume on a later day looks for
+// the same name with another date
+fn resumed_isdcf_package(
+    output: &Path,
+    naming: &crate::isdcf_title::IsdcfNaming,
+    title: &str,
+) -> Result<Package, String> {
+    let undated_folder_name = package_folder_name(&naming.name_with_date(None)?)?;
+    let mut candidates: Vec<(PathBuf, crate::isdcf_name::IsdcfDate)> = std::fs::read_dir(output)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let dir = entry.ok()?.path();
+            crate::encode_qol::EncodeState::load(&dir)?;
+            let date = crate::isdcf_title::date_apart_from(
+                dir.file_name()?.to_str()?,
+                &undated_folder_name,
+            )?;
+            Some((dir, date))
+        })
+        .collect();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    match candidates.as_slice() {
+        [(dir, date)] => Ok(Package {
+            title: naming.name_with_date(Some(*date))?,
+            dir: dir.clone(),
+        }),
+        [] => Err(format!(
+            "--resume found no interrupted encode in {} named {} or that name with another date",
+            output.display(),
+            package_folder_name(title)?
+        )),
+        several => Err(format!(
+            "--resume found {} interrupted encodes in {} whose names differ only by date: {}. \
+             Pass --isdcf-date with the date of the one to resume",
+            several.len(),
+            output.display(),
+            several
+                .iter()
+                .map(|(dir, _)| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +199,147 @@ mod tests {
     fn a_title_with_nothing_usable_is_refused() {
         assert!(package_folder_name("   ").is_err());
         assert!(package_folder_name("..").is_err());
+    }
+
+    fn naming_config() -> crate::dcp::DcpConfig {
+        crate::dcp::DcpConfig {
+            title: "My Film".into(),
+            frame_rate_num: 24,
+            frame_rate_den: 1,
+            container_width: 1998,
+            container_height: 1080,
+            ..Default::default()
+        }
+    }
+
+    fn dated(day: u32) -> crate::isdcf_title::IsdcfNamingOptions {
+        crate::isdcf_title::IsdcfNamingOptions {
+            date: Some(crate::isdcf_name::IsdcfDate {
+                year: 2026,
+                month: 9,
+                day,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn isdcf<'a>(
+        config: &'a crate::dcp::DcpConfig,
+        options: &'a crate::isdcf_title::IsdcfNamingOptions,
+    ) -> PackageName<'a> {
+        PackageName::Isdcf(crate::isdcf_title::IsdcfNaming {
+            config,
+            options,
+            sound: crate::isdcf_title::SoundtrackSource {
+                audio: None,
+                picture: None,
+                audio_map: None,
+                upmix: false,
+                hi_channel: None,
+                vi_channel: None,
+            },
+            burnt_in_subtitle: false,
+        })
+    }
+
+    fn interrupted_encode(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        crate::encode_qol::EncodeState {
+            source: "source.mov".into(),
+            total_frames: 24,
+            fps: 24,
+            width: 1998,
+            height: 1080,
+            bitrate_mbps: 250,
+        }
+        .save(dir)
+        .unwrap();
+    }
+
+    const FIRST_DAY: &str = "MyFilm_FTR-1_F_XX-XX_MOS_2K_20260901_SMPTE_OV";
+    const SECOND_DAY: &str = "MyFilm_FTR-1_F_XX-XX_MOS_2K_20260902_SMPTE_OV";
+
+    #[test]
+    fn without_isdcf_naming_the_title_names_the_folder() {
+        let output = tempfile::tempdir().unwrap();
+        let package = new_package(output.path(), &PackageName::Title("My Film"), false).unwrap();
+        assert_eq!(package.title, "My Film");
+        assert_eq!(package.dir, output.path().join("My Film"));
+    }
+
+    #[test]
+    fn with_isdcf_naming_the_isdcf_name_names_the_folder() {
+        let output = tempfile::tempdir().unwrap();
+        let (config, options) = (naming_config(), dated(1));
+        let package = new_package(output.path(), &isdcf(&config, &options), false).unwrap();
+        assert_eq!(package.title, FIRST_DAY);
+        assert_eq!(package.dir, output.path().join(FIRST_DAY));
+    }
+
+    #[test]
+    fn an_existing_isdcf_named_package_is_refused() {
+        let output = tempfile::tempdir().unwrap();
+        let (config, options) = (naming_config(), dated(1));
+        let dir = output.path().join(FIRST_DAY);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("ASSETMAP.xml"), b"x").unwrap();
+        let error = new_package(output.path(), &isdcf(&config, &options), false).unwrap_err();
+        assert!(
+            error.starts_with(&format!("A DCP already exists at {}", dir.display())),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_resume_on_a_later_day_finds_the_earlier_days_folder_and_name() {
+        let output = tempfile::tempdir().unwrap();
+        interrupted_encode(&output.path().join(FIRST_DAY));
+        let (config, options) = (naming_config(), dated(2));
+        let package = new_package(output.path(), &isdcf(&config, &options), true).unwrap();
+        assert_eq!(package.title, FIRST_DAY);
+        assert_eq!(package.dir, output.path().join(FIRST_DAY));
+    }
+
+    #[test]
+    fn a_resume_uses_the_computed_folder_when_it_exists() {
+        let output = tempfile::tempdir().unwrap();
+        interrupted_encode(&output.path().join(FIRST_DAY));
+        interrupted_encode(&output.path().join(SECOND_DAY));
+        let (config, options) = (naming_config(), dated(2));
+        let package = new_package(output.path(), &isdcf(&config, &options), true).unwrap();
+        assert_eq!(package.dir, output.path().join(SECOND_DAY));
+    }
+
+    #[test]
+    fn a_resume_with_no_interrupted_encode_of_that_name_is_refused() {
+        let output = tempfile::tempdir().unwrap();
+        // a folder of that name with no resume state, and another package's encode
+        std::fs::create_dir(output.path().join(FIRST_DAY)).unwrap();
+        interrupted_encode(
+            &output
+                .path()
+                .join("Other_FTR-1_F_XX-XX_MOS_2K_20260901_SMPTE_OV"),
+        );
+        let (config, options) = (naming_config(), dated(3));
+        let error = new_package(output.path(), &isdcf(&config, &options), true).unwrap_err();
+        assert!(error.contains("found no interrupted encode"), "{error}");
+        assert!(
+            error.contains("MyFilm_FTR-1_F_XX-XX_MOS_2K_20260903_SMPTE_OV"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_resume_with_several_dates_to_choose_from_is_refused_naming_them() {
+        let output = tempfile::tempdir().unwrap();
+        interrupted_encode(&output.path().join(FIRST_DAY));
+        interrupted_encode(&output.path().join(SECOND_DAY));
+        let (config, options) = (naming_config(), dated(3));
+        let error = new_package(output.path(), &isdcf(&config, &options), true).unwrap_err();
+        assert!(error.contains("found 2 interrupted encodes"), "{error}");
+        assert!(
+            error.contains(FIRST_DAY) && error.contains(SECOND_DAY),
+            "{error}"
+        );
     }
 }

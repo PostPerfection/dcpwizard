@@ -40,33 +40,7 @@ fn suffix_of(path: &Path) -> Option<String> {
 /// fails loud. The output channel count is the highest routed lane + 1, with
 /// unused lanes silent. Returns `output`.
 pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
-    let mut entries: Vec<(usize, PathBuf)> = Vec::new();
-    let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-    for e in rd.filter_map(|e| e.ok()) {
-        let path = e.path();
-        if !path.is_file()
-            || path
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| x.to_lowercase())
-                != Some("wav".to_string())
-        {
-            continue;
-        }
-        let suffix = suffix_of(&path).ok_or_else(|| {
-            format!(
-                "{}: no channel suffix (expected e.g. name_L.wav)",
-                path.display()
-            )
-        })?;
-        let idx = channel_index(&suffix)
-            .ok_or_else(|| format!("{}: unknown channel suffix '{suffix}'", path.display()))?;
-        entries.push((idx, path));
-    }
-    if entries.is_empty() {
-        return Err(format!("no channel WAVs found in {}", dir.display()));
-    }
-    entries.sort_by_key(|(i, _)| *i);
+    let entries = channel_files(dir)?;
 
     // read every channel, enforcing mono and a shared format.
     let mut spec: Option<WavSpec> = None;
@@ -123,6 +97,47 @@ pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
     )
     .map_err(|e| format!("writing {}: {e}", output.display()))?;
     Ok(output.to_path_buf())
+}
+
+pub fn routed_channel_count(dir: &Path) -> Result<usize, String> {
+    let entries = channel_files(dir)?;
+    Ok(entries
+        .iter()
+        .map(|(index, _)| index + 1)
+        .max()
+        .unwrap_or(0))
+}
+
+// every *.wav in dir with its lane, in lane order
+fn channel_files(dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
+    let mut entries: Vec<(usize, PathBuf)> = Vec::new();
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    for e in rd.filter_map(|e| e.ok()) {
+        let path = e.path();
+        if !path.is_file()
+            || path
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.to_lowercase())
+                != Some("wav".to_string())
+        {
+            continue;
+        }
+        let suffix = suffix_of(&path).ok_or_else(|| {
+            format!(
+                "{}: no channel suffix (expected e.g. name_L.wav)",
+                path.display()
+            )
+        })?;
+        let idx = channel_index(&suffix)
+            .ok_or_else(|| format!("{}: unknown channel suffix '{suffix}'", path.display()))?;
+        entries.push((idx, path));
+    }
+    if entries.is_empty() {
+        return Err(format!("no channel WAVs found in {}", dir.display()));
+    }
+    entries.sort_by_key(|(i, _)| *i);
+    Ok(entries)
 }
 
 #[cfg(test)]

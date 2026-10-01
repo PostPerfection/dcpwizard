@@ -277,22 +277,20 @@ fn a_create_under_the_gpu_preference_logs_why_the_device_never_started() {
     assert_ne!(gpu, "GPU: ", "the GPU line names what was found: {log}");
 }
 
-#[test]
-fn an_isdcf_named_package_keeps_the_title_folder_and_carries_the_isdcf_name_in_its_cpl() {
-    let directory = TempDir::new().unwrap();
-    let config_home = TempDir::new().unwrap();
-    let source = write_source(directory.path());
-    let output = directory.path().join("dcp");
-    create(&source, &output, config_home.path(), &["--isdcf-name"]);
-
-    let package = output.join(TITLE);
-    let folders: Vec<PathBuf> = std::fs::read_dir(&output)
+fn only_folder_in(output: &Path) -> PathBuf {
+    let folders: Vec<PathBuf> = std::fs::read_dir(output)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_dir())
         .collect();
-    assert_eq!(folders, std::slice::from_ref(&package));
-    let cpl = std::fs::read_dir(&package)
+    let [package] = folders.as_slice() else {
+        panic!("one package folder in {}: {folders:?}", output.display());
+    };
+    package.clone()
+}
+
+fn content_title_of(package: &Path) -> String {
+    let cpl = std::fs::read_dir(package)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -301,21 +299,88 @@ fn an_isdcf_named_package_keeps_the_title_folder_and_carries_the_isdcf_name_in_i
                 .to_string_lossy()
                 .starts_with("CPL_")
         })
-        .expect("the title folder has to hold the package");
+        .expect("the package folder has to hold a CPL");
     let cpl_text = std::fs::read_to_string(cpl).unwrap();
-    let content_title = cpl_text
+    cpl_text
         .split_once("<ContentTitleText>")
         .and_then(|(_, rest)| rest.split_once("</ContentTitleText>"))
-        .map(|(title, _)| title)
-        .expect("the CPL has a content title");
+        .map(|(title, _)| title.to_string())
+        .expect("the CPL has a content title")
+}
+
+#[test]
+fn an_isdcf_named_package_is_written_to_a_folder_named_by_its_isdcf_name() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let output = directory.path().join("dcp");
+    create(&source, &output, config_home.path(), &["--isdcf-name"]);
+
+    let package = only_folder_in(&output);
+    let content_title = content_title_of(&package);
     assert!(
         content_title.starts_with("JobLog_") && content_title.ends_with("_SMPTE_OV"),
         "the CPL carries the ISDCF name: {content_title}"
+    );
+    assert_eq!(
+        package.file_name().unwrap().to_string_lossy(),
+        content_title,
+        "the folder takes the ISDCF name"
     );
     let log = read_log_beside(&package);
     assert!(log.contains(&format!("Title: {TITLE}")), "{log}");
     assert!(
         log.contains(&format!("Output: {}", package.display())),
         "{log}"
+    );
+}
+
+#[test]
+fn a_source_with_its_own_five_one_sound_and_no_wav_is_named_five_one() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = directory.path().join("five-one.mp4");
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+        .arg(format!("testsrc=size={WIDTH}x{HEIGHT}:rate={FRAME_RATE}"))
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=5.1:sample_rate=48000",
+        ])
+        .args([
+            "-frames:v",
+            &FRAMES.to_string(),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+        ])
+        .arg(&source)
+        .output()
+        .expect("ffmpeg has to run");
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    let output = directory.path().join("dcp");
+    create(
+        &source,
+        &output,
+        config_home.path(),
+        &["--isdcf-name", "--isdcf-date", "2026-08-16"],
+    );
+
+    let package = only_folder_in(&output);
+    let content_title = content_title_of(&package);
+    assert_eq!(
+        content_title,
+        "JobLog_FTR-1_C_XX-XX_51_2K_20260816_SMPTE_OV"
+    );
+    assert_eq!(
+        package.file_name().unwrap().to_string_lossy(),
+        content_title
     );
 }

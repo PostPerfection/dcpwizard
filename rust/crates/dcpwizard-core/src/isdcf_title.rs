@@ -8,6 +8,7 @@ use crate::isdcf_name::{
     isdcf_name,
 };
 use chrono::Datelike;
+use std::path::Path;
 
 /// Composition version number when the config carries none, as Bv2.1 requires
 /// the element present.
@@ -75,6 +76,146 @@ pub fn soundtrack_summary(
     }
 }
 
+// where a build's sound comes from, read before any of it is prepared
+#[derive(Debug, Clone, Copy)]
+pub struct SoundtrackSource<'a> {
+    // a WAV, or a directory of channel WAVs
+    pub audio: Option<&'a Path>,
+    pub picture: Option<&'a Path>,
+    pub audio_map: Option<&'a str>,
+    pub upmix: bool,
+    pub hi_channel: Option<u32>,
+    pub vi_channel: Option<u32>,
+}
+
+// the named sound, else the picture's own, through the map and the upmix the
+// build applies to it
+pub fn build_soundtrack(source: &SoundtrackSource) -> Result<SoundtrackSummary, String> {
+    let channel_count = prepared_channel_count(source)?;
+    Ok(soundtrack_summary(
+        channel_count,
+        source.hi_channel,
+        source.vi_channel,
+    ))
+}
+
+fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
+    let read_count = match source.audio {
+        Some(dir) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
+        Some(wav) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
+        None => embedded_channel_count(source.picture)?,
+    };
+    if read_count == 0 {
+        return Ok(0);
+    }
+    // the build routes a channel directory after the map has run
+    let routes_a_directory = source.audio.is_some_and(Path::is_dir);
+    let mapped_count = match source.audio_map {
+        Some(spec) if !routes_a_directory => {
+            crate::audio_map::parse_audio_map(spec, read_count)?.output_channels()
+        }
+        _ => read_count,
+    };
+    if source.upmix {
+        return Ok(crate::mxf_wrap::CANONICAL_51_CHANNELS as usize);
+    }
+    Ok(mapped_count)
+}
+
+const FFPROBE_DEFAULT_DISPOSITION: &str = "1";
+
+// the stream ffmpeg extracts with no map: a default one first, then the widest
+fn embedded_channel_count(picture: Option<&Path>) -> Result<usize, String> {
+    let Some(picture) = picture.filter(|picture| picture.is_file()) else {
+        return Ok(0);
+    };
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=channels:stream_disposition=default",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(picture)
+        .output()
+        .map_err(|e| format!("failed to run ffprobe on {}: {e}", picture.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ffprobe could not read the sound in {}: {}",
+            picture.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let streams = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (channels, default) = line.trim().split_once(',')?;
+            Some((
+                default == FFPROBE_DEFAULT_DISPOSITION,
+                channels.parse::<usize>().ok()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    // max keeps the last of equals, so the first stream wins a tie
+    Ok(streams
+        .into_iter()
+        .rev()
+        .max()
+        .map_or(0, |(_, channels)| channels))
+}
+
+// what the ISDCF name of a package is built from
+#[derive(Debug, Clone, Copy)]
+pub struct IsdcfNaming<'a> {
+    pub config: &'a DcpConfig,
+    pub options: &'a IsdcfNamingOptions,
+    pub sound: SoundtrackSource<'a>,
+    pub burnt_in_subtitle: bool,
+}
+
+impl IsdcfNaming<'_> {
+    pub fn name(&self) -> Result<String, String> {
+        let date = self.options.date.unwrap_or_else(today);
+        self.name_with_date(Some(date))
+    }
+
+    pub fn name_with_date(&self, date: Option<IsdcfDate>) -> Result<String, String> {
+        let sound = build_soundtrack(&self.sound)?;
+        Ok(isdcf_name(&name_input(
+            self.config,
+            self.options,
+            &sound,
+            self.burnt_in_subtitle,
+            date,
+        )))
+    }
+}
+
+const ISDCF_DATE_DIGITS: usize = 8;
+
+// the date in a folder that is undated_folder_name with a date put back in
+pub fn date_apart_from(folder_name: &str, undated_folder_name: &str) -> Option<IsdcfDate> {
+    folder_name.match_indices('_').find_map(|(start, _)| {
+        let digits = folder_name.get(start + 1..start + 1 + ISDCF_DATE_DIGITS)?;
+        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let rest = &folder_name[start + 1 + ISDCF_DATE_DIGITS..];
+        if format!("{}{rest}", &folder_name[..start]) != undated_folder_name {
+            return None;
+        }
+        Some(IsdcfDate {
+            year: digits[..4].parse().ok()?,
+            month: digits[4..6].parse().ok()?,
+            day: digits[6..].parse().ok()?,
+        })
+    })
+}
+
 /// The ISDCF content title for a package. `burnt_in_subtitle` says the subtitles
 /// are drawn into the picture, which the name spells in lower case.
 pub fn isdcf_title(
@@ -83,13 +224,30 @@ pub fn isdcf_title(
     sound: &SoundtrackSummary,
     burnt_in_subtitle: bool,
 ) -> String {
+    let date = options.date.unwrap_or_else(today);
+    isdcf_name(&name_input(
+        config,
+        options,
+        sound,
+        burnt_in_subtitle,
+        Some(date),
+    ))
+}
+
+fn name_input(
+    config: &DcpConfig,
+    options: &IsdcfNamingOptions,
+    sound: &SoundtrackSummary,
+    burnt_in_subtitle: bool,
+    date: Option<IsdcfDate>,
+) -> IsdcfNameInput {
     let (open_text_languages, open_text_burnt_in) = open_text(config, burnt_in_subtitle);
     let closed_text_languages = match config.ccap_path {
         Some(_) => vec![config.ccap_language.clone()],
         None => Vec::new(),
     };
 
-    let input = IsdcfNameInput {
+    IsdcfNameInput {
         title: config.title.clone(),
         content_type: config.content_type,
         version_number: config.version_number.unwrap_or(DEFAULT_VERSION_NUMBER),
@@ -122,13 +280,11 @@ pub fn isdcf_title(
         has_atmos: config.atmos_path.is_some(),
         resolution: config.resolution,
         studio: options.studio.clone(),
-        date: Some(options.date.unwrap_or_else(today)),
+        date,
         facility: config.facility.clone(),
         standard: config.standard,
         version_file: options.version_file,
-    };
-
-    isdcf_name(&input)
+    }
 }
 
 /// The container whose aspect the name spells. Without one the CPL declares the
@@ -403,5 +559,177 @@ mod tests {
             expected,
             "MyNiceFilm_FTR-2-Temp-MyChain-48_S_EN-FR-CCAP_GB-PG_51-IAB_4K_DISN_20260816_PPF_SMPTE_OV"
         );
+    }
+
+    // a picture with its own sound, one stream per channel layout, in order
+    fn source_with_sound(dir: &Path, layouts: &[&str]) -> PathBuf {
+        let path = dir.join("source.mkv");
+        let mut command = std::process::Command::new("ffmpeg");
+        command.args([
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=24",
+        ]);
+        for layout in layouts {
+            command.args([
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("anullsrc=channel_layout={layout}:sample_rate=48000"),
+            ]);
+        }
+        for index in 0..=layouts.len() {
+            command.args(["-map", &index.to_string()]);
+        }
+        let made = command
+            .args(["-t", "1", "-c:a", "pcm_s24le"])
+            .arg(&path)
+            .output()
+            .expect("ffmpeg has to run");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        path
+    }
+
+    fn write_wav(path: &Path, channels: u16) {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: 48_000,
+            bits_per_sample: 24,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for _ in 0..channels {
+            writer.write_sample(0).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    fn sound_from<'a>(audio: Option<&'a Path>, picture: &'a Path) -> SoundtrackSource<'a> {
+        SoundtrackSource {
+            audio,
+            picture: Some(picture),
+            audio_map: None,
+            upmix: false,
+            hi_channel: None,
+            vi_channel: None,
+        }
+    }
+
+    fn name_of(sound: SoundtrackSource) -> String {
+        let config = config();
+        let options = options();
+        IsdcfNaming {
+            config: &config,
+            options: &options,
+            sound,
+            burnt_in_subtitle: false,
+        }
+        .name()
+        .unwrap()
+    }
+
+    #[test]
+    fn with_no_wav_the_picture_sound_names_the_channels() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_sound(dir.path(), &["5.1"]);
+        let name = name_of(sound_from(None, &source));
+        assert!(name.contains("_EN-XX_51_"), "{name}");
+    }
+
+    #[test]
+    fn a_picked_wav_names_the_channels_over_the_picture_sound() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_sound(dir.path(), &["5.1"]);
+        let wav = dir.path().join("stereo.wav");
+        write_wav(&wav, 2);
+        let name = name_of(sound_from(Some(&wav), &source));
+        assert!(name.contains("_EN-XX_20_"), "{name}");
+    }
+
+    #[test]
+    fn a_picture_with_no_sound_and_no_wav_is_mos() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_sound(dir.path(), &[]);
+        assert!(name_of(sound_from(None, &source)).contains("_MOS_"));
+        assert!(name_of(sound_from(None, dir.path())).contains("_MOS_"));
+    }
+
+    #[test]
+    fn the_picture_sound_is_the_stream_ffmpeg_extracts() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_sound(dir.path(), &["stereo", "5.1"]);
+        let extracted = crate::audio_fallback::extract_embedded_audio(&source, dir.path())
+            .unwrap()
+            .expect("the source has sound");
+        let extracted_channels = crate::mxf_wrap::wav_channels(&extracted).unwrap();
+        assert_eq!(
+            embedded_channel_count(Some(&source)).unwrap(),
+            usize::from(extracted_channels)
+        );
+    }
+
+    #[test]
+    fn the_upmix_and_the_map_name_what_they_produce() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("stereo.wav");
+        write_wav(&wav, 2);
+        let upmixed = SoundtrackSource {
+            upmix: true,
+            ..sound_from(Some(&wav), dir.path())
+        };
+        assert!(name_of(upmixed).contains("_51_"));
+        let mapped = SoundtrackSource {
+            audio_map: Some("1:L,2:R,1:C,2:LFE,1:Ls,2:Rs"),
+            ..sound_from(Some(&wav), dir.path())
+        };
+        assert!(name_of(mapped).contains("_51_"));
+    }
+
+    #[test]
+    fn a_channel_directory_names_the_lanes_it_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        for lane in ["L", "R", "C", "Lfe", "Ls", "Rs"] {
+            write_wav(&dir.path().join(format!("mix_{lane}.wav")), 1);
+        }
+        let name = name_of(sound_from(Some(dir.path()), dir.path()));
+        assert!(name.contains("_51_"), "{name}");
+    }
+
+    #[test]
+    fn a_dated_folder_name_gives_back_its_date() {
+        let undated = "MyFilm_TST-1_F_EN-XX_20_2K_PPF_SMPTE_OV";
+        assert_eq!(
+            date_apart_from("MyFilm_TST-1_F_EN-XX_20_2K_20260816_PPF_SMPTE_OV", undated),
+            Some(DATE)
+        );
+        assert_eq!(
+            date_apart_from("MyFilm_TST-1_F_EN-XX_51_2K_20260816_PPF_SMPTE_OV", undated),
+            None,
+            "another channel field is another package"
+        );
+        assert_eq!(date_apart_from(undated, undated), None);
+    }
+
+    #[test]
+    fn the_undated_name_is_the_name_without_its_date() {
+        let config = config();
+        let options = options();
+        let naming = IsdcfNaming {
+            config: &config,
+            options: &options,
+            sound: sound_from(None, Path::new("no-picture")),
+            burnt_in_subtitle: false,
+        };
+        let dated = naming.name().unwrap();
+        let undated = naming.name_with_date(None).unwrap();
+        assert_eq!(date_apart_from(&dated, &undated), Some(DATE));
     }
 }
