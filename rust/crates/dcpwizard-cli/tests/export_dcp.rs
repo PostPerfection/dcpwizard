@@ -96,7 +96,7 @@ fn build_dcp() -> Fixture {
         "the tone has to be written",
     );
 
-    let package = directory.path().join("dcp");
+    let output = directory.path().join("dcp");
     Command::cargo_bin("dcpwizard")
         .unwrap()
         .env("XDG_CONFIG_HOME", config_home.path())
@@ -109,7 +109,7 @@ fn build_dcp() -> Fixture {
             "--audio",
             wav.to_str().unwrap(),
             "-o",
-            package.to_str().unwrap(),
+            output.to_str().unwrap(),
             // the export is compared pixel for pixel with the master
             "--container-dims",
             &format!("{WIDTH}x{HEIGHT}"),
@@ -117,6 +117,7 @@ fn build_dcp() -> Fixture {
         .assert()
         .success();
 
+    let package = output.join("Export Colour");
     let picture_mxf = only_file_starting_with(&package, "picture_");
     let sound_mxf = only_file_starting_with(&package, "sound_");
     Fixture {

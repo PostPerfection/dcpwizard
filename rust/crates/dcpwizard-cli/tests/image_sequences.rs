@@ -123,7 +123,7 @@ fn create_packages_every_image_sequence_format_the_readme_names() {
 
     for format in &STILL_FORMATS {
         let sequence = write_sequence(directory.path(), format);
-        let out = directory.path().join(format!("dcp_{}", format.extension));
+        let output = directory.path().join(format!("dcp_{}", format.extension));
         Command::cargo_bin("dcpwizard")
             .unwrap()
             .env("XDG_CONFIG_HOME", config_home.path())
@@ -134,12 +134,13 @@ fn create_packages_every_image_sequence_format_the_readme_names() {
                 "--video",
                 sequence.to_str().unwrap(),
                 "-o",
-                out.to_str().unwrap(),
+                output.to_str().unwrap(),
                 "--twok",
             ])
             .assert()
             .success();
 
+        let out = output.join("Sequence");
         assert_picture_decodes(&only_file_starting_with(&out, "picture_"), format.extension);
         assert!(
             dcpwizard_core::verify::verify_dcp(&out).valid,

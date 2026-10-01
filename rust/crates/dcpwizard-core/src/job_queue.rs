@@ -488,10 +488,12 @@ fn from_exit_code(code: i32, operation: &str) -> Result<(), String> {
 fn process_job(job: &Job, control: &JobControl, encode_threads: u32) -> Result<(), String> {
     match job.job_type {
         JobType::CreateDcp => {
-            let config = crate::dcp::DcpConfig {
+            let mut config = crate::dcp::DcpConfig {
                 encode_threads,
                 ..parse_params(&job.params, "CreateDcp")?
             };
+            config.output_dir =
+                crate::package_dir::new_package_dir(&config.output_dir, &config.title)?;
             crate::dcp::create_dcp_with_progress(&config, control)
         }
         JobType::VerifyDcp => {
@@ -864,8 +866,8 @@ mod tests {
         wait_for_state(&queue, &finished, JobState::Completed, CREATE_RUN_LIMIT);
         let uncancelled_run_time = started.elapsed();
         assert!(
-            holds_assetmap(&finished_output),
-            "the uncancelled create wrote no ASSETMAP"
+            holds_assetmap(&finished_output.join("Cancel Test")),
+            "the uncancelled create wrote no ASSETMAP under the title folder"
         );
 
         let cancelled_output = dir.path().join("cancelled");
@@ -884,7 +886,7 @@ mod tests {
         }
         stop_job_queue(&queue);
         assert!(
-            !holds_assetmap(&cancelled_output),
+            !holds_assetmap(&cancelled_output.join("Cancel Test")),
             "the cancelled create finished its package"
         );
     }

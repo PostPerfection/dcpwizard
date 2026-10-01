@@ -41,11 +41,23 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["dcpwizard"]
+    "externalBin": ["dcpwizard"],
+    "fileAssociations": [
+      {
+        "ext": ["dcpwizard"],
+        "name": "DCP Wizard project",
+        "description": "DCP Wizard project",
+        "mimeType": "application/x-dcpwizard",
+        "role": "Editor"
+      }
+    ]
   },
   "plugins": {
     "shell": {
       "open": true
+    },
+    "fs": {
+      "requireLiteralLeadingDot": false
     }
   }
 }

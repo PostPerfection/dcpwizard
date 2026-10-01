@@ -133,7 +133,8 @@ fn a_sixteen_bit_wav_is_packaged_at_the_dci_depth() {
         .assert()
         .success();
 
-    let sound = only_file_starting_with(&out, "sound_");
+    let package = out.join("Sixteen Bit");
+    let sound = only_file_starting_with(&package, "sound_");
     let mut reader = asdcplib::pcm::MxfReader::new();
     reader
         .open_read(&sound.to_string_lossy())
@@ -146,7 +147,7 @@ fn a_sixteen_bit_wav_is_packaged_at_the_dci_depth() {
         PACKAGED_BITS_PER_SAMPLE,
         "a 16-bit master has to be widened, not wrapped as it stands"
     );
-    let verified = dcpwizard_core::verify::verify_dcp(&out);
+    let verified = dcpwizard_core::verify::verify_dcp(&package);
     assert!(verified.valid, "dcpdoctor errors: {:?}", verified.errors);
 }
 
@@ -334,18 +335,20 @@ fn encrypting_with_a_signer_still_builds() {
         ])
         .assert()
         .success();
-    assert!(out.join("ASSETMAP.xml").exists());
+    assert!(out.join("Signed").join("ASSETMAP.xml").exists());
 }
 
 const REFUSED_CHECK: &str = "Pre-build check refused the job";
 const FRAME_RATE_HINT: &str = "The DCP is 25 fps";
+
+const CHECKED_TITLE: &str = "Checked";
 
 fn checked_create(config_home: &Path, source: &Path, out: &Path) -> Command {
     let mut command = dcpwizard(config_home);
     command.args([
         "create",
         "--title",
-        "Checked",
+        CHECKED_TITLE,
         "--video",
         source.to_str().unwrap(),
         "-o",
@@ -610,8 +613,9 @@ fn a_resume_onto_another_encode_is_refused_by_the_check() {
     let config_home = TempDir::new().unwrap();
     let source = write_source(directory.path());
     let out = directory.path().join("dcp");
-    std::fs::create_dir_all(&out).unwrap();
-    let saved_state = out.join(".dcpwizard-encode.json");
+    let package = out.join(CHECKED_TITLE);
+    std::fs::create_dir_all(&package).unwrap();
+    let saved_state = package.join(".dcpwizard-encode.json");
     let saved = format!(
         r#"{{"source":"another.mp4","total_frames":{FRAMES},"fps":{FRAME_RATE},"width":{WIDTH},"height":{HEIGHT},"bitrate_mbps":0}}"#
     );
@@ -633,7 +637,7 @@ fn a_resume_onto_another_encode_is_refused_by_the_check() {
             "the refusal has to name {needle}: {printed}"
         );
     }
-    let left: Vec<PathBuf> = std::fs::read_dir(&out)
+    let left: Vec<PathBuf> = std::fs::read_dir(&package)
         .unwrap()
         .flatten()
         .map(|entry| entry.path())

@@ -79,7 +79,7 @@ fn composition_id(package: &Path) -> String {
         .expect("the CPL names a composition id")
 }
 
-fn build_package(source: &Path, out: &Path, config_home: &Path, title: &str) {
+fn build_package(source: &Path, output: &Path, config_home: &Path, title: &str) {
     dcpwizard(config_home)
         .args([
             "create",
@@ -88,7 +88,7 @@ fn build_package(source: &Path, out: &Path, config_home: &Path, title: &str) {
             "--video",
             source.to_str().unwrap(),
             "-o",
-            out.to_str().unwrap(),
+            output.to_str().unwrap(),
             "--twok",
         ])
         .assert()
@@ -103,7 +103,7 @@ fn the_matrix_names_every_registered_package_in_its_territory() {
 
     for version in &VERSIONS {
         let package = directory.path().join(version.title);
-        build_package(&source, &package, config_home.path(), version.title);
+        build_package(&source, directory.path(), config_home.path(), version.title);
         dcpwizard(config_home.path())
             .args([
                 "dashboard",

@@ -138,7 +138,7 @@ fn a_pac_subtitle_file_reaches_the_packaged_timed_text_track() {
 
     // read back through the CPL and the timed-text MXF, the only copy the
     // package keeps: the staged DCST XML is removed with the other scratch
-    let cues = dcpwizard_core::subtitle_extract::extract_cues(&out)
+    let cues = dcpwizard_core::subtitle_extract::extract_cues(&out.join("Pac Subs"))
         .expect("the packaged subtitle track has to read back");
     assert_eq!(cues.len(), PAC_CUES.len(), "{cues:?}");
     for (read, wrote) in cues.iter().zip(PAC_CUES.iter()) {

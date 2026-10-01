@@ -13,6 +13,7 @@ const RATINGS_CARD_SECONDS: u32 = 5;
 // the card is a flat band colour, so its channels land at the ends of the 8-bit range
 const BAND_CHANNEL_FLOOR: u8 = 200;
 const BAND_CHANNEL_CEILING: u8 = 60;
+const TITLE: &str = "Breadth Trailer";
 
 struct Band {
     flag: &'static str,
@@ -112,7 +113,7 @@ fn the_trailer_command_packages_a_card_and_a_leader_into_a_trailer_dcp() {
                 "--output",
                 out.to_str().unwrap(),
                 "--title",
-                "Breadth Trailer",
+                TITLE,
                 "--rating",
                 "PG-13",
                 "--rating-system",
@@ -127,7 +128,7 @@ fn the_trailer_command_packages_a_card_and_a_leader_into_a_trailer_dcp() {
             .assert()
             .success();
 
-        let dcp = out.join("dcp");
+        let dcp = out.join(TITLE);
         let picture_mxf = only_file_starting_with(&dcp, "picture_");
         let mut reader = asdcplib::jp2k::MxfReader::new();
         reader

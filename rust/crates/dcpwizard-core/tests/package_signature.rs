@@ -343,7 +343,7 @@ fn create_vf_signs_after_the_supplemental_marker_rewrite() {
     let replacement = dir.path().join("vf_j2k");
     make_frames(&replacement);
     let out = dir.path().join("vf");
-    let code = dcpwizard_core::vf::create_vf(&dcpwizard_core::vf::VfConfig {
+    let vf_config = dcpwizard_core::vf::VfConfig {
         ov_dir: ov,
         vf_dir: out.clone(),
         title: "VF".into(),
@@ -355,8 +355,10 @@ fn create_vf_signs_after_the_supplemental_marker_rewrite() {
             ..Default::default()
         }],
         signer: Some(signer.clone()),
-    });
+    };
+    let code = dcpwizard_core::vf::create_vf(&vf_config);
     assert_eq!(code, 0, "signed create-vf must succeed");
+    let out = dcpwizard_core::vf::vf_package_dir(&vf_config).unwrap();
 
     let cpl = only_file_matching(&out, "CPL_");
     let xml = std::fs::read_to_string(&cpl).unwrap();

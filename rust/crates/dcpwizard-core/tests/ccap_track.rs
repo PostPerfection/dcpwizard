@@ -227,6 +227,7 @@ fn vf_adds_closed_caption_track() {
         signer: None,
     };
     assert_eq!(create_vf(&vf_config), 0);
+    let vf = dcpwizard_core::vf::vf_package_dir(&vf_config).unwrap();
 
     let cpl = read_cpls(&vf).pop().expect("VF CPL");
     assert!(

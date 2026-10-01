@@ -94,7 +94,8 @@ struct CreateCompositionMetadata {
 #[derive(Args)]
 struct CreateIsdcfNaming {
     /// Name the DCP by the ISDCF convention: --title is the human title the
-    /// content title is built from, and the built name replaces it.
+    /// content title is built from, and the built name replaces it in the CPL.
+    /// The package folder keeps the --title name.
     #[arg(long)]
     isdcf_name: bool,
     /// RFC 5646 language the main soundtrack is spoken in (e.g. en, fr-CA)
@@ -258,10 +259,7 @@ fn apply_isdcf_name(
     let channel_count = match config.audio_path.as_deref() {
         Some(path) => match dcpwizard_core::mxf_wrap::wav_channels(path) {
             Ok(count) => count as usize,
-            Err(e) => {
-                tracing::error!("{e}");
-                std::process::exit(1);
-            }
+            Err(e) => exit_failed(e),
         },
         None => 0,
     };
@@ -1022,7 +1020,7 @@ enum Commands {
         /// Subtitle language code (e.g. "en", "fr")
         #[arg(long, default_value = "en")]
         subtitle_language: String,
-        /// Output directory
+        /// Folder the package is written into, as <OUTPUT>/<title>
         #[arg(short, long)]
         output: String,
         /// DCP standard (smpte|interop)
@@ -1164,7 +1162,7 @@ enum Commands {
         /// Original Version (OV) DCP directory
         #[arg(long)]
         ov: String,
-        /// Output VF directory
+        /// Folder the VF is written into, as <OUTPUT>/<title>
         #[arg(short, long)]
         output: String,
         /// VF title (defaults to "<OV title>_VF")
@@ -1206,7 +1204,7 @@ enum Commands {
         /// Input DCP directories (two or more), in program order
         #[arg(long = "input", required = true, num_args = 1..)]
         input: Vec<String>,
-        /// Output OV directory
+        /// Folder the OV is written into, as <OUTPUT>/<title>
         #[arg(short, long)]
         output: String,
         /// Title for the assembled composition
@@ -1303,7 +1301,7 @@ enum Commands {
         /// DCP title
         #[arg(short, long)]
         title: String,
-        /// Output directory
+        /// Folder the package is written into, as <OUTPUT>/<title>
         #[arg(short, long)]
         output: String,
         /// Audio WAV file
@@ -2101,7 +2099,7 @@ enum Commands {
         /// Trailer content video file
         #[arg(short, long)]
         content: String,
-        /// Output directory
+        /// Folder for the trailer mp4, the DCP goes in <OUTPUT>/<title>
         #[arg(short, long)]
         output: String,
         /// Trailer title (rendered on the ratings card)
@@ -2576,6 +2574,7 @@ impl Refusals {
 }
 
 struct ParsedCreateFlags {
+    package_dir: PathBuf,
     picture_options: dcpwizard_core::source_picture::SourcePictureOptions,
     naming: CreateNaming,
     tms_target: Option<dcpwizard_core::tms_upload::TmsConfig>,
@@ -3770,7 +3769,7 @@ fn trailer_content_title(title: &str, content: &Path) -> String {
 }
 
 /// Encode the packaged trailer mp4 to J2K and build a DCP (ContentKind=trailer)
-/// in `<output_dir>/dcp`, reusing the same grok encode + create_dcp path as
+/// in `<output_dir>/<content title>`, reusing the same grok encode + create_dcp path as
 /// `create --video`. The mp4 stays in place as the intermediate.
 fn trailer_to_dcp(
     mp4: &Path,
@@ -3783,6 +3782,13 @@ fn trailer_to_dcp(
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
+    let dcp_dir = match dcpwizard_core::package_dir::new_package_dir(output_dir, content_title) {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 1;
+        }
+    };
     if let Err(e) = dcpwizard_core::probe::ensure_video_decodable(mp4) {
         tracing::error!("{e}");
         return 1;
@@ -3837,7 +3843,6 @@ fn trailer_to_dcp(
         }
     };
 
-    let dcp_dir = output_dir.join("dcp");
     let config = dcpwizard_core::dcp::DcpConfig {
         title: content_title.to_string(),
         standard: dcpwizard_core::Standard::Smpte,
@@ -3911,6 +3916,57 @@ fn run_cert_fetch(
     }
 }
 
+// a create job's log gets its Finished line before the process ends
+fn exit_failed(message: impl std::fmt::Display) -> ! {
+    let message = message.to_string();
+    tracing::error!("{message}");
+    job_log::finish_running_job(&job_log::JobOutcome::Failed(&message));
+    std::process::exit(1);
+}
+
+fn exit_encode_failed(
+    cancel: &std::sync::atomic::AtomicBool,
+    message: impl std::fmt::Display,
+) -> ! {
+    if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        exit_failed(message);
+    }
+    tracing::error!("{message}");
+    job_log::finish_running_job(&job_log::JobOutcome::Cancelled);
+    std::process::exit(1);
+}
+
+const CREATE_SUBCOMMAND: &str = "create";
+
+// every argument create takes as given or defaulted, null when neither
+fn create_settings(create_matches: &clap::ArgMatches) -> serde_json::Value {
+    let command = <Cli as clap::CommandFactory>::command();
+    let create = command
+        .find_subcommand(CREATE_SUBCOMMAND)
+        .expect("create is a subcommand of the CLI");
+    let settings = create
+        .get_arguments()
+        .filter(|argument| !argument.is_global_set())
+        .map(|argument| {
+            let id = argument.get_id().as_str();
+            let values: Option<Vec<String>> =
+                create_matches.try_get_raw(id).ok().flatten().map(|values| {
+                    values
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .collect()
+                });
+            let value = match (values, argument.get_action()) {
+                (None, _) => serde_json::Value::Null,
+                (Some(values), clap::ArgAction::Append) => serde_json::json!(values),
+                (Some(values), _) if values.len() == 1 => serde_json::json!(values[0]),
+                (Some(values), _) => serde_json::json!(values),
+            };
+            (id.to_string(), value)
+        })
+        .collect();
+    serde_json::Value::Object(settings)
+}
+
 fn nonempty(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
@@ -3950,6 +4006,8 @@ fn run_preferences_command(action: &PreferencesCommand) -> i32 {
 }
 
 const MAIN_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
+// the status rust exits with when the main thread panics
+const PANIC_EXIT_STATUS: i32 = 101;
 
 fn main() {
     postkit::grok_encoder::set_packaged_gpu_plugin_path("dcpwizard");
@@ -3960,7 +4018,10 @@ fn main() {
         .stack_size(MAIN_THREAD_STACK_BYTES)
         .spawn(run)
         .expect("failed to spawn main thread");
-    thread.join().unwrap();
+    if thread.join().is_err() {
+        job_log::finish_running_job(&job_log::JobOutcome::Failed("panicked"));
+        std::process::exit(PANIC_EXIT_STATUS);
+    }
 }
 
 fn run() {
@@ -3977,6 +4038,7 @@ fn run() {
             .location()
             .map(|l| format!(" ({}:{})", l.file(), l.line()))
             .unwrap_or_default();
+        job_log::write_panic_line(info);
         eprintln!("\nerror: dcpwizard crashed: {payload}{location}");
         eprintln!(
             "This is a bug. Please report it at https://github.com/PostPerfection/dcpwizard/issues"
@@ -3992,7 +4054,16 @@ fn run() {
         }
     }));
 
-    let cli = Cli::parse();
+    #[cfg(unix)]
+    job_log::install_crash_signal_handlers();
+    // TODO: windows writes no crash line for an access violation, it needs SetUnhandledExceptionFilter
+
+    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|error| {
+        error
+            .format(&mut <Cli as clap::CommandFactory>::command())
+            .exit()
+    });
 
     let filter = if cli.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -4239,7 +4310,10 @@ fn run() {
                     .transpose(),
             );
             let video_path = PathBuf::from(&video);
-            let output_dir = PathBuf::from(&output);
+            let package_dir = refusals.take(dcpwizard_core::package_dir::new_package_dir(
+                Path::new(&output),
+                &title,
+            ));
             let std_val = if standard == "interop" {
                 dcpwizard_core::Standard::Interop
             } else {
@@ -4526,6 +4600,7 @@ fn run() {
             });
             let parsed = (|| {
                 Some(ParsedCreateFlags {
+                    package_dir: package_dir?,
                     picture_options: picture_options?,
                     naming: naming?,
                     tms_target: tms_target?,
@@ -4609,7 +4684,7 @@ fn run() {
                     reel_length_minutes: reel_length.unwrap_or(0),
                     reel_split_frames: parsed.reel_split_frames.clone(),
                     library_items: parsed.head_items.len() + parsed.tail_items.len(),
-                    output: output_dir.clone(),
+                    output: parsed.package_dir.clone(),
                     resume,
                 });
             if let Some(plan) = &plan
@@ -4656,6 +4731,7 @@ fn run() {
             }
             let (
                 Some(ParsedCreateFlags {
+                    package_dir: output_dir,
                     picture_options,
                     naming,
                     tms_target,
@@ -4724,8 +4800,7 @@ fn run() {
                 ) {
                     Ok(burn) => Some(burn),
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 }
             };
@@ -4742,19 +4817,18 @@ fn run() {
                 ) {
                     Ok(mark) => Some(mark),
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 }
             };
 
+            println!("Building the package in {}", output_dir.display());
             // the job log sits beside the package, and a job that cannot write
             // one has nowhere to put the package either
-            let mut job_log = match job_log::JobLog::create(&output_dir) {
+            let job_log = match job_log::JobLog::create(&output_dir) {
                 Ok(log) => log,
                 Err(e) => {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
+                    exit_failed(e);
                 }
             };
             job_log.line("=== DCP Wizard Pipeline ===");
@@ -4783,6 +4857,24 @@ fn run() {
                 "Picture findings: {}",
                 job_log::picture_findings_status(detect_picture_findings)
             ));
+            job_log.line(&format!("Started: {}", job_log::log_timestamp()));
+            for line in postkit::machine_info::machine_info_lines(gpu_enabled) {
+                job_log.line(&line);
+            }
+            job_log.line(
+                &source_info
+                    .as_ref()
+                    .map_or_else(|| "Source: not probed".to_string(), job_log::source_line),
+            );
+            let settings = create_settings(
+                matches
+                    .subcommand_matches(CREATE_SUBCOMMAND)
+                    .expect("the create arm runs on create's arguments"),
+            );
+            match job_log::settings_line(&settings) {
+                Ok(line) => job_log.line(&line),
+                Err(e) => exit_failed(e),
+            }
 
             let code = if is_video_file {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
@@ -4803,8 +4895,7 @@ fn run() {
                             p
                         }
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     }
                 } else {
@@ -4825,8 +4916,7 @@ fn run() {
                 let frame_transform = match transform_source {
                     Ok(t) => t,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
                 // an HDR master postkit transforms itself needs no conversion pass
@@ -4851,8 +4941,7 @@ fn run() {
                             lut_path: Some(lut),
                         };
                         if let Err(e) = postkit::colour::convert_colour(&opts) {
-                            tracing::error!("HDR-to-DCI LUT conversion failed: {e}");
-                            std::process::exit(1);
+                            exit_failed(format!("HDR-to-DCI LUT conversion failed: {e}"));
                         }
                         content_already_xyz = true;
                     } else if allow_generic_hdr_tonemap {
@@ -4865,11 +4954,10 @@ fn run() {
                             &converted,
                         ) != 0
                         {
-                            return;
+                            exit_failed("generic HDR tone mapping failed");
                         }
                     } else {
-                        tracing::error!("{}", dcpwizard_core::preflight::HDR_SOURCE_NEEDS_A_LUT);
-                        std::process::exit(1);
+                        exit_failed(dcpwizard_core::preflight::HDR_SOURCE_NEEDS_A_LUT);
                     }
                     encode_video_path = converted;
                 }
@@ -4885,17 +4973,15 @@ fn run() {
                 };
                 let Some(source_pixel_format) = video_info.as_ref().map(|info| info.pixel_format())
                 else {
-                    tracing::error!(
+                    exit_failed(format!(
                         "ffprobe cannot read the input video: {}",
                         encode_video_path.display()
-                    );
-                    std::process::exit(1);
+                    ));
                 };
                 if let Err(e) =
                     dcpwizard_core::preflight::check_opaque_picture(&source_pixel_format.pix_fmt)
                 {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
+                    exit_failed(e);
                 }
                 let source_fps = video_info
                     .as_ref()
@@ -4921,8 +5007,7 @@ fn run() {
                 ) {
                     Ok(t) => t,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -4939,8 +5024,7 @@ fn run() {
                 ) {
                     Ok(resolved) => resolved,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
                 tracing::info!("Picture: {}", resolved_picture.plan.describe());
@@ -4961,8 +5045,7 @@ fn run() {
                     package_is_four_k,
                     std_val == dcpwizard_core::Standard::Smpte,
                 ) {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
+                    exit_failed(e);
                 }
 
                 if let Some(ref info) = video_info {
@@ -5062,8 +5145,7 @@ fn run() {
                     bitrate_mbps: video_bit_rate.unwrap_or(0),
                 };
                 if resume && let Err(e) = encode_state.check_resumable(&output_dir) {
-                    tracing::error!("{e}");
-                    std::process::exit(1);
+                    exit_failed(e);
                 }
                 if let Err(e) = encode_state.save(&output_dir) {
                     tracing::warn!("could not save resume state: {e}");
@@ -5082,8 +5164,7 @@ fn run() {
                 ) {
                     Ok(f) => f,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
                 let picture_filter = join_decode_filters(&resolved_picture.plan.filters, None);
@@ -5126,8 +5207,7 @@ fn run() {
                     ) {
                         Ok(wrap) => Some(wrap),
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     },
                 };
@@ -5177,25 +5257,24 @@ fn run() {
                         );
                         last_encode_progress = Some(p);
                     },
+                    |line| job_log.line(line),
                 );
                 eprintln!();
 
                 if !result.success {
                     let wrap_error = picture_wrap.and_then(|wrap| wrap.abandon());
-                    tracing::error!("Encode failed: {}", wrap_error.unwrap_or(result.error));
-                    std::process::exit(1);
+                    exit_encode_failed(
+                        &cancel,
+                        format!("Encode failed: {}", wrap_error.unwrap_or(result.error)),
+                    );
                 }
                 tracing::info!("Encoded {} frames", result.frames_encoded);
                 let device_frames = postkit::grok_encoder::accelerated_frames()
                     .saturating_sub(device_frames_before);
-                job_log.line(&format!(
-                    "[ENCODE] Frames on the device: {device_frames} of {}",
-                    result.frames_encoded
-                ));
-                if device_frames == 0 && gpu_enabled {
-                    job_log.line(
-                        "[ENCODE] WARNING: the GPU was requested and no frame ran on the device",
-                    );
+                for line in
+                    job_log::device_frames_lines(device_frames, result.frames_encoded, gpu_enabled)
+                {
+                    job_log.line(&line);
                 }
                 let picture_mxf = match picture_wrap {
                     Some(wrap) => match wrap.finish(result.frames_encoded) {
@@ -5208,8 +5287,7 @@ fn run() {
                             Some(wrapped)
                         }
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     },
                     None => None,
@@ -5250,8 +5328,10 @@ fn run() {
                         |_p: EncodeProgress| {},
                     );
                     if !re_result.success {
-                        tracing::error!("Right-eye encode failed: {}", re_result.error);
-                        std::process::exit(1);
+                        exit_encode_failed(
+                            &cancel,
+                            format!("Right-eye encode failed: {}", re_result.error),
+                        );
                     }
                     for finding in re_result.picture_findings.describe(fps as f64) {
                         tracing::warn!("right eye: {finding}");
@@ -5306,8 +5386,7 @@ fn run() {
                 ) {
                     Ok(p) => p,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -5315,8 +5394,7 @@ fn run() {
                     (true, Some(input)) => {
                         let output = output_dir.join("audio_pullup.wav");
                         if let Err(error) = dcpwizard_core::hfr::audio_pull_up(&input, &output) {
-                            tracing::error!("{error}");
-                            std::process::exit(1);
+                            exit_failed(error);
                         }
                         tracing::info!("Applied 23.976-to-24 audio pull-up");
                         Some(output)
@@ -5337,8 +5415,7 @@ fn run() {
                 ) {
                     Ok(pair) => pair,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
                 let packaged_right_eye_dir = match right_eye_dir.as_ref() {
@@ -5351,8 +5428,7 @@ fn run() {
                     ) {
                         Ok((trimmed, _)) => Some(trimmed),
                         Err(e) => {
-                            tracing::error!("right eye: {e}");
-                            std::process::exit(1);
+                            exit_failed(format!("right eye: {e}"));
                         }
                     },
                     None => None,
@@ -5376,8 +5452,7 @@ fn run() {
                     ) {
                         Ok((wav, ch)) => (Some(wav), Some(ch)),
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     }
                 } else {
@@ -5396,8 +5471,7 @@ fn run() {
                 ) {
                     Ok(f) => f,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -5472,8 +5546,7 @@ fn run() {
                     match resolve_reel_splits(split_at.as_deref(), split_chapters, None, fps) {
                         Ok(f) => f,
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     };
 
@@ -5489,16 +5562,14 @@ fn run() {
                     ) {
                         Ok(picture) => picture,
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     };
                     let _ = std::fs::create_dir_all(&output_dir);
                     let colour_transform = match xyz_route.frame_transform() {
                         Ok(transform) => transform,
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     };
                     if let Err(e) = postkit::still::build_still_frames(&postkit::still::StillHold {
@@ -5516,8 +5587,7 @@ fn run() {
                         watermark: build_watermark(postkit::encode::FrameRate::whole(fps)),
                         out_dir: &still_j2k_dir,
                     }) {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                     tracing::info!("Held the still for {frames} frame(s) at {width}x{height}");
                     still_j2k_dir.clone()
@@ -5542,10 +5612,7 @@ fn run() {
                     eprintln!();
                     let encoded = match encoded {
                         Ok(encoded) => encoded,
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
-                        }
+                        Err(e) => exit_encode_failed(&cancel, e),
                     };
                     tracing::info!(
                         "Encoded {} frame(s) of the image sequence",
@@ -5553,14 +5620,12 @@ fn run() {
                     );
                     let device_frames = postkit::grok_encoder::accelerated_frames()
                         .saturating_sub(device_frames_before);
-                    job_log.line(&format!(
-                        "[ENCODE] Frames on the device: {device_frames} of {}",
-                        encoded.frames_encoded
-                    ));
-                    if device_frames == 0 && gpu_enabled {
-                        job_log.line(
-                            "[ENCODE] WARNING: the GPU was requested and no frame ran on the device",
-                        );
+                    for line in job_log::device_frames_lines(
+                        device_frames,
+                        encoded.frames_encoded,
+                        gpu_enabled,
+                    ) {
+                        job_log.line(&line);
                     }
                     encoded.j2k_dir
                 } else {
@@ -5576,8 +5641,7 @@ fn run() {
                 ) {
                     Ok(t) => t,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -5596,8 +5660,7 @@ fn run() {
                 ) {
                     Ok(p) => p,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -5612,8 +5675,7 @@ fn run() {
                 ) {
                     Ok(pair) => pair,
                     Err(e) => {
-                        tracing::error!("{e}");
-                        std::process::exit(1);
+                        exit_failed(e);
                     }
                 };
 
@@ -5631,8 +5693,7 @@ fn run() {
                     ) {
                         Ok((wav, ch)) => (Some(wav), Some(ch)),
                         Err(e) => {
-                            tracing::error!("{e}");
-                            std::process::exit(1);
+                            exit_failed(e);
                         }
                     }
                 } else {
@@ -5701,45 +5762,51 @@ fn run() {
                 remove_intermediates_if_packaged(&output_dir, &video_path, code)
             };
 
+            let (mut code, mut failure) = match code {
+                0 => (0, None),
+                code => (code, Some(format!("packaging failed with code {code}"))),
+            };
+
             // the package is read back before it goes anywhere, so a broken one
             // is named here rather than at the cinema
-            let code = match (code, no_verify) {
-                (0, false) => verify_finished_package(&output_dir),
-                (0, true) => {
+            if failure.is_none() {
+                if no_verify {
                     eprintln!("--no-verify: the finished package was not verified");
-                    0
+                } else {
+                    code = verify_finished_package(&output_dir);
+                    if code != 0 {
+                        failure = Some("the finished package did not verify".to_string());
+                    }
                 }
-                (code, _) => code,
-            };
+            }
 
             // upload to the TMS (dom's upload_after_make_dcp): opt-in, only
             // after a clean run, and before any power-off.
-            let code = match tms_target {
-                Some(config) if code == 0 => {
-                    match dcpwizard_core::tms_upload::upload_package(&config, &output_dir) {
-                        Ok(()) => 0,
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            1
-                        }
-                    }
-                }
-                _ => code,
-            };
+            if let Some(config) = tms_target.filter(|_| failure.is_none())
+                && let Err(e) = dcpwizard_core::tms_upload::upload_package(&config, &output_dir)
+            {
+                tracing::error!("{e}");
+                code = 1;
+                failure = Some(e);
+            }
 
             // shutdown on completion (dom#1394): opt-in, only after a clean run.
             // resolve_shutdown_command already failed loud up front if missing.
-            if shutdown_when_done && code == 0 {
+            if shutdown_when_done && failure.is_none() {
                 tracing::info!("Encode complete; powering off (--shutdown-when-done)");
                 if let Err(e) = dcpwizard_core::encode_qol::run_shutdown() {
                     tracing::error!("{e}");
-                    1
-                } else {
-                    code
+                    code = 1;
+                    failure = Some(e);
                 }
-            } else {
-                code
             }
+
+            let outcome = match &failure {
+                None => job_log::JobOutcome::Done,
+                Some(reason) => job_log::JobOutcome::Failed(reason),
+            };
+            job_log::finish_running_job(&outcome);
+            code
         }
 
         Commands::Encode {
@@ -5800,7 +5867,14 @@ fn run() {
             use std::sync::atomic::AtomicBool;
 
             let input_path = PathBuf::from(&input);
-            let output_dir = PathBuf::from(&output);
+            let output_dir =
+                match dcpwizard_core::package_dir::new_package_dir(Path::new(&output), &title) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
 
             if !input_path.exists() {
                 tracing::error!("Input not found: {input}");
@@ -5811,7 +5885,7 @@ fn run() {
             let j2k_dir = output_dir.join("j2k");
             let _ = std::fs::create_dir_all(&j2k_dir);
 
-            tracing::info!("Pipeline: {} -> {}", input, output);
+            tracing::info!("Pipeline: {} -> {}", input, output_dir.display());
 
             // reel-split boundaries from the source's chapter marks
             let reel_split_frames = if split_chapters {
@@ -6423,7 +6497,14 @@ fn run() {
                         tracing::error!("cannot read a file stem from {}", master.display());
                         return;
                     };
-                    let package_dir = output_dir.join(stem);
+                    let package_dir =
+                        match dcpwizard_core::package_dir::new_package_dir(&output_dir, stem) {
+                            Ok(dir) => dir,
+                            Err(e) => {
+                                tracing::error!("{e}");
+                                return;
+                            }
+                        };
                     let log_path = match job_log::job_log_path(&package_dir) {
                         Ok(path) => path,
                         Err(e) => {
@@ -6444,7 +6525,7 @@ fn run() {
                         "--video".into(),
                         master.into(),
                         "--output".into(),
-                        package_dir.as_path().into(),
+                        output_dir.as_path().into(),
                     ];
                     if let Some(audio) = audio.as_deref() {
                         arguments.push("--audio".into());
@@ -7740,9 +7821,16 @@ fn run() {
                     replacement_reels: reels.into_values().collect(),
                     signer: package_signer(&signer_opts),
                 };
+                let package_dir = match dcpwizard_core::vf::vf_package_dir(&config) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
                 let code = dcpwizard_core::vf::create_vf(&config);
                 if code == 0 {
-                    println!("Created VF DCP at {output}");
+                    println!("Created VF DCP at {}", package_dir.display());
                 }
                 code
             }
@@ -7754,15 +7842,24 @@ fn run() {
             title,
             signer_opts,
         } => {
+            let title = dcpwizard_core::assemble::assemble_title(&title);
+            let output_dir =
+                match dcpwizard_core::package_dir::new_package_dir(Path::new(&output), &title) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
             let config = dcpwizard_core::assemble::AssembleConfig {
                 inputs: input.iter().map(PathBuf::from).collect(),
-                output_dir: PathBuf::from(&output),
+                output_dir: output_dir.clone(),
                 title,
                 signer: package_signer(&signer_opts),
             };
             let code = dcpwizard_core::assemble::assemble(&config);
             if code == 0 {
-                println!("Assembled OV at {output}");
+                println!("Assembled OV at {}", output_dir.display());
             }
             code
         }

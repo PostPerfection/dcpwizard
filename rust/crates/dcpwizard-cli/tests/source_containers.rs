@@ -171,12 +171,13 @@ fn create_packages_every_source_container_the_readme_names() {
             .assert()
             .success();
 
+        let package = out.join("Container");
         assert_picture_decodes(
-            &only_file_starting_with(&out, "picture_"),
+            &only_file_starting_with(&package, "picture_"),
             container.file_name,
         );
         assert!(
-            dcpwizard_core::verify::verify_dcp(&out).valid,
+            dcpwizard_core::verify::verify_dcp(&package).valid,
             "{} must package a valid DCP",
             container.file_name
         );

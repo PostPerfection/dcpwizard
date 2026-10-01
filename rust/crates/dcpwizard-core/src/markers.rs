@@ -93,7 +93,7 @@ pub fn parse_frame_offset(value: &str, fps: u32) -> Result<u64, String> {
 
 /// Parse a `LABEL=timecode` argument into a validated MarkerEntry. The label
 /// must be one of the ten defined markers and the offset must fall inside the
-/// composition (`0..=total_frames`).
+/// composition (`0..total_frames`).
 pub fn parse_marker_arg(arg: &str, fps: u32, total_frames: u64) -> Result<MarkerEntry, String> {
     let (label, tc) = arg
         .split_once('=')
@@ -105,10 +105,11 @@ pub fn parse_marker_arg(arg: &str, fps: u32, total_frames: u64) -> Result<Marker
         )
     })?;
     let frame = parse_frame_offset(tc, fps)?;
-    if total_frames > 0 && frame > total_frames {
+    if total_frames > 0 && frame >= total_frames {
         return Err(format!(
-            "marker {} at frame {frame} is past the composition length ({total_frames})",
-            marker.label()
+            "marker {} at frame {frame} is at or past the picture's {total_frames} frames, the last frame is {}",
+            marker.label(),
+            total_frames - 1
         ));
     }
     Ok(MarkerEntry::new(marker, frame))
@@ -313,5 +314,8 @@ mod tests {
         assert!(parse_marker_arg("FFOC", 24, 1000).is_err());
         // past composition end
         assert!(parse_marker_arg("LFOC=2000", 24, 1000).is_err());
+        // the last frame is total_frames - 1
+        assert_eq!(parse_marker_arg("LFOC=999", 24, 1000).unwrap().frame, 999);
+        assert!(parse_marker_arg("LFOC=1000", 24, 1000).is_err());
     }
 }

@@ -48,11 +48,41 @@ struct NewAsset {
 /// Unchanged reels reference the OV's real asset ids; the VF ships only the new
 /// MXFs plus its own CPL/PKL/ASSETMAP. Replaced tracks are wrapped (or copied if
 /// already MXF) and registered under their real asset id in all three files.
+// the folder the VF is written to: vf_dir plus the title, or <OV title>_VF
+pub fn vf_package_dir(config: &VfConfig) -> Result<PathBuf, String> {
+    crate::package_dir::package_dir(&config.vf_dir, &vf_title(config)?)
+}
+
+pub fn new_vf_package_dir(config: &VfConfig) -> Result<PathBuf, String> {
+    crate::package_dir::new_package_dir(&config.vf_dir, &vf_title(config)?)
+}
+
+fn vf_title(config: &VfConfig) -> Result<String, String> {
+    if !config.title.is_empty() {
+        return Ok(config.title.clone());
+    }
+    let ov_cpls = crate::multi_cpl::list_cpls(&config.ov_dir);
+    let Some(ov_cpl) = ov_cpls.first() else {
+        return Err(format!(
+            "No CPL found in OV directory {}",
+            config.ov_dir.display()
+        ));
+    };
+    Ok(format!("{}_VF", ov_cpl.content_title))
+}
+
 pub fn create_vf(config: &VfConfig) -> i32 {
     if !config.ov_dir.exists() {
         tracing::error!("OV directory not found: {}", config.ov_dir.display());
         return -1;
     }
+    let vf_dir = match new_vf_package_dir(config) {
+        Ok(vf_dir) => vf_dir,
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
+    };
     // prove the signer works before anything is written, so a bad one cannot
     // leave a half-signed package behind
     if let Some(signer) = config.signer.as_ref()
@@ -100,7 +130,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         &config.subtitle_language
     };
 
-    if let Err(e) = std::fs::create_dir_all(&config.vf_dir) {
+    if let Err(e) = std::fs::create_dir_all(&vf_dir) {
         tracing::error!("Failed to create VF directory: {e}");
         return -1;
     }
@@ -138,7 +168,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     crate::mxf_wrap::MxfType::J2kPicture,
                     edit_num,
                     entry.duration_frames,
-                    &config.vf_dir,
+                    &vf_dir,
                 ) else {
                     return -1;
                 };
@@ -158,13 +188,13 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     crate::mxf_wrap::MxfType::PcmAudio,
                     edit_num,
                     entry.duration_frames,
-                    &config.vf_dir,
+                    &vf_dir,
                 ) else {
                     return -1;
                 };
                 let out = Some((a.id.clone(), a.duration));
                 if main_sound_track.is_none() {
-                    main_sound_track = Some(config.vf_dir.join(&a.filename));
+                    main_sound_track = Some(vf_dir.join(&a.filename));
                 }
                 new_assets.push(a);
                 out
@@ -189,7 +219,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     edit_num,
                     entry.duration_frames,
                     &config.subtitle_opts,
-                    &config.vf_dir,
+                    &vf_dir,
                 ) else {
                     return -1;
                 };
@@ -210,7 +240,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     edit_num,
                     entry.duration_frames,
                     &config.subtitle_opts.for_closed_caption(),
-                    &config.vf_dir,
+                    &vf_dir,
                 ) else {
                     return -1;
                 };
@@ -288,7 +318,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
 
     // ── Write CPL via the shared postkit writer, then mark it supplemental ──
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
-    let cpl_path = config.vf_dir.join(format!("CPL_{cpl_uuid}.xml"));
+    let cpl_path = vf_dir.join(format!("CPL_{cpl_uuid}.xml"));
     let cpl_config = crate::cpl::CplConfig {
         title,
         content_kind,
@@ -308,8 +338,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     // <OriginalFileName> / <OPL> marker in the CPL. Reference the OV package so
     // validating the VF alone yields the supplemental warning, not a hard
     // cross-ref error.
-    let ov_ref =
-        find_ov_pkl_id(&config.vf_dir, &config.ov_dir).unwrap_or_else(|| ov_cpl.id.clone());
+    let ov_ref = find_ov_pkl_id(&vf_dir, &config.ov_dir).unwrap_or_else(|| ov_cpl.id.clone());
     let marker = format!("  <OriginalPackagingList>urn:uuid:{ov_ref}</OriginalPackagingList>\n");
     match std::fs::read_to_string(&cpl_path) {
         Ok(xml) => {
@@ -348,12 +377,12 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         pkl_entries.push(crate::pkl::PklEntry {
             id: a.id.clone(),
             asset_type: "application/mxf".into(),
-            file: config.vf_dir.join(&a.filename),
+            file: vf_dir.join(&a.filename),
             hash: a.hash.clone(),
             size: a.size,
         });
     }
-    let pkl_path = config.vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
+    let pkl_path = vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
     if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate VF PKL");
         return -1;
@@ -382,14 +411,14 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             packing_list: false,
         });
     }
-    if crate::assetmap::generate_assetmap(&am_entries, &config.vf_dir, standard, None) != 0 {
+    if crate::assetmap::generate_assetmap(&am_entries, &vf_dir, standard, None) != 0 {
         tracing::error!("Failed to generate VF ASSETMAP");
         return -1;
     }
 
     tracing::info!(
         "Created VF DCP at {} ({} new asset(s))",
-        config.vf_dir.display(),
+        vf_dir.display(),
         new_assets.len()
     );
     0
@@ -801,6 +830,7 @@ mod tests {
             }],
         };
         assert_eq!(create_vf(&config), 0);
+        let vf = vf_package_dir(&config).unwrap();
 
         // The new sound MXF ships in the VF; its id is embedded in its filename.
         let mxf = std::fs::read_dir(&vf)
@@ -859,6 +889,13 @@ mod tests {
         assert!(
             cpl.contains("OriginalPackagingList"),
             "VF CPL must carry a supplemental marker"
+        );
+
+        assert_eq!(create_vf(&config), -1, "a second VF under the same title");
+        assert_eq!(
+            std::fs::read_to_string(vf.join(&cpl_name)).unwrap(),
+            cpl,
+            "the refused VF leaves the first one alone"
         );
     }
 

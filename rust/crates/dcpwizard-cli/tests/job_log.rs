@@ -10,6 +10,7 @@ const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 24;
 const FRAMES: u32 = 3;
+const TITLE: &str = "Job Log";
 const LOG_NAME_INSIDE_THE_PACKAGE: &str = "dcpwizard.log";
 const FOREIGN_FILE_CODE: &str = "foreign_file_in_package";
 const DEVICE_WARNING: &str =
@@ -54,30 +55,51 @@ fn write_source(directory: &Path) -> PathBuf {
     path
 }
 
-fn create(source: &Path, out: &Path, config_home: &Path) {
+fn create(source: &Path, output: &Path, config_home: &Path, extra: &[&str]) {
     dcpwizard(config_home)
         .args([
             "create",
             "--title",
-            "Job Log",
+            TITLE,
             "--video",
             source.to_str().unwrap(),
             "-o",
-            out.to_str().unwrap(),
+            output.to_str().unwrap(),
             "--twok",
         ])
+        .args(extra)
         .assert()
         .success();
 }
 
-fn create_and_read_log(source: &Path, out: &Path, config_home: &Path) -> String {
-    create(source, out, config_home);
+fn read_log_beside(package: &Path) -> String {
     assert!(
-        !out.join(LOG_NAME_INSIDE_THE_PACKAGE).exists(),
+        !package.join(LOG_NAME_INSIDE_THE_PACKAGE).exists(),
         "the job log has to stay out of the package folder"
     );
-    std::fs::read_to_string(out.with_extension("log"))
+    std::fs::read_to_string(package.with_extension("log"))
         .unwrap_or_else(|e| panic!("the job log has to sit beside the package: {e}"))
+}
+
+fn header_line<'a>(log: &'a str, prefix: &str) -> (usize, &'a str) {
+    log.lines()
+        .enumerate()
+        .find(|(_, line)| line.starts_with(prefix))
+        .unwrap_or_else(|| panic!("the log has to hold a {prefix:?} line: {log}"))
+}
+
+fn finished_line(log: &str) -> &str {
+    let last = log.lines().last().unwrap_or_default();
+    assert!(
+        last.starts_with("Finished: "),
+        "the log has to end with its Finished line: {log}"
+    );
+    last
+}
+
+fn create_and_read_log(source: &Path, output: &Path, config_home: &Path) -> String {
+    create(source, output, config_home, &[]);
+    read_log_beside(&output.join(TITLE))
 }
 
 #[test]
@@ -85,10 +107,10 @@ fn dcpdoctor_finds_no_foreign_file_in_a_fresh_package() {
     let directory = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();
     let source = write_source(directory.path());
-    let out = directory.path().join("dcp");
-    create(&source, &out, config_home.path());
+    let output = directory.path().join("dcp");
+    create(&source, &output, config_home.path(), &[]);
 
-    let verified = dcpwizard_core::verify::verify_dcp(&out);
+    let verified = dcpwizard_core::verify::verify_dcp(&output.join(TITLE));
     assert!(verified.valid, "dcpdoctor errors: {:?}", verified.errors);
     let foreign: Vec<&String> = verified
         .warnings
@@ -106,9 +128,9 @@ fn a_cpu_create_logs_the_accelerator_off_and_no_frames_on_the_device() {
     let directory = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();
     let source = write_source(directory.path());
-    let out = directory.path().join("dcp");
+    let output = directory.path().join("dcp");
 
-    let log = create_and_read_log(&source, &out, config_home.path());
+    let log = create_and_read_log(&source, &output, config_home.path());
     assert!(
         log.contains("Accelerator: off"),
         "a run that asked for no device says so: {log}"
@@ -133,6 +155,93 @@ fn a_cpu_create_logs_the_accelerator_off_and_no_frames_on_the_device() {
         !log.contains(DEVICE_WARNING),
         "nothing asked for the device, so nothing is warned about: {log}"
     );
+    assert!(
+        !log.lines().any(|line| line.starts_with("GPU: ")),
+        "nothing asked for the device, so no GPU is looked for: {log}"
+    );
+}
+
+#[test]
+fn the_header_names_the_machine_the_source_and_every_setting_and_the_log_ends_done() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let output = directory.path().join("dcp");
+
+    let log = create_and_read_log(&source, &output, config_home.path());
+    let (started, _) = header_line(&log, "Started: ");
+    let (machine, _) = header_line(&log, "Machine: ");
+    let (source_index, source_line) = header_line(&log, "Source: ");
+    let (settings_index, settings_line) = header_line(&log, "Settings: ");
+    assert!(
+        started < machine && machine < source_index && source_index < settings_index,
+        "Started, Machine, Source and Settings come in that order: {log}"
+    );
+    assert!(
+        source_line.starts_with(&format!(
+            "Source: h264 {WIDTH}x{HEIGHT} {FRAME_RATE}/1 {FRAMES} frames, yuv420p, colour "
+        )),
+        "{source_line}"
+    );
+    let settings: serde_json::Value =
+        serde_json::from_str(settings_line.strip_prefix("Settings: ").unwrap())
+            .unwrap_or_else(|e| panic!("the settings have to be one JSON object: {e}"));
+    assert_eq!(settings["title"], TITLE, "{settings_line}");
+    assert_eq!(
+        settings["video"],
+        source.to_str().unwrap(),
+        "{settings_line}"
+    );
+    assert_eq!(settings["twok"], "true", "{settings_line}");
+    assert!(
+        settings.get("license").is_none(),
+        "the global options stay off the settings line: {settings_line}"
+    );
+    assert!(
+        log.lines().any(|line| {
+            line.starts_with("[ENCODE] decoding to the pipe pixel_format=")
+                && line.ends_with(" hardware_decode=false")
+        }),
+        "the encode names the pixel format it decodes to: {log}"
+    );
+    assert!(finished_line(&log).ends_with(", done"), "{log}");
+}
+
+#[test]
+fn a_create_that_fails_after_the_encode_ends_its_log_with_the_reason() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let not_a_video = directory.path().join("notes.txt");
+    std::fs::write(&not_a_video, "no video here").unwrap();
+    let output = directory.path().join("dcp");
+
+    dcpwizard(config_home.path())
+        .args([
+            "create",
+            "--title",
+            TITLE,
+            "--video",
+            source.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--twok",
+            "--sign-language-video",
+            not_a_video.to_str().unwrap(),
+            "--sign-language-lang",
+            "en",
+        ])
+        .assert()
+        .failure();
+    let log = read_log_beside(&output.join(TITLE));
+    let finished = finished_line(&log);
+    assert!(
+        finished.ends_with(&format!(
+            ", failed: ffmpeg could not conform {} to VP9",
+            not_a_video.display()
+        )),
+        "the Finished line names why the job failed: {log}"
+    );
 }
 
 #[test]
@@ -145,8 +254,8 @@ fn a_create_under_the_gpu_preference_logs_why_the_device_never_started() {
         .success();
 
     let source = write_source(directory.path());
-    let out = directory.path().join("dcp");
-    let log = create_and_read_log(&source, &out, config_home.path());
+    let output = directory.path().join("dcp");
+    let log = create_and_read_log(&source, &output, config_home.path());
 
     let accelerator = log
         .lines()
@@ -163,5 +272,50 @@ fn a_create_under_the_gpu_preference_logs_why_the_device_never_started() {
     assert!(
         log.contains(DEVICE_WARNING),
         "the device was asked for and took no frame: {log}"
+    );
+    let (_, gpu) = header_line(&log, "GPU: ");
+    assert_ne!(gpu, "GPU: ", "the GPU line names what was found: {log}");
+}
+
+#[test]
+fn an_isdcf_named_package_keeps_the_title_folder_and_carries_the_isdcf_name_in_its_cpl() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let output = directory.path().join("dcp");
+    create(&source, &output, config_home.path(), &["--isdcf-name"]);
+
+    let package = output.join(TITLE);
+    let folders: Vec<PathBuf> = std::fs::read_dir(&output)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert_eq!(folders, std::slice::from_ref(&package));
+    let cpl = std::fs::read_dir(&package)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("CPL_")
+        })
+        .expect("the title folder has to hold the package");
+    let cpl_text = std::fs::read_to_string(cpl).unwrap();
+    let content_title = cpl_text
+        .split_once("<ContentTitleText>")
+        .and_then(|(_, rest)| rest.split_once("</ContentTitleText>"))
+        .map(|(title, _)| title)
+        .expect("the CPL has a content title");
+    assert!(
+        content_title.starts_with("JobLog_") && content_title.ends_with("_SMPTE_OV"),
+        "the CPL carries the ISDCF name: {content_title}"
+    );
+    let log = read_log_beside(&package);
+    assert!(log.contains(&format!("Title: {TITLE}")), "{log}");
+    assert!(
+        log.contains(&format!("Output: {}", package.display())),
+        "{log}"
     );
 }

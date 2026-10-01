@@ -3,6 +3,7 @@ import os
 import subprocess
 import tomllib
 import xml.etree.ElementTree as ElementTree
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,19 @@ FIXTURE_FPS = 24
 FIXTURE_SECONDS = 4
 FIXTURE_SPLIT_AT = "00:00:02"
 FIXTURE_CHANNELS = 6
+
+PROJECT_WIZARD = "dcpwizard"
+PROJECT_FILE_VERSION = 1
+
+PROJECT_TITLE = "Film"
+SECOND_PROJECT_TITLE = "Second"
+NEW_PROJECT_CHORD = "ctrl+n"
+SAVE_PROJECT_CHORD = "ctrl+s"
+BUILD_COMPLETE_STATUS = "Build complete"
+FINISHED_BUILD_STAGES = {"Done", "Error", "Cancelled"}
+WINDOW_TITLE_SEPARATOR = " - "
+# the probe writes this into the video's asset row
+FIXTURE_ASSET_SIZE = FIXTURE_SIZE.replace("x", "\u00d7")
 
 # crossing the first reel takes longer than the reel lasts when decoding lags
 REEL_CROSSING_TIMEOUT_MULTIPLE = 3
@@ -89,6 +103,28 @@ return [...document.querySelectorAll("#prop-markers .marker-row")].map((row) => 
   labels: [...row.querySelectorAll(".marker-label option")].map((option) => option.value),
   label: row.querySelector(".marker-label").value,
   position: row.querySelector(".marker-position").value,
+}));
+"""
+
+ASSET_PATHS = """
+return [...document.querySelectorAll("#asset-list .asset-item")].map(
+  (item) => item.querySelector(".asset-name").title,
+);
+"""
+
+ASSET_METAS = """
+return [...document.querySelectorAll("#asset-list .asset-meta")].map((meta) => meta.textContent);
+"""
+
+# guikit stores the recent list only once it knows the form a New would discard
+RECENT_LIST_STORED = """
+return localStorage.getItem("dcpwizard-recent-projects") !== null;
+"""
+
+RECENT_ROWS = """
+return [...document.querySelectorAll("#recent-list .recent-item")].map((item) => ({
+  path: item.dataset.path,
+  retitle: item.querySelector(".recent-retitle") !== null,
 }));
 """
 
@@ -178,10 +214,24 @@ def write_media(directory):
 
 
 class TwoReelPackage:
-    def __init__(self, directory, cpl_path):
+    def __init__(self, directory, cpl_path, project_path):
         self.directory = directory
         self.cpl_path = cpl_path
+        self.project_path = project_path
         self.reels = reel_pictures(cpl_path)
+
+
+# Recent offers Retitle only for a project file with its package beside it
+def write_project_beside(package_directory):
+    project_path = package_directory.with_name(f"{package_directory.name}.{PROJECT_WIZARD}")
+    project = {
+        "wizard": PROJECT_WIZARD,
+        "version": PROJECT_FILE_VERSION,
+        "saved": datetime.now(timezone.utc).isoformat(),
+        "form": {"title": FIXTURE_TITLE},
+    }
+    project_path.write_text(json.dumps(project))
+    return project_path
 
 
 # one DCP for the whole session, the encode is the slow part of this suite
@@ -205,9 +255,11 @@ def two_reel_dcp(tmp_path_factory):
         timeout=CREATE_TIMEOUT_SECONDS,
     )
     assert created.returncode == 0, created.stderr[-4000:]
-    cpls = sorted(output.glob("CPL_*.xml"))
+    # create writes the package into <output>/<title>
+    cpls = sorted(output.glob("*/CPL_*.xml"))
     assert len(cpls) == 1, cpls
-    return TwoReelPackage(output, cpls[0])
+    package = cpls[0].parent
+    return TwoReelPackage(package, cpls[0], write_project_beside(package))
 
 
 def named(parent, name):
@@ -324,6 +376,38 @@ def reported_duration(session):
     return float(session.attribute("#timeline-duration", "data-raw"))
 
 
+def save_in_dialog_by_chord(window, chord, path):
+    windows_before = visible_windows()
+    window.press(chord)
+    window.answer_save_dialog(path, windows_before)
+
+
+def save_in_dialog(window, button, path):
+    windows_before = visible_windows()
+    window.click(button)
+    window.answer_save_dialog(path, windows_before)
+
+
+def window_title(session):
+    return session.execute("return document.title")
+
+
+def wait_for_status(session, status, timeout_seconds):
+    wait_until(
+        f"the status never read {status!r}",
+        lambda: status_text(session) == status,
+        timeout_seconds,
+    )
+
+
+def saved_project(path):
+    return json.loads(path.read_text())
+
+
+def saved_asset_paths(project):
+    return [asset["path"] for asset in project["form"]["project"]["assets"]]
+
+
 @pytest.fixture
 def window(tmp_path):
     opened = open_window(application_environment(tmp_path), tmp_path / "driver.log")
@@ -338,7 +422,14 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     reels = two_reel_dcp.reels
     assert len(reels) == 2, reels
 
-    choose_in_dialog(window, "#btn-open-project", two_reel_dcp.directory)
+    # opening a project clears the preview selection
+    choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
+    wait_until(
+        "the opened project never reached the Recent list",
+        lambda: session.find(".recent-retitle"),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#btn-open-dcp", two_reel_dcp.directory)
     window.press(REELS_CHORD)
     wait_for_view(session, REELS_VIEW)
 
@@ -516,3 +607,93 @@ def test_a_marker_row_offers_the_ten_labels_and_takes_a_position(window):
 
 def package_version(manifest):
     return tomllib.loads(manifest.read_text())["package"]["version"]
+
+
+def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    picture, sound = write_media(media)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    package = tmp_path / PROJECT_TITLE
+    project_window_title = f"{WINDOW_TITLE}{WINDOW_TITLE_SEPARATOR}{project_path.name}"
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    assert session.property("#prop-title", "value") == PROJECT_TITLE
+    assert session.text("#project-name") == PROJECT_TITLE
+    assert session.property("#prop-output", "value") == str(tmp_path)
+    assert window_title(session) == project_window_title
+    created = saved_project(project_path)
+    assert (created["wizard"], created["version"]) == (PROJECT_WIZARD, PROJECT_FILE_VERSION)
+    assert created["form"]["title"] == PROJECT_TITLE
+    assert created["form"]["outputDir"] == str(tmp_path)
+
+    choose_in_dialog(window, "#import-video", picture)
+    wait_until(
+        "the video's size was never probed",
+        lambda: any(FIXTURE_ASSET_SIZE in meta for meta in session.execute(ASSET_METAS)),
+        OPEN_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-audio", sound)
+    wait_until(
+        "the sound never reached the asset list",
+        lambda: session.execute(ASSET_PATHS) == [str(picture), str(sound)],
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.press(SAVE_PROJECT_CHORD)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    saved = saved_project(project_path)
+    assert saved["form"]["title"] == PROJECT_TITLE
+    assert saved_asset_paths(saved) == [str(picture), str(sound)]
+
+    wait_until(
+        "the Build button stayed disabled",
+        lambda: session.property("#btn-build", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-build")
+    wait_until(
+        "the hints dialog never opened",
+        lambda: session.property("#hints-dialog", "hidden") is False,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    window.click("#hints-build")
+    wait_until(
+        "the build never finished",
+        lambda: session.property("#progress-stage", "textContent") in FINISHED_BUILD_STAGES,
+        CREATE_TIMEOUT_SECONDS,
+    )
+    assert status_text(session) == BUILD_COMPLETE_STATUS
+
+    assert len(list(package.glob("CPL_*.xml"))) == 1, sorted(package.iterdir())
+    assert (tmp_path / f"{PROJECT_TITLE}.log").is_file()
+    built = saved_project(project_path)
+    assert datetime.fromisoformat(built["saved"]) > datetime.fromisoformat(saved["saved"])
+    assert saved_asset_paths(built) == [str(picture), str(sound)]
+    wait_until(
+        "Recent never offered Retitle for the built project",
+        lambda: {"path": str(project_path), "retitle": True} in session.execute(RECENT_ROWS),
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    second_path = tmp_path / f"{SECOND_PROJECT_TITLE}.{PROJECT_WIZARD}"
+    save_in_dialog(window, "#btn-new-project", second_path)
+    wait_for_status(session, f"Saved {second_path}", REACTION_TIMEOUT_SECONDS)
+    assert session.property("#prop-title", "value") == SECOND_PROJECT_TITLE
+    assert session.execute(ASSET_PATHS) == []
+    assert saved_asset_paths(saved_project(second_path)) == []
+
+    choose_in_dialog(window, "#btn-project-open", project_path)
+    wait_for_status(session, f"Opened {project_path.name}", REACTION_TIMEOUT_SECONDS)
+    assert session.property("#prop-title", "value") == PROJECT_TITLE
+    assert session.text("#project-name") == PROJECT_TITLE
+    assert session.property("#prop-output", "value") == str(tmp_path)
+    assert session.execute(ASSET_PATHS) == [str(picture), str(sound)]
+    assert window_title(session) == project_window_title
