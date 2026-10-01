@@ -4,7 +4,6 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { documentDir, homeDir } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
@@ -15,6 +14,7 @@ import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
+import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 
@@ -738,13 +738,7 @@ renderCplTabs();
 
 // === Output directory ===
 async function defaultOutputFolder() {
-  if (getPrefs().outputDir) return getPrefs().outputDir;
-  // a bare account has no documents folder registered
-  try {
-    return await documentDir();
-  } catch {
-    return await homeDir();
-  }
+  return getPrefs().outputDir || await documentsOrHomeDir();
 }
 
 function setOutputFolder(folder) {
