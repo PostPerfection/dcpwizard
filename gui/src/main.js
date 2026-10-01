@@ -1156,7 +1156,11 @@ function isdcfNameRequest() {
     resolution: document.getElementById("prop-resolution")?.value || "auto",
     framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
     contentKind: document.getElementById("prop-content-kind")?.value || "feature",
+    videoPath: reel?.picture?.path || null,
     audioPath: reel?.sound?.path || null,
+    audioChannelDir: document.getElementById("prop-audio-channel-dir")?.value || null,
+    audioMap: audioMapSpec(),
+    upmix: document.getElementById("prop-upmix")?.value || "none",
     subtitle: reel?.subtitle?.path || null,
     subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
     burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
@@ -1165,6 +1169,7 @@ function isdcfNameRequest() {
     rightEye: document.getElementById("prop-right-eye")?.value || null,
     atmos: document.getElementById("prop-atmos")?.value || null,
     facility: getPrefs().facility || null,
+    compositionMetadata: compositionMetadata(),
     naming: namingMetadata(),
     sourceWidth: reel?.picture?.width || null,
     sourceHeight: reel?.picture?.height || null,
@@ -1198,6 +1203,8 @@ const ISDCF_PREVIEW_CONTROLS = [
   "prop-territory-type", "prop-content-versions", "prop-temp-version", "prop-pre-release",
   "prop-red-band", "prop-two-d-version-of-three-d", "prop-version-file",
   "prop-crop-left", "prop-crop-right", "prop-crop-top", "prop-crop-bottom", "prop-rotate",
+  "prop-audio-channel-dir", "prop-audio-map", "prop-upmix",
+  "prop-version-number", "prop-chain", "prop-facility-name", "prop-luminance", "prop-luminance-units",
 ];
 for (const id of ISDCF_PREVIEW_CONTROLS) {
   document.getElementById(id)?.addEventListener("input", refreshIsdcfPreview);
@@ -2157,10 +2164,13 @@ async function restoreBuildPanel(saved) {
 }
 
 async function retitleRecentPackage(packagePath, projectPath) {
+  const isdcfNaming = getPrefs().isdcfNaming || false;
+  const folderName = packagePath.split(/[/\\]/).pop();
+  // retitle_dcp rebuilds the ISDCF name around a new title part
   const title = await askForText({
     title: "Retitle DCP",
     label: "New content title",
-    value: packagePath.split(/[/\\]/).pop(),
+    value: isdcfNaming ? folderName.split("_")[0] : folderName,
   });
   if (!title?.trim()) return;
   const ok = await tauriConfirm(
@@ -2170,7 +2180,7 @@ async function retitleRecentPackage(packagePath, projectPath) {
   if (!ok) return;
   let newPath;
   try {
-    newPath = await invoke("retitle_dcp", { path: packagePath, title });
+    newPath = await invoke("retitle_dcp", { path: packagePath, title, isdcfNaming });
   } catch (e) {
     tauriMessage(String(e), { title: "Retitle failed", kind: "error" });
     return;

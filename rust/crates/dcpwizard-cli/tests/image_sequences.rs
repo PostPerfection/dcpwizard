@@ -158,6 +158,32 @@ fn create_packages_every_image_sequence_format_the_readme_names() {
     }
 }
 
+#[test]
+fn an_isdcf_named_sequence_takes_its_aspect_from_the_images() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let sequence = write_sequence(directory.path(), &STILL_FORMATS[0]);
+    let output = directory.path().join("dcp");
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .args(["create", "--title", "Sequence", "--video"])
+        .arg(&sequence)
+        .arg("-o")
+        .arg(&output)
+        .args(["--twok", "--isdcf-name", "--isdcf-date", "2026-08-16"])
+        .assert()
+        .success();
+
+    // 2048x1080 is the full container, where a name with no raster says flat
+    let package = output.join("Sequence_FTR-1_C_XX-XX_MOS_2K_20260816_SMPTE_OV");
+    assert!(
+        dcpwizard_core::verify::verify_dcp(&package).valid,
+        "{} has to hold the package",
+        package.display()
+    );
+}
+
 const TRANSCODE_FRAME_RATE: u32 = 25;
 const TRANSCODE_FRAMES: u32 = 50;
 const TRANSCODE_SIZE: &str = "64x64";

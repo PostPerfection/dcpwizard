@@ -94,8 +94,8 @@ struct CreateCompositionMetadata {
 #[derive(Args)]
 struct CreateIsdcfNaming {
     /// Name the DCP by the ISDCF convention: --title is the human title the
-    /// content title is built from, and the built name replaces it in the CPL.
-    /// The package folder keeps the --title name.
+    /// content title is built from, and the built name replaces it in the CPL
+    /// and names the package folder.
     #[arg(long)]
     isdcf_name: bool,
     /// RFC 5646 language the main soundtrack is spoken in (e.g. en, fr-CA)
@@ -244,38 +244,6 @@ fn parse_packaged_channels(value: &str) -> Result<u32, String> {
         .map_err(|_| format!("'{value}' is not a channel count"))?;
     dcpwizard_core::mxf_wrap::check_packaged_channel_count(count)?;
     Ok(count)
-}
-
-/// Replace the title with the ISDCF content title, when asked for. The channel
-/// count comes from the packaged WAV, so this runs after the audio is prepared.
-fn apply_isdcf_name(
-    config: &mut dcpwizard_core::dcp::DcpConfig,
-    naming: &CreateNaming,
-    burnt_in_subtitle: bool,
-) {
-    if !naming.replaces_title {
-        return;
-    }
-    let channel_count = match config.audio_path.as_deref() {
-        Some(path) => match dcpwizard_core::mxf_wrap::wav_channels(path) {
-            Ok(count) => count as usize,
-            Err(e) => exit_failed(e),
-        },
-        None => 0,
-    };
-    let sound = dcpwizard_core::isdcf_title::soundtrack_summary(
-        channel_count,
-        config.hi_channel,
-        config.vi_channel,
-    );
-    let name = dcpwizard_core::isdcf_title::isdcf_title(
-        config,
-        &naming.options,
-        &sound,
-        burnt_in_subtitle,
-    );
-    tracing::info!("ISDCF name: {name}");
-    config.title = name;
 }
 
 /// W5 create-time audio + encode QoL options, boxed into the Create variant.
@@ -2574,7 +2542,6 @@ impl Refusals {
 }
 
 struct ParsedCreateFlags {
-    package_dir: PathBuf,
     picture_options: dcpwizard_core::source_picture::SourcePictureOptions,
     naming: CreateNaming,
     tms_target: Option<dcpwizard_core::tms_upload::TmsConfig>,
@@ -2603,6 +2570,114 @@ struct ParsedCreateFlags {
     pad_head_frames: u64,
     pad_tail_frames: u64,
     reel_split_frames: Vec<u64>,
+}
+
+// what create's ISDCF name reads that the plan does not carry
+struct IsdcfPackageRequest<'a> {
+    output: &'a Path,
+    title: &'a str,
+    parsed: &'a ParsedCreateFlags,
+    plan: &'a dcpwizard_core::preflight::CreatePlan,
+    is_video_file: bool,
+    sequence_input: bool,
+    twok: bool,
+    subtitle_language: &'a str,
+    ccap_language: &'a str,
+    release_territory: &'a Option<String>,
+    version_number: Option<u32>,
+    chain: &'a Option<String>,
+    facility: &'a Option<String>,
+    hi_channel: Option<u32>,
+    vi_channel: Option<u32>,
+    burnt_in_subtitle: bool,
+    resume: bool,
+}
+
+// the raster and the resolution are the ones the build settles on from the plan
+fn isdcf_package(
+    request: &IsdcfPackageRequest,
+) -> Result<dcpwizard_core::package_dir::Package, String> {
+    let IsdcfPackageRequest { parsed, plan, .. } = request;
+    let planned_raster = match dcpwizard_core::preflight::plan_picture(plan)? {
+        Some(picture) => Some(picture.raster),
+        // the plan reads no image sequence, which is compressed at its own size
+        None if request.sequence_input => first_image_raster(&plan.picture),
+        None => None,
+    };
+    // the video branch fits the resolution to the encode raster unless a flag fixed it
+    let resolution_fixed = request.twok || parsed.fourk || parsed.container != NO_CONTAINER;
+    let resolution = match planned_raster {
+        Some((width, height)) if request.is_video_file && !resolution_fixed => {
+            dcpwizard_core::Resolution::for_raster(width, height)
+        }
+        _ => parsed.package_resolution,
+    };
+    // with no container the name reads the aspect off the encoded frames
+    let (container_width, container_height) = match planned_raster {
+        Some(raster) if parsed.container == NO_CONTAINER => raster,
+        _ => parsed.container,
+    };
+    let config = dcpwizard_core::dcp::DcpConfig {
+        title: request.title.to_string(),
+        standard: plan.standard,
+        resolution,
+        content_type: parsed.content_type,
+        frame_rate_num: parsed.plan_fps,
+        frame_rate_den: 1,
+        container_width,
+        container_height,
+        stereo_3d: plan.right_eye.is_some(),
+        atmos_path: plan.atmos.clone(),
+        subtitle_path: plan.subtitle.clone(),
+        subtitle_language: request.subtitle_language.to_string(),
+        ccap_path: plan.ccap.clone(),
+        ccap_language: request.ccap_language.to_string(),
+        release_territory: request.release_territory.clone(),
+        version_number: request.version_number,
+        chain: request.chain.clone(),
+        facility: request.facility.clone(),
+        luminance: parsed.luminance.clone(),
+        hdr_dci: plan.hdr_dci,
+        audio_language: parsed.naming.audio_language.clone(),
+        ratings: parsed.naming.ratings.clone(),
+        content_versions: parsed.naming.content_versions.clone(),
+        ..Default::default()
+    };
+    let naming = dcpwizard_core::isdcf_title::IsdcfNaming {
+        config: &config,
+        options: &parsed.naming.options,
+        sound: dcpwizard_core::isdcf_title::SoundtrackSource {
+            audio: plan.audio.as_deref(),
+            // only a video file's own sound is demuxed when --audio names none
+            picture: request.is_video_file.then_some(plan.picture.as_path()),
+            audio_map: plan.audio_map.as_deref(),
+            upmix: plan.upmix,
+            hi_channel: request.hi_channel,
+            vi_channel: request.vi_channel,
+        },
+        burnt_in_subtitle: request.burnt_in_subtitle,
+    };
+    dcpwizard_core::package_dir::new_package(
+        request.output,
+        &dcpwizard_core::package_dir::PackageName::Isdcf(naming),
+        request.resume,
+    )
+}
+
+fn first_image_raster(sequence: &Path) -> Option<(u32, u32)> {
+    let mut images: Vec<PathBuf> = std::fs::read_dir(sequence)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && postkit::encode::detect_input_type(path)
+                    == postkit::encode::InputType::ImageSequence
+        })
+        .collect();
+    images.sort();
+    let info = dcpwizard_core::probe::probe_video(images.first()?)?;
+    Some((info.width, info.height))
 }
 
 fn delivery_profile(name: &str) -> Result<dcpwizard_core::profiles::Profile, String> {
@@ -4310,10 +4385,6 @@ fn run() {
                     .transpose(),
             );
             let video_path = PathBuf::from(&video);
-            let package_dir = refusals.take(dcpwizard_core::package_dir::new_package_dir(
-                Path::new(&output),
-                &title,
-            ));
             let std_val = if standard == "interop" {
                 dcpwizard_core::Standard::Interop
             } else {
@@ -4600,7 +4671,6 @@ fn run() {
             });
             let parsed = (|| {
                 Some(ParsedCreateFlags {
-                    package_dir: package_dir?,
                     picture_options: picture_options?,
                     naming: naming?,
                     tms_target: tms_target?,
@@ -4636,7 +4706,7 @@ fn run() {
                     reel_split_frames: reel_split_frames?,
                 })
             })();
-            let plan = parsed
+            let mut plan = parsed
                 .as_ref()
                 .map(|parsed| dcpwizard_core::preflight::CreatePlan {
                     picture: video_path.clone(),
@@ -4684,9 +4754,43 @@ fn run() {
                     reel_length_minutes: reel_length.unwrap_or(0),
                     reel_split_frames: parsed.reel_split_frames.clone(),
                     library_items: parsed.head_items.len() + parsed.tail_items.len(),
-                    output: parsed.package_dir.clone(),
+                    output: PathBuf::new(),
                     resume,
                 });
+            // named from the plan, since the encode writes into the named folder
+            let package = match (&parsed, &plan) {
+                (Some(parsed), Some(plan)) if parsed.naming.replaces_title => {
+                    refusals.take(isdcf_package(&IsdcfPackageRequest {
+                        output: Path::new(&output),
+                        title: &title,
+                        parsed,
+                        plan,
+                        is_video_file,
+                        sequence_input,
+                        twok,
+                        subtitle_language: &subtitle_language,
+                        ccap_language: &ccap_language,
+                        release_territory: &release_territory,
+                        version_number,
+                        chain: &chain,
+                        facility: &facility,
+                        hi_channel,
+                        vi_channel,
+                        burnt_in_subtitle,
+                        resume,
+                    }))
+                }
+                // a naming flag that did not parse has left its refusal
+                _ if isdcf_naming.isdcf_name => None,
+                _ => refusals.take(dcpwizard_core::package_dir::new_package(
+                    Path::new(&output),
+                    &dcpwizard_core::package_dir::PackageName::Title(&title),
+                    resume,
+                )),
+            };
+            if let (Some(plan), Some(package)) = (plan.as_mut(), package.as_ref()) {
+                plan.output = package.dir.clone();
+            }
             if let Some(plan) = &plan
                 && let Err(plan_refusals) = dcpwizard_core::preflight::check_before_encode(plan)
             {
@@ -4731,7 +4835,6 @@ fn run() {
             }
             let (
                 Some(ParsedCreateFlags {
-                    package_dir: output_dir,
                     picture_options,
                     naming,
                     tms_target,
@@ -4756,10 +4859,17 @@ fn run() {
                 }),
                 Some(plan),
                 Some(start_at),
-            ) = (parsed, plan, start_at)
+                Some(dcpwizard_core::package_dir::Package {
+                    title: package_title,
+                    dir: output_dir,
+                }),
+            ) = (parsed, plan, start_at, package)
             else {
                 unreachable!("a flag that did not parse left a refusal, and a refusal exits above");
             };
+            if naming.replaces_title {
+                tracing::info!("ISDCF name: {package_title}");
+            }
             // scheduled start: block until the wall-clock time before any work.
             if let Some(target) = start_at {
                 tracing::info!("Scheduled start: waiting until {target}");
@@ -5475,8 +5585,8 @@ fn run() {
                     }
                 };
 
-                let mut config = dcpwizard_core::dcp::DcpConfig {
-                    title,
+                let config = dcpwizard_core::dcp::DcpConfig {
+                    title: package_title,
                     standard: std_val,
                     encrypt,
                     key_out: key_out.map(PathBuf::from),
@@ -5528,7 +5638,6 @@ fn run() {
                     encode_threads,
                     detect_picture_findings,
                 };
-                apply_isdcf_name(&mut config, &naming, burnt_in_subtitle);
                 let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
                     None => dcpwizard_core::dcp::create_dcp(&config),
@@ -5700,8 +5809,8 @@ fn run() {
                     (prepared_audio, None)
                 };
 
-                let mut config = dcpwizard_core::dcp::DcpConfig {
-                    title,
+                let config = dcpwizard_core::dcp::DcpConfig {
+                    title: package_title,
                     standard: std_val,
                     encrypt,
                     key_out: key_out.map(PathBuf::from),
@@ -5754,7 +5863,6 @@ fn run() {
                     encode_threads,
                     detect_picture_findings,
                 };
-                apply_isdcf_name(&mut config, &naming, burnt_in_subtitle);
                 let code = match versions_specs.as_ref() {
                     Some(v) => dcpwizard_core::versions::create_versioned_dcp(&config, v),
                     None => dcpwizard_core::dcp::create_dcp(&config),
