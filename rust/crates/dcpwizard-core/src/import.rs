@@ -50,6 +50,7 @@ pub fn import_video(config: &ImportConfig) -> i32 {
         .arg("pcm_s24le")
         .arg("-ar")
         .arg("48000")
+        .args(["-rf64", "auto"])
         .arg(&config.audio_output_file)
         .output();
 

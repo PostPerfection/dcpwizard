@@ -64,13 +64,13 @@ fn check_fade(name: &str, seconds: f64, duration_seconds: f64) -> Result<(), Str
 
 /// Running time of a WAV, read from its header.
 pub fn duration_seconds(path: &Path) -> Result<f64, String> {
-    let reader =
-        hound::WavReader::open(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let rate = reader.spec().sample_rate;
+    let layout = postkit::wav_io::WavLayout::read(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let rate = layout.spec.sample_rate;
     if rate == 0 {
         return Err(format!("{} declares a sample rate of zero", path.display()));
     }
-    Ok(reader.duration() as f64 / rate as f64)
+    Ok(layout.frames() as f64 / rate as f64)
 }
 
 /// Apply `adjust` to `input`, writing `output`. Returns the path actually to
@@ -96,7 +96,7 @@ pub fn apply(
         .arg("-af")
         .arg(&chain)
         // the wrap wants the same PCM it would have had, only quieter
-        .args(["-c:a", "pcm_s24le"])
+        .args(["-c:a", "pcm_s24le", "-rf64", "auto"])
         .arg(output)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

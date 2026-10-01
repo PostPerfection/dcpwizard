@@ -326,7 +326,6 @@ fn encode_item_picture(
             frames,
             width,
             height,
-            &postkit::probe::probe_pixel_format(&item.media),
             &cancel,
             false,
             Some(&filters.join(",")),
@@ -396,7 +395,7 @@ fn build_item_sound(
     command
         .args(["-vn", "-af", &lanes.join("|"), "-ar"])
         .arg(sound.sample_rate.to_string())
-        .args(["-c:a", codec])
+        .args(["-c:a", codec, "-rf64", "auto"])
         .arg(&raw);
     match command.output() {
         Ok(output) if output.status.success() => {}

@@ -8,7 +8,7 @@
 //! a temp WAV per reel, and subtitles are re-split and rebased into a per-reel DCST.
 
 use crate::dcp::DcpConfig;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 /// A half-open frame range `[start, end)` at the picture edit rate.
@@ -170,50 +170,23 @@ pub fn plan_reel_ranges_explicit(
 pub(crate) struct WavInfo {
     pub(crate) sample_rate: u32,
     pub(crate) block_align: u32,
-    /// bytes copied verbatim before the data payload (RIFF + fmt + any pre-data chunks + "data"+size)
-    pub(crate) header: Vec<u8>,
-    /// offset of the 4-byte data chunk size field within `header`
-    pub(crate) data_size_field_pos: usize,
+    // the chunks a slice copies verbatim ahead of its data
+    pub(crate) layout: postkit::wav_io::WavLayout,
     /// byte offset of the data payload in the source file
     pub(crate) data_offset: u64,
     pub(crate) data_size: u64,
 }
 
 pub(crate) fn parse_wav(path: &Path) -> Result<WavInfo, String> {
-    let mut f =
-        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    let mut head = vec![0u8; 4096];
-    let n = f
-        .read(&mut head)
+    let layout = postkit::wav_io::WavLayout::read(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let d = &head[..n];
-    if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
-        return Err(format!("{} is not a RIFF/WAVE file", path.display()));
-    }
-    let mut block_align = 0u32;
-    let mut sample_rate = 0u32;
-    let mut pos = 12usize;
-    while pos + 8 <= d.len() {
-        let id = &d[pos..pos + 4];
-        let size = u32::from_le_bytes([d[pos + 4], d[pos + 5], d[pos + 6], d[pos + 7]]) as usize;
-        let body = pos + 8;
-        if id == b"fmt " && body + 16 <= d.len() {
-            sample_rate = u32::from_le_bytes([d[body + 4], d[body + 5], d[body + 6], d[body + 7]]);
-            block_align = u16::from_le_bytes([d[body + 12], d[body + 13]]) as u32;
-        }
-        if id == b"data" {
-            return Ok(WavInfo {
-                sample_rate,
-                block_align,
-                header: d[..body].to_vec(),
-                data_size_field_pos: pos + 4,
-                data_offset: body as u64,
-                data_size: size as u64,
-            });
-        }
-        pos = body + size + (size & 1);
-    }
-    Err(format!("no data chunk found in {}", path.display()))
+    Ok(WavInfo {
+        sample_rate: layout.spec.sample_rate,
+        block_align: layout.block_align() as u32,
+        data_offset: layout.data.body_offset(),
+        data_size: layout.data.size,
+        layout,
+    })
 }
 
 /// Write a reel's WAV as `[start_sample, start_sample + sample_count)` sliced from
@@ -245,20 +218,14 @@ pub(crate) fn write_shifted_wav(
     let start_byte = start_sample * ba;
     let head_bytes = (head_silence * ba).min(want_bytes);
 
-    let mut header = info.header.clone();
-    let riff_size = (info.header.len() as u64 - 8) + want_bytes;
-    header[4..8].copy_from_slice(&(riff_size as u32).to_le_bytes());
-    let p = info.data_size_field_pos;
-    header[p..p + 4].copy_from_slice(&(want_bytes as u32).to_le_bytes());
-
-    let mut w = std::fs::File::create(out).map_err(|e| format!("cannot create {out:?}: {e}"))?;
-    w.write_all(&header).map_err(|e| e.to_string())?;
+    let mut w = postkit::wav_io::WavWriter::create_like(out, src, &info.layout, sample_count)
+        .map_err(|e| format!("cannot create {out:?}: {e}"))?;
 
     let zeros = vec![0u8; 1 << 16];
     let mut lead = head_bytes;
     while lead > 0 {
         let take = lead.min(zeros.len() as u64) as usize;
-        w.write_all(&zeros[..take]).map_err(|e| e.to_string())?;
+        w.write_bytes(&zeros[..take]).map_err(|e| e.to_string())?;
         lead -= take as u64;
     }
 
@@ -275,7 +242,7 @@ pub(crate) fn write_shifted_wav(
         while remaining > 0 {
             let take = remaining.min(buf.len() as u64) as usize;
             r.read_exact(&mut buf[..take]).map_err(|e| e.to_string())?;
-            w.write_all(&buf[..take]).map_err(|e| e.to_string())?;
+            w.write_bytes(&buf[..take]).map_err(|e| e.to_string())?;
             remaining -= take as u64;
         }
     }
@@ -283,10 +250,11 @@ pub(crate) fn write_shifted_wav(
     let mut pad = want_bytes - head_bytes - avail;
     while pad > 0 {
         let take = pad.min(zeros.len() as u64) as usize;
-        w.write_all(&zeros[..take]).map_err(|e| e.to_string())?;
+        w.write_bytes(&zeros[..take]).map_err(|e| e.to_string())?;
         pad -= take as u64;
     }
-    Ok(())
+    w.finalize()
+        .map_err(|e| format!("cannot write {out:?}: {e}"))
 }
 
 /// Sorted J2K codestreams in `dir` (same order postkit's dir wrap would use).
@@ -502,8 +470,8 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
                 Err(()) => return -1,
             };
             sound_key_id = key.as_ref().map(|k| k.info.key_id.clone());
-            let channels = match hound::WavReader::open(&wav_tmp) {
-                Ok(reader) => reader.spec().channels as u32,
+            let channels = match postkit::wav_io::WavLayout::read(&wav_tmp) {
+                Ok(layout) => layout.spec.channels as u32,
                 Err(e) => {
                     tracing::error!("cannot read {}: {e}", wav_tmp.display());
                     return -1;

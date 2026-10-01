@@ -7,7 +7,7 @@
 //! regardless of length. Audio is padded sample-accurately at frame edges,
 //! reusing the WAV arithmetic in [`crate::reel`].
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Parse a duration into a whole number of frames at `fps`. Shared by the pad,
@@ -209,20 +209,14 @@ pub fn pad_wav_with_silence(
     let tail_bytes = tail_samples * ba;
     let want_bytes = head_bytes + info.data_size + tail_bytes;
 
-    let mut header = info.header.clone();
-    let riff_size = (info.header.len() as u64 - 8) + want_bytes;
-    header[4..8].copy_from_slice(&(riff_size as u32).to_le_bytes());
-    let p = info.data_size_field_pos;
-    header[p..p + 4].copy_from_slice(&(want_bytes as u32).to_le_bytes());
-
-    let mut w = std::fs::File::create(out).map_err(|e| format!("cannot create {out:?}: {e}"))?;
-    w.write_all(&header).map_err(|e| e.to_string())?;
+    let mut w = postkit::wav_io::WavWriter::create_like(out, src, &info.layout, want_bytes / ba)
+        .map_err(|e| format!("cannot create {out:?}: {e}"))?;
 
     let zeros = vec![0u8; 1 << 16];
-    let write_zeros = |mut n: u64, w: &mut std::fs::File| -> Result<(), String> {
+    let write_zeros = |mut n: u64, w: &mut postkit::wav_io::WavWriter| -> Result<(), String> {
         while n > 0 {
             let take = n.min(zeros.len() as u64) as usize;
-            w.write_all(&zeros[..take]).map_err(|e| e.to_string())?;
+            w.write_bytes(&zeros[..take]).map_err(|e| e.to_string())?;
             n -= take as u64;
         }
         Ok(())
@@ -238,12 +232,13 @@ pub fn pad_wav_with_silence(
     while remaining > 0 {
         let take = remaining.min(buf.len() as u64) as usize;
         r.read_exact(&mut buf[..take]).map_err(|e| e.to_string())?;
-        w.write_all(&buf[..take]).map_err(|e| e.to_string())?;
+        w.write_bytes(&buf[..take]).map_err(|e| e.to_string())?;
         remaining -= take as u64;
     }
 
     write_zeros(tail_bytes, &mut w)?;
-    Ok(())
+    w.finalize()
+        .map_err(|e| format!("cannot write {out:?}: {e}"))
 }
 
 #[cfg(test)]

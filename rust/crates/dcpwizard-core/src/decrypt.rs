@@ -756,7 +756,7 @@ fn ship(path: &Path, id: String, filename: String) -> Result<ShippedAsset, Strin
     })
 }
 
-/// Write a canonical 44-byte-header PCM WAV from raw interleaved sample bytes.
+/// Write a PCM WAV from raw interleaved sample bytes.
 fn write_wav(
     path: &Path,
     channels: u16,
@@ -764,24 +764,18 @@ fn write_wav(
     sample_rate: u32,
     data: &[u8],
 ) -> Result<(), String> {
-    let block_align = (bits / 8) * channels;
-    let byte_rate = sample_rate * block_align as u32;
-    let mut w = Vec::with_capacity(44 + data.len());
-    w.extend_from_slice(b"RIFF");
-    w.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
-    w.extend_from_slice(b"WAVE");
-    w.extend_from_slice(b"fmt ");
-    w.extend_from_slice(&16u32.to_le_bytes());
-    w.extend_from_slice(&1u16.to_le_bytes()); // PCM
-    w.extend_from_slice(&channels.to_le_bytes());
-    w.extend_from_slice(&sample_rate.to_le_bytes());
-    w.extend_from_slice(&byte_rate.to_le_bytes());
-    w.extend_from_slice(&block_align.to_le_bytes());
-    w.extend_from_slice(&bits.to_le_bytes());
-    w.extend_from_slice(b"data");
-    w.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    w.extend_from_slice(data);
-    std::fs::write(path, &w).map_err(|e| format!("cannot write WAV {}: {e}", path.display()))
+    let spec = postkit::wav_io::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: bits,
+        sample_format: postkit::wav_io::SampleFormat::Int,
+    };
+    let frames = (data.len() / ((bits / 8) as usize * channels as usize)) as u64;
+    let cannot_write = |e: std::io::Error| format!("cannot write WAV {}: {e}", path.display());
+    let mut writer =
+        postkit::wav_io::WavWriter::create_plain_pcm(path, spec, frames).map_err(cannot_write)?;
+    writer.write_bytes(data).map_err(cannot_write)?;
+    writer.finalize().map_err(cannot_write)
 }
 
 fn sorted_files(dir: &Path) -> Vec<PathBuf> {

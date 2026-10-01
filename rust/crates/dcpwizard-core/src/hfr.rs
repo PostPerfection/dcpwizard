@@ -92,7 +92,7 @@ pub fn audio_pull_up(input: &std::path::Path, output: &std::path::Path) -> Resul
         .arg("-af")
         .arg("asetrate=48048,aresample=48000")
         // the wrap wants the same PCM it would have had, only faster
-        .args(["-c:a", "pcm_s24le"])
+        .args(["-c:a", "pcm_s24le", "-rf64", "auto"])
         .arg(output)
         .output()
         .map_err(|error| format!("failed to run ffmpeg for audio pull-up: {error}"))?;

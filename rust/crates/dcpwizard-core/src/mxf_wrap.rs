@@ -83,33 +83,10 @@ pub(crate) fn collect_inputs(path: &std::path::Path) -> Result<Vec<PathBuf>, Str
 /// non-DCP rates here instead of shipping a mislabeled MXF.
 pub const DCP_SAMPLE_RATES: [u32; 2] = [48_000, 96_000];
 
-/// Read the `fmt ` chunk body (channels at +2, sample rate at +4) from a WAV.
-/// Reads a bounded prefix since the fmt chunk sits near the file start.
 fn wav_fmt(path: &std::path::Path) -> Result<(u16, u32), String> {
-    use std::io::Read;
-    let mut f =
-        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    let mut buf = vec![0u8; 65536];
-    let n = f
-        .read(&mut buf)
+    let layout = postkit::wav_io::WavLayout::read(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let d = &buf[..n];
-    if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
-        return Err(format!("{} is not a RIFF/WAVE file", path.display()));
-    }
-    let mut pos = 12usize;
-    while pos + 8 <= d.len() {
-        let size = u32::from_le_bytes([d[pos + 4], d[pos + 5], d[pos + 6], d[pos + 7]]) as usize;
-        let body = pos + 8;
-        if &d[pos..pos + 4] == b"fmt " && body + 8 <= d.len() {
-            let channels = u16::from_le_bytes([d[body + 2], d[body + 3]]);
-            let sample_rate =
-                u32::from_le_bytes([d[body + 4], d[body + 5], d[body + 6], d[body + 7]]);
-            return Ok((channels, sample_rate));
-        }
-        pos = body + size + (size & 1);
-    }
-    Err(format!("no fmt chunk found in {}", path.display()))
+    Ok((layout.spec.channels, layout.spec.sample_rate))
 }
 
 /// Probe a WAV's channel count for MCA labelling.
@@ -161,7 +138,6 @@ pub fn check_source_fits_packaged_channels(
     ))
 }
 
-const WAV_HEADER_BYTES: usize = 44;
 const WAV_IO_BUFFER_BYTES: usize = 1 << 20;
 
 /// What the packaged sound essence carries, SMPTE ST 429-2.
@@ -193,65 +169,18 @@ pub fn prepare_packaged_channels(
     input_order: AudioInputOrder,
     packaged_channels: Option<u32>,
 ) -> Result<bool, String> {
-    use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+    use std::io::{BufReader, Read, Seek, SeekFrom};
 
     let cannot_read = |e: std::io::Error| format!("cannot read {}: {e}", input.display());
-    let mut source = BufReader::with_capacity(
-        WAV_IO_BUFFER_BYTES,
-        std::fs::File::open(input).map_err(cannot_read)?,
-    );
-    let source_len = source.get_ref().metadata().map_err(cannot_read)?.len();
-    let mut riff = [0u8; 12];
-    if source_len < riff.len() as u64 {
-        return Err(format!("{} is not a RIFF/WAVE file", input.display()));
-    }
-    source.read_exact(&mut riff).map_err(cannot_read)?;
-    if &riff[0..4] != b"RIFF" || &riff[8..12] != b"WAVE" {
-        return Err(format!("{} is not a RIFF/WAVE file", input.display()));
-    }
-
-    let mut pos = riff.len() as u64;
-    let mut fmt: Option<Vec<u8>> = None;
-    let mut payload: Option<(u64, u64)> = None;
-    while pos + 8 <= source_len {
-        source.seek(SeekFrom::Start(pos)).map_err(cannot_read)?;
-        let mut chunk = [0u8; 8];
-        source.read_exact(&mut chunk).map_err(cannot_read)?;
-        let size = u64::from(u32::from_le_bytes(chunk[4..8].try_into().unwrap()));
-        let body = pos + 8;
-        if body + size > source_len {
-            return Err(format!("{} has a truncated WAV chunk", input.display()));
-        }
-        match &chunk[0..4] {
-            b"fmt " if size >= 16 => {
-                let mut bytes = vec![0u8; size as usize];
-                source.read_exact(&mut bytes).map_err(cannot_read)?;
-                fmt = Some(bytes);
-            }
-            b"data" => payload = Some((body, size)),
-            _ => {}
-        }
-        pos = body + size + (size & 1);
-    }
-    let Some(fmt) = fmt else {
-        return Err(format!("no fmt chunk found in {}", input.display()));
-    };
-    let Some((payload_offset, payload_len)) = payload else {
-        return Err(format!("no data chunk found in {}", input.display()));
-    };
-    let format = u16::from_le_bytes(fmt[0..2].try_into().unwrap());
-    let channels = u32::from(u16::from_le_bytes(fmt[2..4].try_into().unwrap()));
-    // ffmpeg writes >2ch pcm as WAVE_FORMAT_EXTENSIBLE (0xFFFE); the real
-    // format code is the first two bytes of the SubFormat guid
-    let is_pcm = format == 1
-        || (format == 0xFFFE
-            && fmt.len() >= 26
-            && u16::from_le_bytes(fmt[24..26].try_into().unwrap()) == 1);
-    if !is_pcm {
+    let layout = postkit::wav_io::WavLayout::read(input).map_err(cannot_read)?;
+    if layout.spec.sample_format != postkit::wav_io::SampleFormat::Int {
         return Err(format!("{} must use PCM WAV samples", input.display()));
     }
-    let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
-    let bits = u16::from_le_bytes(fmt[14..16].try_into().unwrap());
+    let (payload_offset, payload_len) = (layout.data.body_offset(), layout.data.size);
+    let channels = u32::from(layout.spec.channels);
+    let sample_rate = layout.spec.sample_rate;
+    // the container width, so a 24-bit sample in 32-bit slots counts as 32
+    let bits = layout.bytes_per_sample * 8;
     let promoting = PROMOTABLE_BITS_PER_SAMPLE.contains(&bits);
     if bits != PACKAGED_BITS_PER_SAMPLE && !promoting {
         return Err(format!(
@@ -289,35 +218,20 @@ pub fn prepare_packaged_channels(
     };
     let packaged_sample_bytes = (PACKAGED_BITS_PER_SAMPLE / 8) as usize;
     let output_frame_bytes = packaged_sample_bytes * target_channels as usize;
-    let data_size = frame_count * output_frame_bytes as u64;
-    let riff_size = WAV_HEADER_BYTES as u64 - 8 + data_size;
-    if riff_size > u64::from(u32::MAX) {
-        return Err(format!(
-            "{} widened to {target_channels} channels exceeds the 4 GiB a RIFF/WAVE file can hold",
-            input.display()
-        ));
-    }
-
     let cannot_write = |e: std::io::Error| format!("cannot write {}: {e}", output.display());
-    let mut sink = BufWriter::with_capacity(
-        WAV_IO_BUFFER_BYTES,
-        std::fs::File::create(output).map_err(cannot_write)?,
-    );
-    let mut header = Vec::with_capacity(WAV_HEADER_BYTES);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&(riff_size as u32).to_le_bytes());
-    header.extend_from_slice(b"WAVEfmt ");
-    header.extend_from_slice(&16u32.to_le_bytes());
-    header.extend_from_slice(&1u16.to_le_bytes());
-    header.extend_from_slice(&(target_channels as u16).to_le_bytes());
-    header.extend_from_slice(&sample_rate.to_le_bytes());
-    header.extend_from_slice(&(sample_rate * output_frame_bytes as u32).to_le_bytes());
-    header.extend_from_slice(&(output_frame_bytes as u16).to_le_bytes());
-    header.extend_from_slice(&PACKAGED_BITS_PER_SAMPLE.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&(data_size as u32).to_le_bytes());
-    sink.write_all(&header).map_err(cannot_write)?;
+    let packaged_spec = postkit::wav_io::WavSpec {
+        channels: target_channels as u16,
+        sample_rate,
+        bits_per_sample: PACKAGED_BITS_PER_SAMPLE,
+        sample_format: postkit::wav_io::SampleFormat::Int,
+    };
+    let mut sink = postkit::wav_io::WavWriter::create_plain_pcm(output, packaged_spec, frame_count)
+        .map_err(cannot_write)?;
 
+    let mut source = BufReader::with_capacity(
+        WAV_IO_BUFFER_BYTES,
+        std::fs::File::open(input).map_err(cannot_read)?,
+    );
     source
         .seek(SeekFrom::Start(payload_offset))
         .map_err(cannot_read)?;
@@ -334,9 +248,9 @@ pub fn prepare_packaged_channels(
                 &source_frame[from..from + sample_bytes],
             );
         }
-        sink.write_all(&output_frame).map_err(cannot_write)?;
+        sink.write_bytes(&output_frame).map_err(cannot_write)?;
     }
-    sink.flush().map_err(cannot_write)?;
+    sink.finalize().map_err(cannot_write)?;
     Ok(true)
 }
 
@@ -671,6 +585,8 @@ pub fn wrap_stereoscopic_files(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    const WAV_HEADER_BYTES: usize = 44;
 
     // minimal RIFF/WAVE header with the given sample rate and no audio payload
     fn write_wav(path: &std::path::Path, sample_rate: u32) {

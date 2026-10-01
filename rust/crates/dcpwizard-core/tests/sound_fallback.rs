@@ -202,3 +202,68 @@ fn an_interop_build_with_no_audio_stays_picture_only() {
     assert!(!cpl.contains("CompositionMetadataAsset"), "{cpl}");
     assert!(!cpl.contains("<MainSound>"), "{cpl}");
 }
+
+#[test]
+fn an_rf64_wav_packages_sample_for_sample() {
+    use std::io::{Read, Seek, SeekFrom};
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("rf64.wav");
+    let seconds = FRAMES as f64 / FPS as f64;
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg(format!(
+            "sine=frequency=997:sample_rate={SAMPLE_RATE}:duration={seconds}"
+        ))
+        .args(["-ac", "6", "-c:a", "pcm_s24le", "-rf64", "always"])
+        .arg(&wav)
+        .status()
+        .expect("run ffmpeg");
+    assert!(made.success(), "ffmpeg wrote no RF64 WAV");
+
+    let out = dir.path().join("dcp");
+    let config = DcpConfig {
+        audio_path: Some(wav.clone()),
+        ..silent_config(dir.path(), &out, dcpwizard_core::Standard::Smpte)
+    };
+    assert_eq!(create_dcp(&config), 0, "an RF64 sound source must package");
+
+    let sound = sound_mxfs(&out);
+    assert_eq!(sound.len(), 1, "one sound MXF in {out:?}");
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader.open_read(&sound[0].to_string_lossy()).unwrap();
+    let descriptor = reader.audio_descriptor().unwrap();
+    assert_eq!(descriptor.channel_count, 16, "5.1 widens to 16 channels");
+    assert_eq!(descriptor.container_duration, FRAMES as u32);
+
+    let samples_per_frame = (SAMPLE_RATE / FPS) as usize;
+    const SOURCE_FRAME_BYTES: usize = 6 * 3;
+    const PACKAGED_FRAME_BYTES: usize = 16 * 3;
+    let mut source = vec![0u8; samples_per_frame * SOURCE_FRAME_BYTES];
+    let layout = postkit::wav_io::WavLayout::read(&wav).unwrap();
+    let last = FRAMES as u64 - 1;
+    let mut file = std::fs::File::open(&wav).unwrap();
+    file.seek(SeekFrom::Start(
+        layout.data.body_offset() + last * source.len() as u64,
+    ))
+    .unwrap();
+    file.read_exact(&mut source).unwrap();
+    assert!(source.iter().any(|&b| b != 0), "the tone is silent");
+
+    let mut essence = vec![0u8; samples_per_frame * PACKAGED_FRAME_BYTES];
+    let read = reader
+        .read_frame(last as u32, &mut essence, None, None)
+        .unwrap();
+    assert_eq!(read, essence.len());
+    for (packaged, original) in essence
+        .as_chunks::<PACKAGED_FRAME_BYTES>()
+        .0
+        .iter()
+        .zip(source.as_chunks::<SOURCE_FRAME_BYTES>().0)
+    {
+        assert_eq!(&packaged[..SOURCE_FRAME_BYTES], original);
+        assert!(packaged[SOURCE_FRAME_BYTES..].iter().all(|&b| b == 0));
+    }
+
+    let report = dcpdoctor_core::verify(&out, &dcpdoctor_core::VerifyOptions::strict());
+    assert!(report.ok(), "{:?}", report.notes);
+}
