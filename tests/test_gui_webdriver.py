@@ -626,7 +626,7 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
     wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
     assert session.property("#prop-title", "value") == PROJECT_TITLE
-    assert session.text("#project-name") == project_path.name
+    assert session.text("#project-name") == project_path.stem
     assert session.property("#prop-output", "value") == str(tmp_path)
     assert window_title(session) == project_window_title
     created = saved_project(project_path)
@@ -693,7 +693,7 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     choose_in_dialog(window, "#btn-project-open", project_path)
     wait_for_status(session, f"Opened {project_path.name}", REACTION_TIMEOUT_SECONDS)
     assert session.property("#prop-title", "value") == PROJECT_TITLE
-    assert session.text("#project-name") == project_path.name
+    assert session.text("#project-name") == project_path.stem
     assert session.property("#prop-output", "value") == str(tmp_path)
     assert session.execute(ASSET_PATHS) == [str(picture), str(sound)]
     assert window_title(session) == project_window_title
