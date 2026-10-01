@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { documentDir, join } from "@tauri-apps/api/path";
+import { documentDir } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
@@ -15,6 +15,8 @@ import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
+import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
+import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS } from "./project-form.js";
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
@@ -75,8 +77,8 @@ function switchView(viewName) {
 const SHORTCUTS_KEY = "dcpwizard-shortcuts";
 
 const PROJECT_BUTTON_SHORTCUTS = [
-  { id: "new-project", label: "New project", binding: "Ctrl+N", buttonId: "btn-new-project" },
-  { id: "open-project", label: "Open DCP", binding: "Ctrl+O", buttonId: "btn-open-project" },
+  ...PROJECT_FILE_SHORTCUTS,
+  { id: "open-dcp", label: "Open DCP", binding: "Ctrl+Shift+O", buttonId: "btn-open-dcp" },
   { id: "build", label: "Build DCP", binding: "Ctrl+B", buttonId: "btn-build" },
   { id: "preview", label: "Preview", binding: "Ctrl+P", buttonId: "btn-preview" },
   { id: "import-video", label: "Import video", binding: "Ctrl+I", buttonId: "import-video" },
@@ -568,7 +570,7 @@ function renderReels() {
     });
   });
 
-  refreshAudioMapMatrix();
+  audioMapDrawn = refreshAudioMapMatrix();
   refreshIsdcfPreview();
 }
 
@@ -604,6 +606,7 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
 // the path the drawn matrix belongs to, so re-rendering the reels does not throw
 // away gains the user has typed
 let audioMapPath = null;
+let audioMapDrawn = Promise.resolve();
 
 async function refreshAudioMapMatrix() {
   const grid = document.getElementById("prop-audio-map");
@@ -734,18 +737,18 @@ document.getElementById("prop-content-kind")?.addEventListener("change", (e) => 
 renderCplTabs();
 
 // === Output directory ===
+async function defaultOutputFolder() {
+  return getPrefs().outputDir || documentDir();
+}
+
+function setOutputFolder(folder) {
+  document.getElementById("prop-output").value = folder;
+  refreshDiskSpace();
+}
+
 document.getElementById("browse-output")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
-  if (dir) {
-    const outputEl = document.getElementById("prop-output");
-    outputEl.value = dir;
-    delete outputEl.dataset.autoFilled;
-    refreshDiskSpace();
-  }
-});
-
-document.getElementById("prop-output")?.addEventListener("input", (event) => {
-  delete event.target.dataset.autoFilled;
+  if (dir) setOutputFolder(dir);
 });
 
 // === Open existing DCP ===
@@ -754,16 +757,7 @@ async function openDcp(dir) {
   try {
     cpls = await invoke('list_cpls', { dcpDir: dir });
   } catch (error) {
-    const remove = await tauriConfirm(
-      `${dir} does not exist. Remove it from recent projects?`,
-      { title: "DCP not found", kind: "warning" },
-    );
-    if (remove) {
-      removeRecentProject(dir);
-      setStatus(`Removed missing DCP: ${dir}`);
-    } else {
-      setStatus(`Open failed: ${error}`);
-    }
+    setStatus(`Open failed: ${error}`);
     return;
   }
 
@@ -771,7 +765,6 @@ async function openDcp(dir) {
   document.getElementById("project-name").textContent = name;
   project.title = name;
   document.getElementById("prop-title").value = name;
-  addRecentProject(dir, name);
   setStatus(`Opened: ${dir}`);
   openedPackage = dir;
   selectPreview("package", dir);
@@ -783,7 +776,7 @@ async function openDcp(dir) {
   }
 }
 
-document.getElementById("btn-open-project")?.addEventListener("click", async () => {
+document.getElementById("btn-open-dcp")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
   if (dir) openDcp(dir);
 });
@@ -983,6 +976,7 @@ function markerRowElement(markerRow, labels) {
     select.appendChild(option);
   }
   select.value = markerRow.label;
+  element.querySelector(".marker-position").value = markerRow.position;
   return element;
 }
 
@@ -1153,17 +1147,9 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
 
   const video = reel.picture.path;
   const audio = reel.sound?.path || null;
-  // re-derive an auto-filled output folder so it follows the current title
   const outputEl = document.getElementById("prop-output");
-  let output = outputEl?.value;
-  if (!output || outputEl?.dataset.autoFilled) {
-    const docs = await documentDir();
-    output = await join(docs, title);
-    if (outputEl) {
-      outputEl.value = output;
-      outputEl.dataset.autoFilled = "1";
-    }
-  }
+  let output = outputEl?.value || await defaultOutputFolder();
+  if (outputEl) outputEl.value = output;
 
   // Show progress
   const progressSection = document.getElementById("progress-section");
@@ -1176,6 +1162,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   statsEl.textContent = "";
   paused = false;
   resetStatusBar();
+  let projectRecordPath = null;
 
   const unlisten = await listen("pipeline-progress", (event) => {
     const p = event.payload;
@@ -1192,7 +1179,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       setStatus("Build complete");
       setTitleProgress(-1);
       notifyBuildComplete(true, title);
-      addRecentProject(output, title);
+      if (projectRecordPath) addRecentProject(projectRecordPath, title);
       showPostBuildActions(output);
       endBuild();
       unlisten();
@@ -1329,8 +1316,10 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
     }
     title = result.title;
     output = result.outputDir;
+    submittedPackage = output;
     currentJobId = result.jobId;
     setStatus("Building DCP...");
+    projectRecordPath = await saveProjectBesidePackage(output);
   } catch (e) {
     stageEl.textContent = "Failed";
     setStatus("Error: " + e);
@@ -1363,6 +1352,8 @@ let previewGeneration = 0;
 let previewShowsJobPicture = false;
 // the package last opened, which the Preview button plays when no picture is imported
 let openedPackage = null;
+// the package folder of the last build submitted
+let submittedPackage = null;
 
 // the row picked in the asset list or the recent list
 let selectedPreview = null;
@@ -1391,7 +1382,7 @@ function applyPreviewSelection() {
     el.classList.toggle("selected", parseInt(el.dataset.assetId) === selectedAssetId);
   });
   document.querySelectorAll("#recent-list .recent-item").forEach(el => {
-    const isSelected = selectedPreview?.kind === "package" && el.dataset.path === selectedPreview.path;
+    const isSelected = selectedPreview?.kind === "package" && el.dataset.packagePath === selectedPreview.path;
     el.classList.toggle("selected", isSelected);
   });
 }
@@ -1401,7 +1392,7 @@ function previewTargetInput() {
     selectedPreview,
     firstPicturePath: project.reels[0]?.picture?.path,
     openedPackage,
-    outputPath: document.getElementById("prop-output")?.value,
+    outputPath: submittedPackage,
   };
 }
 
@@ -1489,8 +1480,9 @@ function finishedOutputDir() {
   return document.getElementById("post-build-actions")?.dataset.output;
 }
 
-function recentTitleFor(path) {
-  return getRecentProjects().find((r) => r.path === path)?.title;
+function recentTitleFor(packagePath) {
+  const projectPath = projectPathBeside(packagePath);
+  return getRecentProjects().find((r) => r.path === projectPath)?.title;
 }
 
 function showPostBuildActions(outputDir) {
@@ -1769,10 +1761,9 @@ document.getElementById("vf-create")?.addEventListener("click", async () => {
   box.textContent = "Creating Version File DCP…";
   setStatus("Creating Version File…");
   try {
-    const msg = await invoke("create_vf", { ovDir: ov, outputDir: output, title: title || null, replacements });
-    box.textContent = "✓ " + msg;
+    const packageDir = await invoke("create_vf", { ovDir: ov, outputDir: output, title: title || null, replacements });
+    box.textContent = `✓ Created Version File DCP at ${packageDir}`;
     setStatus("Version File created");
-    addRecentProject(output, title || "VF");
   } catch (e) {
     box.textContent = "✗ " + e;
     setStatus("Version File failed: " + e);
@@ -1879,7 +1870,7 @@ function formatBytes(bytes) {
 async function refreshDiskSpace() {
   const el = document.getElementById("status-disk");
   if (!el) return;
-  const path = document.getElementById("prop-output")?.value || await documentDir();
+  const path = document.getElementById("prop-output")?.value || await defaultOutputFolder();
   let space;
   try {
     space = await invoke("disk_space", { path });
@@ -1898,6 +1889,12 @@ refreshDiskSpace();
 setInterval(refreshDiskSpace, DISK_REFRESH_MS);
 
 // === Title sync ===
+function setProjectTitle(title) {
+  const titleElement = document.getElementById("prop-title");
+  titleElement.value = title;
+  titleElement.dispatchEvent(new Event("input"));
+}
+
 document.getElementById("prop-title")?.addEventListener("input", (e) => {
   const title = e.target.value.trim();
   document.getElementById("project-name").textContent = title || "Untitled Project";
@@ -2034,145 +2031,96 @@ document.getElementById("report-start")?.addEventListener("click", async () => {
     : "✗ Failed\n\n" + (result.stderr || result.stdout);
 });
 
-// === Recent Projects ===
-const RECENT_KEY = "dcpwizard-recent-projects";
-const RECENT_COLLAPSED_KEY = "dcpwizard-recent-projects-collapsed";
-const MAX_RECENT = 20;
-
-function recentProjectsCollapsed() {
-  return localStorage.getItem(RECENT_COLLAPSED_KEY) !== "false";
+// === Projects ===
+function buildPanel() {
+  return { elementById: (id) => document.getElementById(id), project, markerRows, ratings, joinedItems };
 }
 
-function applyRecentProjectsCollapsed() {
-  const section = document.getElementById("recent-projects");
-  const toggle = document.getElementById("recent-toggle");
-  if (!section) return;
-  const collapsed = recentProjectsCollapsed();
-  section.classList.toggle("collapsed", collapsed);
-  if (toggle) {
-    toggle.textContent = collapsed ? "▶" : "▼";
-    toggle.setAttribute("aria-expanded", String(!collapsed));
+function serializeBuildPanel() {
+  return serializeForm({ ...buildPanel(), audioMap: audioMapSpec() });
+}
+
+async function restoreBuildPanel(saved) {
+  const { form, notRestored } = restoreFormState(saved, buildPanelDefaults, buildPanel());
+  nextAssetId = Math.max(0, ...project.assets.map((asset) => asset.id)) + 1;
+  nextCplId = Math.max(0, ...project.compositions.map((composition) => composition.id)) + 1;
+  markerNextId = markerRows.length + 1;
+  ratingNextId = ratings.length + 1;
+  document.getElementById("project-name").textContent = project.title || "Untitled Project";
+  document.getElementById("prop-profile").value = "";
+  applyProfile("");
+
+  const labels = await markerLabelsRequest;
+  document.getElementById("prop-markers").replaceChildren(...markerRows.map((row) => markerRowElement(row, labels)));
+  renderRatings();
+  renderCplTabs();
+  // undefined matches no sound path, not even none, so the matrix is drawn again
+  audioMapPath = undefined;
+  renderReels();
+  renderAssets();
+  updateStatusStats();
+  submittedPackage = null;
+  clearPreviewSelection();
+  refreshPreviewCrop();
+  refreshDiskSpace();
+
+  await audioMapDrawn;
+  let unroutedCells = 0;
+  for (const { input, lane, gain } of audioMapCells(form.audioMap)) {
+    const cell = document.querySelector(`#prop-audio-map input[data-input="${input}"][data-lane="${lane}"]`);
+    if (cell) cell.value = gain;
+    else unroutedCells += 1;
   }
+  if (unroutedCells) notRestored.push(`${unroutedCells} audio map routes`);
+
+  const joined = [...joinedItems.head, ...joinedItems.tail];
+  await refreshLibrary();
+  const inLibrary = new Set(libraryItems.map((item) => item.name));
+  notRestored.push(...joined.filter((name) => !inLibrary.has(name)).map((name) => `library item ${name}`));
+  return notRestored;
 }
 
-document.getElementById("recent-header")?.addEventListener("click", () => {
-  localStorage.setItem(RECENT_COLLAPSED_KEY, String(!recentProjectsCollapsed()));
-  applyRecentProjectsCollapsed();
-});
-
-function getRecentProjects() {
-  try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; }
-  catch { return []; }
+async function retitleRecentPackage(packagePath, projectPath) {
+  const title = await askForText({
+    title: "Retitle DCP",
+    label: "New content title",
+    value: packagePath.split(/[/\\]/).pop(),
+  });
+  if (!title?.trim()) return;
+  const ok = await tauriConfirm(
+    `Retitle to ${title}? The CPL gets a new composition id, so any KDM or delivery made from the old one no longer matches. A signed package loses its signature.`,
+    { title: "Retitle DCP", kind: "warning" },
+  );
+  if (!ok) return;
+  let newPath;
+  try {
+    newPath = await invoke("retitle_dcp", { path: packagePath, title });
+  } catch (e) {
+    tauriMessage(String(e), { title: "Retitle failed", kind: "error" });
+    return;
+  }
+  setStatus(`Retitled to ${title.trim()}`);
+  // keeps the project file beside a renamed package folder
+  if (newPath === packagePath) addRecentProject(projectPath, title.trim());
+  else await moveProjectFile(projectPath, projectPathBeside(newPath), title.trim());
 }
 
-function addRecentProject(path, title) {
-  let recent = getRecentProjects().filter(r => r.path !== path);
-  recent.unshift({ path, title, time: Date.now() });
-  if (recent.length > MAX_RECENT) recent = recent.slice(0, MAX_RECENT);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+async function deleteRecentPackage(packagePath) {
+  const ok = await tauriConfirm(`Delete ${packagePath} and everything in it?`, {
+    title: "Delete DCP",
+    kind: "warning",
+  });
+  if (!ok) return;
+  try {
+    await invoke("delete_dcp", { path: packagePath });
+  } catch (e) {
+    tauriMessage(String(e), { title: "Delete failed", kind: "error" });
+    renderRecentProjects();
+    return;
+  }
+  setStatus(`Deleted ${packagePath}`);
   renderRecentProjects();
-}
-
-function removeRecentProject(path) {
-  const recent = getRecentProjects().filter(r => r.path !== path);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
-  renderRecentProjects();
-}
-
-// rows keep the order they were first shown in, only the stored order tracks recency
-let shownOrder = [];
-
-function rowsInShownOrder(recent) {
-  const rank = new Map(shownOrder.map((path, index) => [path, index]));
-  const fresh = recent.filter(entry => !rank.has(entry.path));
-  const known = recent.filter(entry => rank.has(entry.path)).sort((a, b) => rank.get(a.path) - rank.get(b.path));
-  const rows = [...fresh, ...known];
-  shownOrder = rows.map(entry => entry.path);
-  return rows;
-}
-
-function renderRecentProjects() {
-  const section = document.getElementById("recent-projects");
-  const list = document.getElementById("recent-list");
-  if (!section || !list) return;
-  applyRecentProjectsCollapsed();
-  const recent = getRecentProjects();
-  if (recent.length === 0) { section.hidden = true; return; }
-  section.hidden = false;
-  list.innerHTML = rowsInShownOrder(recent).map(r => `
-    <div class="recent-item" data-path="${r.path}" title="${r.path}">
-      <div class="recent-item-text">
-        <span class="recent-title">${r.title || r.path.split(/[/\\]/).pop()}</span>
-        <span class="recent-path">${r.path}</span>
-      </div>
-      <button class="recent-queue" data-path="${r.path}" title="Add this DCP to the playlist">+</button>
-      <button class="recent-retitle" data-path="${r.path}" title="Give this DCP a new content title">✎</button>
-      <button class="recent-delete" data-path="${r.path}" title="Delete this DCP from disk">✕</button>
-    </div>
-  `).join('');
-  list.querySelectorAll('.recent-queue').forEach(el => {
-    el.addEventListener('click', (event) => {
-      event.stopPropagation();
-      addToPlaylist(el.dataset.path, recentTitleFor(el.dataset.path));
-      setStatus(`Queued: ${el.dataset.path}`);
-    });
-  });
-  list.querySelectorAll('.recent-retitle').forEach(el => {
-    el.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      const dir = el.dataset.path;
-      const title = await askForText({
-        title: "Retitle DCP",
-        label: "New content title",
-        value: dir.split(/[/\\]/).pop(),
-      });
-      if (!title?.trim()) return;
-      const ok = await tauriConfirm(
-        `Retitle to ${title}? The CPL gets a new composition id, so any KDM or delivery made from the old one no longer matches. A signed package loses its signature.`,
-        { title: "Retitle DCP", kind: "warning" },
-      );
-      if (!ok) return;
-      let newPath;
-      try {
-        newPath = await invoke("retitle_dcp", { path: dir, title });
-      } catch (e) {
-        tauriMessage(String(e), { title: "Retitle failed", kind: "error" });
-        return;
-      }
-      removeRecentProject(dir);
-      addRecentProject(newPath, title.trim());
-      setStatus(`Retitled to ${title.trim()}`);
-    });
-  });
-  list.querySelectorAll('.recent-delete').forEach(el => {
-    el.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      const dir = el.dataset.path;
-      const ok = await tauriConfirm(`Delete ${dir} and everything in it?`, {
-        title: "Delete DCP",
-        kind: "warning",
-      });
-      if (!ok) return;
-      try {
-        await invoke("delete_dcp", { path: dir });
-      } catch (e) {
-        if (String(e) === `${dir} no longer exists`) {
-          removeRecentProject(dir);
-          setStatus(`Removed missing DCP: ${dir}`);
-          return;
-        }
-        tauriMessage(String(e), { title: "Delete failed", kind: "error" });
-        return;
-      }
-      removeRecentProject(dir);
-      setStatus(`Deleted ${dir}`);
-      refreshDiskSpace();
-    });
-  });
-  list.querySelectorAll('.recent-item').forEach(el => {
-    el.addEventListener('click', () => openDcp(el.dataset.path));
-  });
-  applyPreviewSelection();
+  refreshDiskSpace();
 }
 
 // === Desktop Notifications ===
@@ -2191,28 +2139,6 @@ function notifyBuildComplete(success, title) {
 if ("Notification" in window && Notification.permission === "default") {
   Notification.requestPermission();
 }
-
-// === Confirmation Dialogs ===
-document.getElementById("btn-new-project")?.addEventListener("click", async () => {
-  if (project.assets.length > 0) {
-    if (!(await tauriConfirm("Clear current project and start new? Unsaved changes will be lost."))) return;
-  }
-  project.title = "";
-  project.assets = [];
-  project.reels = [{ id: 1, picture: null, sound: null, subtitle: null }];
-  nextAssetId = 1;
-  const titleEl = document.getElementById("prop-title");
-  if (titleEl) titleEl.value = "";
-  document.getElementById("prop-output") && (document.getElementById("prop-output").value = "");
-  document.getElementById("project-name").textContent = "Untitled Project";
-  clearPreviewSelection();
-  switchView("project");
-  renderAssets();
-  renderReels();
-  updateStatusStats();
-  setStatus("New project — enter a title to get started");
-  if (titleEl) { titleEl.focus(); titleEl.select(); }
-});
 
 // === Status Bar Stats ===
 function updateStatusStats() {
@@ -2310,11 +2236,11 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
 // === Progress in Title Bar ===
 function setTitleProgress(percent, stage) {
   if (percent === null) {
-    document.title = `DCP Wizard — ${stage}`;
+    setWindowTitleStatus(stage);
   } else if (percent >= 0 && percent < 100) {
-    document.title = `DCP Wizard — ${stage} ${Math.round(percent)}%`;
+    setWindowTitleStatus(`${stage} ${Math.round(percent)}%`);
   } else {
-    document.title = "DCP Wizard";
+    setWindowTitleStatus("");
   }
 }
 
@@ -2519,7 +2445,26 @@ function libraryNameFor(path) {
 // === Init ===
 renderAssets();
 renderReels();
-renderRecentProjects();
+const buildPanelDefaults = serializeBuildPanel();
+initProjects({
+  wizard: "dcpwizard",
+  applicationName: "DCP Wizard",
+  packageNoun: "DCP",
+  outputFields: OUTPUT_FIELDS,
+  textFields: TEXT_FIELDS,
+  defaults: buildPanelDefaults,
+  defaultProjectFolder: defaultOutputFolder,
+  setProjectTitle,
+  setOutputFolder,
+  serialize: serializeBuildPanel,
+  restore: restoreBuildPanel,
+  projectTitle: (form) => form.title?.trim(),
+  onQueue: addToPlaylist,
+  onRetitle: retitleRecentPackage,
+  onDelete: deleteRecentPackage,
+  afterRecentRender: applyPreviewSelection,
+  setStatus,
+});
 refreshLibrary();
 updateStatusStats();
 initPreview();

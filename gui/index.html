@@ -78,7 +78,10 @@
         </div>
         <div class="toolbar-right">
           <button id="btn-new-project" class="toolbar-btn" title="New project">New</button>
-          <button id="btn-open-project" class="toolbar-btn" title="Open DCP">Open</button>
+          <button id="btn-project-open" class="toolbar-btn" title="Open project">Open</button>
+          <button id="btn-project-save" class="toolbar-btn" title="Save project">Save</button>
+          <button id="btn-project-save-as" class="toolbar-btn" title="Save project as">Save As</button>
+          <button id="btn-open-dcp" class="toolbar-btn" title="Open DCP">Open DCP</button>
           <button id="btn-build" class="toolbar-btn primary" title="Build DCP" disabled>Build DCP</button>
           <button id="btn-preview" class="toolbar-btn" title="Preview" disabled>▶ Preview</button>
           <span class="toolbar-separator"></span>
@@ -681,11 +684,12 @@
                 <fieldset>
                   <legend>Output</legend>
                   <div class="prop-field">
-                    <label for="prop-output">Directory</label>
+                    <label for="prop-output">Folder</label>
                     <div class="input-with-btn">
-                      <input id="prop-output" type="text" placeholder="/path/to/output" readonly>
+                      <input id="prop-output" type="text" placeholder="Default output folder from Settings, or Documents" readonly>
                       <button id="browse-output" class="btn-sm">…</button>
                     </div>
+                    <p class="field-hint">The DCP is written to a new folder inside this one, named after the title or its ISDCF name.</p>
                   </div>
                 </fieldset>
               </div>
@@ -1174,11 +1178,12 @@
               </div>
             </div>
             <div class="prop-field">
-              <label>Output Directory</label>
+              <label>Output Folder</label>
               <div class="input-with-btn">
                 <input id="vf-output" type="text" placeholder="Select output folder…" readonly>
                 <button id="vf-browse-output" class="btn-sm">…</button>
               </div>
+              <p class="field-hint">The VF is written to a new folder inside this one, named after the title.</p>
             </div>
             <div class="prop-field">
               <label>Title (optional)</label>

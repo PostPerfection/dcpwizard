@@ -4,7 +4,7 @@ export default defineConfig({
   clearScreen: false,
   resolve: {
     // guikit sources sit outside gui/, so their bare imports miss gui/node_modules
-    dedupe: ["@tauri-apps/api", "@tauri-apps/plugin-dialog"],
+    dedupe: ["@tauri-apps/api", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-fs"],
   },
   server: {
     port: 1421,
