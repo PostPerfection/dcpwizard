@@ -42,8 +42,8 @@ jobs:
             ffmpeg -v error -f lavfi -i anullsrc=r=48000:cl=stereo -t 0.5 /data/clip.wav
             dcpwizard create --title DockerCi --video /data/clip.mp4 --audio /data/clip.wav --output /data/out
           '
-          test -f work/out/ASSETMAP.xml
-          ls work/out
+          test -f work/out/DockerCi/ASSETMAP.xml
+          ls work/out/DockerCi
 
       - name: REST API answers
         run: |
