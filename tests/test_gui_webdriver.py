@@ -74,6 +74,22 @@ MARKER_POSITION_INPUT = "#prop-markers .marker-row .marker-position"
 MARKER_LABEL_SELECT = "#prop-markers .marker-row .marker-label"
 # shift+tab lands on the select without opening its popup, where typing picks an option
 PREVIOUS_FIELD_CHORD = "shift+Tab"
+NEXT_FIELD_KEY = "Tab"
+MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
+NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
+
+# the composition metadata fields, what each is given, and the CPL element it lands in
+COMPOSITION_METADATA = [
+    ("#prop-version-number", "versionNumber", "3", "VersionNumber"),
+    ("#prop-chain", "chain", "Odeon", "Chain"),
+    ("#prop-distributor", "distributor", "Film Distributors", "Distributor"),
+    ("#prop-facility-name", "facilityName", "Post House", "Facility"),
+    ("#prop-luminance", "luminance", "48", "Luminance"),
+]
+LUMINANCE_UNITS_SELECT = "#prop-luminance-units"
+# typing this into the select picks the unit after it
+LUMINANCE_UNITS_TYPED = "candela"
+LUMINANCE_UNITS = "candela-per-square-metre"
 
 XDG_DIRECTORIES = {
     "XDG_CONFIG_HOME": "config",
@@ -603,6 +619,28 @@ def test_a_marker_row_offers_the_ten_labels_and_takes_a_position(window):
     assert session.execute(MARKER_ROWS) == [
         {"labels": MARKER_LABELS, "label": PICKED_MARKER, "position": PICKED_MARKER_POSITION}
     ]
+    assert session.property(MARKER_FROM_PLAYER_BUTTON, "disabled") is True
+    assert session.property(MARKER_FROM_PLAYER_BUTTON, "title") == NO_PICTURE_FOR_MARKER
+
+
+def fill_composition_metadata(window):
+    for field, _, value, _ in COMPOSITION_METADATA:
+        window.click(field)
+        window.type_text(value)
+    window.press(NEXT_FIELD_KEY)
+    window.type_text(LUMINANCE_UNITS_TYPED)
+    wait_until(
+        f"the luminance unit never took {LUMINANCE_UNITS}",
+        lambda: window.session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def composition_metadata_in(cpl_path):
+    asset = named(ElementTree.parse(cpl_path).getroot(), "CompositionMetadataAsset")[0]
+    found = {element: only_text(asset, element) for *_, element in COMPOSITION_METADATA}
+    found["units"] = named(asset, "Luminance")[0].get("units")
+    return found
 
 
 def package_version(manifest):
@@ -646,12 +684,16 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
         lambda: session.execute(ASSET_PATHS) == [str(picture), str(sound)],
         REACTION_TIMEOUT_SECONDS,
     )
+    fill_composition_metadata(window)
 
     window.press(SAVE_PROJECT_CHORD)
     wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
     saved = saved_project(project_path)
     assert saved["form"]["title"] == PROJECT_TITLE
     assert saved_asset_paths(saved) == [str(picture), str(sound)]
+    for _, key, value, _ in COMPOSITION_METADATA:
+        assert saved["form"][key] == value, key
+    assert saved["form"]["luminanceUnits"] == LUMINANCE_UNITS
 
     wait_until(
         "the Build button stayed disabled",
@@ -672,7 +714,12 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     )
     assert status_text(session) == BUILD_COMPLETE_STATUS
 
-    assert len(list(package.glob("CPL_*.xml"))) == 1, sorted(package.iterdir())
+    cpls = list(package.glob("CPL_*.xml"))
+    assert len(cpls) == 1, sorted(package.iterdir())
+    assert composition_metadata_in(cpls[0]) == {
+        **{element: value for _, _, value, element in COMPOSITION_METADATA},
+        "units": LUMINANCE_UNITS,
+    }
     assert (tmp_path / f"{PROJECT_TITLE}.log").is_file()
     built = saved_project(project_path)
     assert datetime.fromisoformat(built["saved"]) > datetime.fromisoformat(saved["saved"])
@@ -697,3 +744,6 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     assert session.property("#prop-output", "value") == str(tmp_path)
     assert session.execute(ASSET_PATHS) == [str(picture), str(sound)]
     assert window_title(session) == project_window_title
+    for field, _, value, _ in COMPOSITION_METADATA:
+        assert session.property(field, "value") == value, field
+    assert session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS

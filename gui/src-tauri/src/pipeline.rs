@@ -387,6 +387,8 @@ pub struct JobConfig {
     facility: Option<String>,
     // naming and metadata from the panel's fieldset
     naming: NamingMetadata,
+    #[serde(default)]
+    composition_metadata: CompositionMetadata,
     /// What ffprobe read from the source. The probe counts frames by decoding,
     /// so the check runs one and the build reads it back rather than paying twice.
     source: Option<postkit::probe::VideoInfo>,
@@ -480,6 +482,41 @@ fn parsed_field<T: std::str::FromStr>(
             .map_err(|_| format!("{flag}: {text} is not a number")),
         None => Ok(None),
     }
+}
+
+// the ST 429-16 identity fields as the panel sends them, luminance as "<value> <units>"
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompositionMetadataFields {
+    version_number: Option<String>,
+    chain: Option<String>,
+    distributor: Option<String>,
+    facility: Option<String>,
+    luminance: Option<String>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct CompositionMetadata {
+    version_number: Option<u32>,
+    chain: Option<String>,
+    distributor: Option<String>,
+    facility: Option<String>,
+    luminance: Option<dcpwizard_core::cpl::Luminance>,
+}
+
+fn composition_metadata_of(
+    fields: &CompositionMetadataFields,
+) -> Result<CompositionMetadata, String> {
+    let text = |value: &Option<String>| filled(value).map(str::to_string);
+    Ok(CompositionMetadata {
+        version_number: parsed_field("--version-number", &fields.version_number)?,
+        chain: text(&fields.chain),
+        distributor: text(&fields.distributor),
+        facility: text(&fields.facility),
+        luminance: filled(&fields.luminance)
+            .map(dcpwizard_core::cpl::Luminance::parse)
+            .transpose()?,
+    })
 }
 
 /// A colour typed into an appearance field, refused under the name of the
@@ -596,6 +633,7 @@ pub async fn submit_job(
     allow_generic_hdr_tonemap: Option<bool>,
     facility: Option<String>,
     naming: Option<NamingMetadata>,
+    composition_metadata: Option<CompositionMetadataFields>,
     head_items: Option<Vec<String>>,
     tail_items: Option<Vec<String>>,
     hints_accepted: Option<bool>,
@@ -619,6 +657,7 @@ pub async fn submit_job(
     let framerate = framerate.unwrap_or_else(|| DEFAULT_FRAME_RATE.0.into());
     let naming = naming.unwrap_or_default();
     let facility = facility.filter(|code| !code.is_empty());
+    let composition_metadata = composition_metadata_of(&composition_metadata.unwrap_or_default())?;
 
     let audio_input_order = parse_audio_input_order(audio_input_order.as_deref())?;
 
@@ -936,6 +975,7 @@ pub async fn submit_job(
         allow_generic_hdr_tonemap,
         facility,
         naming,
+        composition_metadata,
         source: probe_job_source(&video, still_input),
         hints: Vec::new(),
         head_items,
@@ -2178,7 +2218,16 @@ fn build_dcp_config(
         sign_language_lang: job.sign_language_tag.clone(),
         sign_language_main_channels,
         hdr_dci: job.hdr_dci,
-        facility: job.facility.clone(),
+        version_number: job.composition_metadata.version_number,
+        chain: job.composition_metadata.chain.clone(),
+        distributor: job.composition_metadata.distributor.clone(),
+        // a blank facility name keeps writing the ISDCF facility code from Settings
+        facility: job
+            .composition_metadata
+            .facility
+            .clone()
+            .or_else(|| job.facility.clone()),
+        luminance: job.composition_metadata.luminance.clone(),
         audio_language: job
             .naming
             .audio_language
@@ -3098,6 +3147,7 @@ mod tests {
             allow_generic_hdr_tonemap: false,
             facility: None,
             naming: NamingMetadata::default(),
+            composition_metadata: CompositionMetadata::default(),
             source: None,
             hints: Vec::new(),
             head_items: Vec::new(),
@@ -3869,6 +3919,98 @@ mod tests {
         );
         assert_eq!(config.markers, markers);
         assert_eq!(job_plan(&job).markers, markers);
+    }
+
+    fn config_with_composition_metadata(
+        fields: CompositionMetadataFields,
+        facility_code: Option<&str>,
+    ) -> dcpwizard_core::dcp::DcpConfig {
+        let job = JobConfig {
+            composition_metadata: composition_metadata_of(&fields).unwrap(),
+            facility: facility_code.map(str::to_string),
+            ..test_job()
+        };
+        build_dcp_config(
+            &job,
+            PathBuf::from("/out/j2k"),
+            None,
+            None,
+            None,
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn the_panels_composition_metadata_reaches_the_build() {
+        let config = config_with_composition_metadata(
+            CompositionMetadataFields {
+                version_number: Some("3".into()),
+                chain: Some("Odeon".into()),
+                distributor: Some("Film Distributors Ltd".into()),
+                facility: Some("Post House".into()),
+                luminance: Some("48 candela-per-square-metre".into()),
+            },
+            Some("PPF"),
+        );
+
+        assert_eq!(config.version_number, Some(3));
+        assert_eq!(config.chain.as_deref(), Some("Odeon"));
+        assert_eq!(config.distributor.as_deref(), Some("Film Distributors Ltd"));
+        assert_eq!(config.facility.as_deref(), Some("Post House"));
+        let luminance = config.luminance.unwrap();
+        assert_eq!(luminance.value, 48.0);
+        assert_eq!(
+            luminance.units,
+            dcpwizard_core::cpl::LuminanceUnits::CandelaPerSquareMetre
+        );
+    }
+
+    #[test]
+    fn blank_composition_metadata_sets_nothing_and_the_facility_code_stays() {
+        let blank = CompositionMetadataFields {
+            version_number: Some(String::new()),
+            chain: Some(String::new()),
+            distributor: None,
+            facility: Some(String::new()),
+            luminance: Some(String::new()),
+        };
+        let config = config_with_composition_metadata(blank, Some("PPF"));
+
+        assert_eq!(config.version_number, None);
+        assert_eq!(config.chain, None);
+        assert_eq!(config.distributor, None);
+        assert!(config.luminance.is_none());
+        assert_eq!(config.facility.as_deref(), Some("PPF"));
+        let without_code =
+            config_with_composition_metadata(CompositionMetadataFields::default(), None);
+        assert_eq!(without_code.facility, None);
+    }
+
+    #[test]
+    fn a_bad_luminance_is_refused_with_the_clis_text() {
+        for spec in ["14 nits", "0 foot-lambert", "fourteen foot-lambert", "14"] {
+            let fields = CompositionMetadataFields {
+                luminance: Some(spec.into()),
+                ..Default::default()
+            };
+            let refusal = composition_metadata_of(&fields).err().unwrap();
+            assert_eq!(
+                refusal,
+                dcpwizard_core::cpl::Luminance::parse(spec).unwrap_err()
+            );
+        }
+    }
+
+    #[test]
+    fn a_version_number_that_is_not_a_whole_number_is_refused() {
+        let fields = CompositionMetadataFields {
+            version_number: Some("1.5".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            composition_metadata_of(&fields).err().unwrap(),
+            "--version-number: 1.5 is not a number"
+        );
     }
 
     #[test]

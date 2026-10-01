@@ -85,6 +85,12 @@ export const FORM_CONTROLS = [
   ["redBand", "prop-red-band", CHECKED],
   ["twoDVersionOfThreeD", "prop-two-d-version-of-three-d", CHECKED],
   ["versionFile", "prop-version-file", CHECKED],
+  ["versionNumber", "prop-version-number", VALUE],
+  ["chain", "prop-chain", VALUE],
+  ["distributor", "prop-distributor", VALUE],
+  ["facilityName", "prop-facility-name", VALUE],
+  ["luminance", "prop-luminance", VALUE],
+  ["luminanceUnits", "prop-luminance-units", VALUE],
 ];
 
 // the key output file is written by the build, so it need not exist yet
@@ -119,6 +125,9 @@ export const TEXT_FIELDS = [
   "burnEffectColour",
   "ccapLanguage",
   "signLanguageTag",
+  "chain",
+  "distributor",
+  "facilityName",
 ];
 
 const REEL_SLOTS = ["picture", "sound", "subtitle"];

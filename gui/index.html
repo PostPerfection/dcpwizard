@@ -264,6 +264,36 @@
                   <div class="prop-field">
                     <label><input type="checkbox" id="prop-version-file"> Version file (VF)</label>
                   </div>
+                  <div class="prop-field">
+                    <label for="prop-version-number">Version number</label>
+                    <input id="prop-version-number" type="number" min="1" step="1" placeholder="1">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-chain">Exhibition chain</label>
+                    <input id="prop-chain" type="text">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-distributor">Distributor</label>
+                    <input id="prop-distributor" type="text">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-facility-name">Mastering facility</label>
+                    <input id="prop-facility-name" type="text" placeholder="Blank writes the Settings facility code">
+                  </div>
+                  <div class="field-row">
+                    <div class="prop-field">
+                      <label for="prop-luminance">Mastering luminance</label>
+                      <input id="prop-luminance" type="number" min="0" step="any" placeholder="14">
+                    </div>
+                    <div class="prop-field">
+                      <label for="prop-luminance-units">Unit</label>
+                      <select id="prop-luminance-units">
+                        <option value="foot-lambert">foot-lambert</option>
+                        <option value="candela-per-square-metre">candela per square metre</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p class="field-hint">These go into the CPL's composition metadata. A blank field writes nothing, and a blank version number writes 1.</p>
                   <div class="panel-header">
                     <h2>Ratings</h2>
                     <button id="prop-add-rating" class="btn-sm" type="button">+ Rating</button>

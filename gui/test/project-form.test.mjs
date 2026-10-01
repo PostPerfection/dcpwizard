@@ -153,6 +153,18 @@ test('a version 1 project file opens and restores its saved fields', () => {
   assert.deepEqual(reopened.joinedItems, { head: ['Studio logo'], tail: [] });
 });
 
+test('a version 1 project file, saved before the composition metadata fields, opens with them blank', () => {
+  const text = readFileSync(new URL('./fixtures/Film-version-1.dcpwizard', import.meta.url), 'utf8');
+  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = editedPanel();
+
+  restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  for (const id of ['prop-version-number', 'prop-chain', 'prop-distributor', 'prop-facility-name', 'prop-luminance']) {
+    assert.equal(reopened.controls.get(id).value, '', id);
+  }
+});
+
 function selectOffering(label, values, value) {
   return { value, labels: [{ textContent: ` ${label} ` }], options: values.map((optionValue) => ({ value: optionValue })) };
 }
