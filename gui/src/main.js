@@ -8,6 +8,7 @@ import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, pr
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
+import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
@@ -572,6 +573,7 @@ function renderReels() {
 
   audioMapDrawn = refreshAudioMapMatrix();
   refreshIsdcfPreview();
+  refreshMarkerFromPlayerButtons();
 }
 
 // === Source picture ===
@@ -965,6 +967,7 @@ function markerRowElement(markerRow, labels) {
       <label>Position</label>
       <input type="text" class="marker-position" placeholder="frames or HH:MM:SS:FF">
     </div>
+    <button class="btn-sm marker-from-player" type="button">Set from player</button>
     <button class="btn-sm marker-remove" type="button" title="Remove marker">✕</button>
   `;
   const select = element.querySelector(".marker-label");
@@ -976,7 +979,64 @@ function markerRowElement(markerRow, labels) {
   }
   select.value = markerRow.label;
   element.querySelector(".marker-position").value = markerRow.position;
+  applyMarkerFromPlayerState(element.querySelector(".marker-from-player"));
   return element;
+}
+
+function markerFromPlayerBlocker() {
+  return markerFromPlayerUnavailable({ compositionPicturePath: project.reels[0]?.picture?.path, shownPath: previewShownPath });
+}
+
+function applyMarkerFromPlayerState(button, blocker = markerFromPlayerBlocker()) {
+  button.disabled = blocker !== null;
+  button.title = blocker ?? "Write the preview's current frame into this marker";
+}
+
+function refreshMarkerFromPlayerButtons() {
+  const blocker = markerFromPlayerBlocker();
+  document.querySelectorAll("#prop-markers .marker-from-player").forEach(button => applyMarkerFromPlayerState(button, blocker));
+}
+
+function fieldFrames(id, label, editRate) {
+  try {
+    return durationFrames(document.getElementById(id)?.value || "", editRate);
+  } catch (e) {
+    throw new Error(`${label}: ${e.message}`);
+  }
+}
+
+async function compositionTimecodeAtPlayer() {
+  const blocker = markerFromPlayerBlocker();
+  if (blocker) throw new Error(blocker);
+  const picturePath = project.reels[0].picture.path;
+  const editRate = parseInt(document.getElementById("prop-framerate")?.value) || DEFAULT_FRAMERATE;
+  const [positionSeconds, durationSeconds, source] = await Promise.all([
+    invoke("preview_get_position"),
+    invoke("preview_get_duration"),
+    probeVideo(picturePath),
+  ]);
+  const frame = compositionFrameAt({
+    positionSeconds,
+    durationSeconds,
+    sourceRate: source?.fps,
+    editRate,
+    trimStartFrames: fieldFrames("prop-trim-start", "Trim start", editRate),
+    trimEndFrames: fieldFrames("prop-trim-end", "Trim end", editRate),
+    padHeadFrames: fieldFrames("prop-pad-head", "Head padding", editRate),
+  });
+  return markerTimecode(frame, editRate);
+}
+
+async function setMarkerFromPlayer(element) {
+  const markerRow = markerRows.find(r => r.id === parseInt(element.dataset.id));
+  try {
+    markerRow.position = await compositionTimecodeAtPlayer();
+  } catch (e) {
+    tauriMessage(String(e.message ?? e), { title: "Marker not set", kind: "warning" });
+    return;
+  }
+  element.querySelector(".marker-position").value = markerRow.position;
+  setStatus(`${markerRow.label} set to ${markerRow.position}`);
 }
 
 document.getElementById("prop-add-marker")?.addEventListener("click", async () => {
@@ -995,6 +1055,10 @@ document.getElementById("prop-markers")?.addEventListener("input", (e) => {
 });
 
 document.getElementById("prop-markers")?.addEventListener("click", (e) => {
+  if (e.target.classList.contains("marker-from-player")) {
+    setMarkerFromPlayer(e.target.closest(".marker-row"));
+    return;
+  }
   if (!e.target.classList.contains("marker-remove")) return;
   const element = e.target.closest(".marker-row");
   const index = markerRows.findIndex(r => r.id === parseInt(element.dataset.id));
@@ -1066,6 +1130,18 @@ function namingMetadata() {
     twoDVersionOfThreeD: document.getElementById("prop-two-d-version-of-three-d")?.checked || false,
     versionFile: document.getElementById("prop-version-file")?.checked || false,
     isdcfNaming: getPrefs().isdcfNaming || false,
+  };
+}
+
+function compositionMetadata() {
+  const text = (id) => document.getElementById(id)?.value?.trim() || null;
+  const luminance = text("prop-luminance");
+  return {
+    versionNumber: text("prop-version-number"),
+    chain: text("prop-chain"),
+    distributor: text("prop-distributor"),
+    facility: text("prop-facility-name"),
+    luminance: luminance && `${luminance} ${document.getElementById("prop-luminance-units").value}`,
   };
 }
 
@@ -1298,6 +1374,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       allowGenericHdrTonemap: document.getElementById("prop-hdr-generic-tonemap")?.checked || false,
       facility: getPrefs().facility || null,
       naming: namingMetadata(),
+      compositionMetadata: compositionMetadata(),
       headItems: joinedItems.head,
       tailItems: joinedItems.tail,
     });
@@ -2177,6 +2254,7 @@ function updateToolbarState() {
   const previewBtn = document.getElementById("btn-preview");
   if (buildBtn) buildBtn.disabled = buildInFlight || !(hasVideo && hasTitle);
   if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath);
+  refreshMarkerFromPlayerButtons();
 }
 
 // Keep title in sync and update toolbar state
