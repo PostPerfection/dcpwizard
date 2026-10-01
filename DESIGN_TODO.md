@@ -255,6 +255,12 @@ imfwizard. What the traces said, and what is still owed:
   preprocess, DWT, bit planar and BPC 12.5 ms, about 34 ms for three slots. Copying
   only the used code stream bytes off the device would cut about 6 ms from that
   chain. Metal and OpenCL/HIP still owe the whole round.
+- Landed 2026-10-01 for CUDA (plugin 8b0e27f, latke 92ee512, grok 86905d67): a
+  kernel on the code stream buffer's own stream writes each block's used bytes and
+  pass entries straight into the pinned host buffer, so the 83 MB copy off the
+  device per frame is gone, replaced by a kernel of about 1 ms. Output byte
+  identical on the 5 s clip. The laptop stays host bound at the same memory-fed
+  fps. Unmeasured on the 5070, where the device chain is the limit.
 - For the laptop none of the device work shows in a real encode: fed from the pipe it
   is bound by the DNxHR decode on the CPU at about 50 fps.
 - The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
