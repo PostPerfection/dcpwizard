@@ -272,8 +272,13 @@ imfwizard. What the traces said, and what is still owed:
   no core above 88% and the card at 92 to 94% drawing 93 to 95 of its 250 W, so
   that machine is device bound where the laptop is host bound, and the two kernel
   rounds are unmeasured there. Their second encode of the same source ran faster,
-  which is the page cache taking over from the FUSE read. The run on the build with
-  both rounds is owed, second run or a source on /dev/shm.
+  which is the page cache taking over from the FUSE read. On the build with both
+  kernel rounds the same encode runs at 91 fps (reported 2026-10-01). Halving the
+  MQ kernel time moved that machine 82 to 91, so the MQ kernel no longer sets its
+  pace either. The laptop's device timeline shows about 90 fps of device throughput
+  with the kernels overlapping, so a 5070 landing at the same figure points at the
+  serial part of the chain: the single CUDA callback thread's input copy into pinned
+  memory and the copy of the whole code stream buffer off the device.
 - Sizing the context stream by `precision + GPUP_BIBO_EXTRA_BITS` bit planes, as
   the decoder's output buffer already is, would cut it by about 40%, but only if
   the bit plane coder can never exceed that count, which is unchecked.
