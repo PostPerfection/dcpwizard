@@ -128,19 +128,22 @@ fn raised_samples(frame: &[Vec<i32>]) -> (usize, usize) {
     (in_band, above_band)
 }
 
-fn create_grey_dcp(source: &Path, out: &Path, config_home: &Path, extra: &[&str]) {
+const TITLE: &str = "Marked";
+
+fn create_grey_dcp(source: &Path, output: &Path, config_home: &Path, extra: &[&str]) -> PathBuf {
     let mut command = dcpwizard(config_home);
     command.args([
         "create",
         "--title",
-        "Marked",
+        TITLE,
         "--video",
         source.to_str().unwrap(),
         "-o",
-        out.to_str().unwrap(),
+        output.to_str().unwrap(),
         "--twok",
     ]);
     command.args(extra).assert().success();
+    output.join(TITLE)
 }
 
 #[test]
@@ -149,12 +152,15 @@ fn create_watermark_draws_the_mark_into_the_packaged_picture() {
     let config_home = TempDir::new().unwrap();
     let source = grey_source(directory.path());
 
-    let plain = directory.path().join("plain");
-    create_grey_dcp(&source, &plain, config_home.path(), &[]);
-    let marked = directory.path().join("marked");
-    create_grey_dcp(
+    let plain = create_grey_dcp(
         &source,
-        &marked,
+        &directory.path().join("plain"),
+        config_home.path(),
+        &[],
+    );
+    let marked = create_grey_dcp(
+        &source,
+        &directory.path().join("marked"),
         config_home.path(),
         &[
             "--watermark",
@@ -209,11 +215,10 @@ fn the_watermark_command_marks_an_encrypted_source_under_its_keys() {
         .assert()
         .success();
 
-    let encrypted = directory.path().join("encrypted");
     let keys = directory.path().join("KEYS.json");
-    create_grey_dcp(
+    let encrypted = create_grey_dcp(
         &source,
-        &encrypted,
+        &directory.path().join("encrypted"),
         config_home.path(),
         &[
             "--encrypt",

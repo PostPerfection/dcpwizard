@@ -79,17 +79,10 @@ pub struct HintFacts {
     pub audio_language: Option<String>,
     /// The measured level of each sound file the loudness pass could read.
     pub audio: Vec<AudioLevel>,
-    pub markers: Vec<MarkerPlacement>,
-    pub picture_frames: u64,
+    pub marker_labels: Vec<String>,
     /// Subtitles the audience reads on screen, packaged or burnt in.
     pub subtitles: Vec<SubtitleCues>,
     pub captions: Vec<SubtitleCues>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkerPlacement {
-    pub label: String,
-    pub frame: u64,
 }
 
 /// Every hint the job raises, probing the source for the numbers it needs.
@@ -261,7 +254,7 @@ fn pull_up_hint(facts: &HintFacts) -> Option<Hint> {
 
 fn marker_hints(facts: &HintFacts) -> Vec<Hint> {
     let mut hints = Vec::new();
-    let placed = |label: &str| facts.markers.iter().any(|marker| marker.label == label);
+    let placed = |label: &str| facts.marker_labels.iter().any(|placed| placed == label);
     if facts.standard == Standard::Smpte
         && facts.content_type == ContentType::Feature
         && !(placed("FFEC") && placed("FFMC"))
@@ -271,20 +264,6 @@ fn marker_hints(facts: &HintFacts) -> Vec<Hint> {
                    expect the first frame of end credits and the first frame of moving \
                    credits."
                 .to_string(),
-        });
-    }
-    if facts.picture_frames > 0
-        && let Some(late) = facts
-            .markers
-            .iter()
-            .find(|marker| marker.frame >= facts.picture_frames)
-    {
-        hints.push(Hint {
-            text: format!(
-                "The marker {} sits at frame {}, at or past the picture's {} frames, so it \
-                 will be ignored.",
-                late.label, late.frame, facts.picture_frames
-            ),
         });
     }
     hints
@@ -396,8 +375,7 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
         has_audio: plan.audio.is_some() || source.is_some_and(|info| info.has_audio),
         audio_language: plan.audio_language.clone(),
         audio,
-        markers: placed_markers(plan),
-        picture_frames: crate::preflight::planned_picture_frames(plan).unwrap_or(0),
+        marker_labels: placed_marker_labels(plan),
         subtitles: read_cue_files(
             [plan.subtitle.as_deref(), plan.burn_subtitle.as_deref()],
             plan.fps,
@@ -423,17 +401,14 @@ fn packaged_channels(plan: &CreatePlan) -> Option<u32> {
 
 /// The markers the job places, dropping any spec that does not parse: the
 /// packager reports those itself.
-fn placed_markers(plan: &CreatePlan) -> Vec<MarkerPlacement> {
+fn placed_marker_labels(plan: &CreatePlan) -> Vec<String> {
     plan.markers
         .iter()
         .filter_map(|spec| {
             let (label, offset) = spec.split_once('=')?;
             let marker = crate::markers::Marker::from_label(label)?;
-            let frame = crate::markers::parse_frame_offset(offset, plan.fps).ok()?;
-            Some(MarkerPlacement {
-                label: marker.label().to_string(),
-                frame,
-            })
+            crate::markers::parse_frame_offset(offset, plan.fps).ok()?;
+            Some(marker.label().to_string())
         })
         .collect()
 }
@@ -727,26 +702,13 @@ mod tests {
         assert!(mentions(&unmarked, "FFEC and FFMC"));
 
         let half = HintFacts {
-            markers: vec![MarkerPlacement {
-                label: "FFEC".to_string(),
-                frame: 10,
-            }],
-            picture_frames: 100,
+            marker_labels: vec!["FFEC".to_string()],
             ..unmarked.clone()
         };
         assert!(mentions(&half, "FFEC and FFMC"));
 
         let marked = HintFacts {
-            markers: vec![
-                MarkerPlacement {
-                    label: "FFEC".to_string(),
-                    frame: 10,
-                },
-                MarkerPlacement {
-                    label: "FFMC".to_string(),
-                    frame: 20,
-                },
-            ],
+            marker_labels: vec!["FFEC".to_string(), "FFMC".to_string()],
             ..half.clone()
         };
         assert!(!mentions(&marked, "FFEC and FFMC"), "{:?}", texts(&marked));
@@ -756,28 +718,6 @@ mod tests {
             ..unmarked.clone()
         };
         assert!(!mentions(&trailer, "FFEC and FFMC"));
-    }
-
-    #[test]
-    fn a_marker_at_the_picture_length_is_hinted_and_one_inside_it_is_not() {
-        let past = HintFacts {
-            markers: vec![MarkerPlacement {
-                label: "FFEC".to_string(),
-                frame: 100,
-            }],
-            picture_frames: 100,
-            ..facts()
-        };
-        assert!(mentions(&past, "at or past"), "{:?}", texts(&past));
-
-        let inside = HintFacts {
-            markers: vec![MarkerPlacement {
-                label: "FFEC".to_string(),
-                frame: 99,
-            }],
-            ..past.clone()
-        };
-        assert!(!mentions(&inside, "at or past"));
     }
 
     fn with_captions(cues: Vec<HintCue>) -> HintFacts {
@@ -852,7 +792,6 @@ mod tests {
                 file: "sound.wav".to_string(),
                 true_peak_dbtp: -6.0,
             }],
-            picture_frames: 1000,
             subtitles: vec![SubtitleCues {
                 file: "subs.srt".to_string(),
                 cues: vec![

@@ -167,8 +167,18 @@ fn an_hdr10_master_packages_as_a_dci_hdr_addendum_dcp() {
         .assert()
         .success();
 
+    let packages: Vec<PathBuf> = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    let [package] = packages.as_slice() else {
+        panic!("one package folder in {}: {packages:?}", out.display());
+    };
+
     // the picture descriptor carries the addendum's one colour item and no other
-    let picture_mxf = only_file_starting_with(&out, "picture_");
+    let picture_mxf = only_file_starting_with(package, "picture_");
     let mut reader = asdcplib::jp2k::MxfReader::new();
     reader
         .open_read(&picture_mxf.to_string_lossy())
@@ -184,7 +194,7 @@ fn an_hdr10_master_packages_as_a_dci_hdr_addendum_dcp() {
         "the addendum names no ColorPrimaries item, so the descriptor must carry none"
     );
 
-    let cpl = std::fs::read_to_string(only_file_starting_with(&out, "CPL_")).unwrap();
+    let cpl = std::fs::read_to_string(only_file_starting_with(package, "CPL_")).unwrap();
     assert!(
         cpl.contains(
             "<meta:ExtensionMetadata scope=\"http://www.dcimovies.com/schemas/2018/HDR-Metadata\">"

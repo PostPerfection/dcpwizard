@@ -323,12 +323,15 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Drag & drop file import (video, audio, subtitle)
 - Keyboard shortcuts (Ctrl+N/O/B/P/I, Ctrl+1–7 for views, Space/arrows/Home during preview). Ctrl+K opens the shortcut list, where clicking a shortcut rebinds it (Backspace clears, Escape cancels) and the rebindings are saved
 - Recent projects quick-access list
+- Projects: New (Ctrl+N) picks where the `.dcpwizard` file lives and starts from the default panel named after it. Save (Ctrl+S), Save As (Ctrl+Shift+S) and Open (Ctrl+O) write and read the whole build panel, with the sources, reels, markers, ratings, idents and output folder but not Settings. Every build also writes `<title>.dcpwizard` beside the package and saves the open project, Recent lists these files, and unsaved changes are kept as a draft in the app data folder that comes back on the next launch
 - Right-click context menus on assets (Preview, Remove, Show in Files)
 - Asset filter / search
 - Auto-detect framerate and resolution from imported video (via ffprobe)
 - Pre-build hints: a Before you build dialog lists what will package but is likely to be wrong on a cinema screen, with Build anyway or Go back. Turn it off from the dialog or in Settings ("Show hints before building"), and the hints still reach the job log
-- Post-build actions: a finished build offers Play (the new DCP in the embedded preview), Inspect (the Verify view, already pointed at the output and running) and Reveal (the output folder in the file manager), beside the progress bar. Starting another build clears the row
+- Output folder: a build writes the DCP to a new folder inside the chosen one, named after the title, the way DCP-o-matic does. With ISDCF naming on the ISDCF name goes in the CPL and the folder keeps the title. With no folder chosen it goes in the default output folder from Settings, or Documents
+- Post-build actions: a finished build offers Play (the new DCP in the embedded preview), Inspect (the Verify view, already pointed at the output and running) and Reveal (the new DCP's folder in the file manager), beside the progress bar. Starting another build clears the row
 - Per-stage timings in the job log: `[TIMING]` lines next to each stage's own log lines giving preflight, encode, audio, packaging and validation time, plus the total
+- Troubleshooting lines in the job log: after `Started:` come `Machine:` (OS, CPU, RAM), `GPU:` (name, driver and memory from nvidia-smi) when the accelerator is requested, `Source:` from the probe and `Settings:` with every panel field as one JSON object, the encode adds the pixel format it decodes to, and the last line is `Finished:` with `done`, `failed: <reason>` or `cancelled`. A panic, or on Linux and macOS a SIGSEGV, SIGBUS, SIGABRT or SIGILL, writes a `[CRASH]` line to the log before the app exits
 - Progress in title bar (visible in taskbar during builds)
 - Desktop notifications on build complete/fail
 - Conditional button enabling (Build disabled until ready)
@@ -379,7 +382,7 @@ finds the plugin source under the shared `Grok/grok` workspace.
 
 A desktop launcher inherits neither variable, so put both on the `.desktop` Exec line or in `~/.config/environment.d`.
 
-**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it beside the package as `<output>.log`, so `--output /x/my_dcp` logs to `/x/my_dcp.log`. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device. `--threads N` sets the encoder threads, and the same count sizes the accelerator plugin's host threads. 0, or no flag and no saved setting, runs one thread per available CPU. The job log prints the count as `Encode threads: N`.
+**GPU encode (CLI).** `--gpu` refuses to start if the plugin cannot load. ffmpeg uses `-hwaccel cuda` on Linux/Windows and `-hwaccel videotoolbox` on macOS. The job log confirms the device ran: the header prints `Accelerator: requested, active` and the encode is followed by `[ENCODE] Frames on the device: N of M`. Both `create` and the GUI write it beside the package folder, so `--output /x --title "My Film"` logs to `/x/My Film.log`. The `create` log holds the same lines as the GUI log, from `Started:` and the machine, GPU, source and settings lines to the closing `Finished:` line, with `Settings:` listing every `create` option as given or defaulted. Progress prints `colour_transform_on_device=true` when Rec.709→DCI X'Y'Z' (or planar YUV) ran on the device. `--threads N` sets the encoder threads, and the same count sizes the accelerator plugin's host threads. 0, or no flag and no saved setting, runs one thread per available CPU. The job log prints the count as `Encode threads: N`.
 
 ```bash
 dcpwizard --gpu create \
@@ -404,7 +407,8 @@ A plugin built with the CMake default `GPUP_ENABLE_AUTH=OFF` does not ask for a 
 ## CLI Usage
 
 ```bash
-# Create a DCP
+# Create a DCP. --output is the parent folder: the package goes in ./dcp/My Feature Film,
+# named after the title, as DCP-o-matic does. --isdcf-name names the CPL only
 dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --output ./dcp
 
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
@@ -417,7 +421,7 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp --check
 # Transcode an existing DCP's picture essence to a lower bandwidth (audio and
 # subtitle tracks are copied unchanged). Encrypted input needs --kdm with
 # --recipient-key, or --keys, and is written out decrypted
-dcpwizard transcode-dcp --input ./dcp --output ./dcp_light --video-bit-rate 100
+dcpwizard transcode-dcp --input "./dcp/My Film" --output ./dcp_light --video-bit-rate 100
 
 # Create with encryption. Content keys are generated with a CSPRNG and every
 # essence is AES-128 encrypted at wrap time: picture, sound, subtitle,
@@ -564,26 +568,28 @@ dcpwizard mid-side-decode -i ms.wav -o lr.wav --mid 0 --side 1
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
     --start-at 22:00 --resume --shutdown-when-done
 
-# Pipeline: video → J2K → DCP in one command, encoding to <output>/j2k and removing it once packaged
+# Pipeline: video → J2K → DCP in one command, into ./dcp/My Film, encoding to its j2k folder and removing it once packaged
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 
 # Supplemental Version File (VF): replace reel 1's sound against an existing OV.
 # Unchanged reels reference the OV by asset id; only the new MXF ships in the VF.
 # Replacement can be raw essence (WAV/J2K, gets wrapped) or an already-wrapped MXF.
-dcpwizard create-vf --ov ./dcp --output ./dcp_vf --replace-sound 1=./new_mix.wav
+# With no --title the VF goes in ./dcp_vf/<OV title>_VF.
+dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf --replace-sound 1=./new_mix.wav
 # Validate the VF against its OV (resolves cross-references):
-dcpdoctor validate ./dcp_vf --ov ./dcp
+dcpdoctor validate "./dcp_vf/My Film_VF" --ov "./dcp/My Film"
 # Subtitle VF: add or replace a reel's subtitle (SRT or SMPTE XML). A subtitle-only
 # VF references the OV picture/sound by id and ships just the new subtitle MXF.
-dcpwizard create-vf --ov ./dcp --output ./dcp_vf \
+dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf \
     --add-subtitle 1=./fr.srt --subtitle-language fr
 
-# Assemble a new OV composition from existing DCPs (reels in program order)
+# Assemble a new OV composition from existing DCPs (reels in program order),
+# written to ./assembled/Short + Feature
 dcpwizard assemble --input ./short_dcp --input ./feature_dcp \
     --output ./assembled --title "Short + Feature"
 
 # Edit a DCP's CPL metadata in place (or into --output); refuses encrypted DCPs
-dcpwizard edit --input ./dcp --title "My Film (2024 Restoration)" --content-kind FTR
+dcpwizard edit --input "./dcp/My Film" --title "My Film (2024 Restoration)" --content-kind FTR
 
 # Multi-composition package: one CPL per manifest entry over a shared PKL/ASSETMAP
 dcpwizard create-multi --compositions comps.json --output ./dcp
@@ -691,7 +697,7 @@ dcpwizard watch ./incoming --output ./packages --interval 30 \
 # is the daemon's jobs.jsonl, DCPWIZARD_GUI_JOBS_FILE the GUI's gui-jobs.jsonl.
 dcpwizard daemon
 
-# Manage job queue
+# Manage job queue. A create-dcp job writes to <output_dir>/<title>, here ./dcp/My Film
 dcpwizard batch list
 dcpwizard batch add -T create-dcp -p '{"title":"My Film","standard":"Smpte","resolution":"TwoK","content_type":"Feature","frame_rate_num":24,"frame_rate_den":1,"max_bitrate_mbps":250,"encrypt":false,"stereo_3d":false,"container_width":0,"container_height":0,"output_dir":"./dcp","j2k_dir":"./j2k","audio_path":"./audio.wav","audio_input_order":"Canonical51","subtitle_language":"en","reel_length_minutes":0}'
 dcpwizard batch cancel <job-id>
@@ -819,14 +825,14 @@ dcpwizard cert-fetch --vendor qube --type QXPD --serial 54 -o screen.pem
 dcpwizard cert-fetch --vendor christie --serial 218281 --user me --password-file ~/.config/dcpwizard/vendor-password -o screen.pem
 dcpwizard cert-fetch --vendor barco --serial 1234567890 --user me --password-file ~/.config/dcpwizard/vendor-password -o screen.pem
 
-# Package a trailer (ratings card + countdown leader + content)
+# Package a trailer (ratings card + countdown leader + content), the DCP in ./trailer_pkg/My Film
 dcpwizard trailer -c trailer.mov -o ./trailer_pkg --title "My Film" \
     --rating "PG-13" --rating-system mpaa --band green --countdown 8
 
 # Generate DCP markers for a composition
 dcpwizard markers --frames 172800        # FFOC/LFOC list
 dcpwizard markers --frames 172800 --xml  # XML MarkerList
-# place any of the ten markers (frame number or HH:MM:SS:FF; validated <= length)
+# place any of the ten markers (frame number or HH:MM:SS:FF; validated < length)
 dcpwizard markers --frames 172800 --marker FFEC=01:59:00:00 --marker LFEC=02:00:00:00 --xml
 # the same markers written into a real CPL MainMarkers asset at create time
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp \

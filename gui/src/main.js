@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { documentDir } from "@tauri-apps/api/path";
+import { documentDir, homeDir } from "@tauri-apps/api/path";
 import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
@@ -738,7 +738,13 @@ renderCplTabs();
 
 // === Output directory ===
 async function defaultOutputFolder() {
-  return getPrefs().outputDir || documentDir();
+  if (getPrefs().outputDir) return getPrefs().outputDir;
+  // a bare account has no documents folder registered
+  try {
+    return await documentDir();
+  } catch {
+    return await homeDir();
+  }
 }
 
 function setOutputFolder(folder) {

@@ -255,7 +255,7 @@ fn dcp_with_the_accessibility_tracks() -> std::path::PathBuf {
             .success();
         dir
     });
-    build.path().join("dcp")
+    build.path().join("dcp").join("T")
 }
 
 /// The same picture with no sound and no captions, so every accessibility track
@@ -280,7 +280,7 @@ fn dcp_without_the_accessibility_tracks() -> std::path::PathBuf {
             .success();
         dir
     });
-    build.path().join("dcp")
+    build.path().join("dcp").join("T")
 }
 
 fn accessibility_check(standard: &str, dcp: &std::path::Path) -> assert_cmd::Command {
@@ -654,7 +654,7 @@ fn create_fits_a_source_that_is_not_the_forced_raster_onto_it() {
             "scale to 1998x1080, pad to 2048x1080 at (24,0)",
         ));
     assert!(
-        std::fs::read_dir(&out)
+        std::fs::read_dir(out.join("T"))
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with("CPL_")),
@@ -683,7 +683,7 @@ fn create_encodes_a_source_that_already_is_the_forced_container_raster() {
         .assert()
         .success();
     assert!(
-        std::fs::read_dir(&out)
+        std::fs::read_dir(out.join("T"))
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with("CPL_")),
@@ -702,7 +702,8 @@ fn a_finished_dcp_holds_no_scratch_and_a_failed_one_keeps_it_for_a_resume() {
     write_test_video(&video, 2048, 1080);
 
     let failed = dir.path().join("failed");
-    std::fs::create_dir_all(failed.join("ASSETMAP.xml")).unwrap();
+    let failed_package = failed.join("T");
+    std::fs::create_dir_all(failed_package.join("ASSETMAP.xml")).unwrap();
     cmd()
         .args([
             "create",
@@ -718,11 +719,11 @@ fn a_finished_dcp_holds_no_scratch_and_a_failed_one_keeps_it_for_a_resume() {
         .failure()
         .stdout(predicate::str::contains("--resume reuses them"));
     assert!(
-        dcpwizard_core::trim::frame_count(&failed.join("j2k")) > 0,
+        dcpwizard_core::trim::frame_count(&failed_package.join("j2k")) > 0,
         "a failed package must keep the frames it encoded"
     );
     assert!(
-        failed.join(".dcpwizard-encode.json").exists(),
+        failed_package.join(".dcpwizard-encode.json").exists(),
         "a failed package must keep the state --resume checks"
     );
 
@@ -741,15 +742,15 @@ fn a_finished_dcp_holds_no_scratch_and_a_failed_one_keeps_it_for_a_resume() {
         .assert()
         .success();
     assert!(
-        !out.join("j2k").exists(),
+        !out.join("T").join("j2k").exists(),
         "the codestreams shipped in the DCP"
     );
     assert!(
-        !out.join(".dcpwizard-encode.json").exists(),
+        !out.join("T").join(".dcpwizard-encode.json").exists(),
         "the resume state shipped in the DCP"
     );
     assert!(
-        std::fs::read_dir(&out)
+        std::fs::read_dir(out.join("T"))
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().starts_with("CPL_")),
@@ -845,7 +846,7 @@ fn create_holds_the_dci_cap_when_the_bandwidth_asks_for_more() {
              ({BANDWIDTH_OVER_THE_DCI_CAP_MBPS} Mbit/s), cap {DCI_CODESTREAM_BYTE_CAP} bytes"
         )));
 
-    let picture = std::fs::read_dir(&out)
+    let picture = std::fs::read_dir(out.join("T"))
         .unwrap()
         .flatten()
         .map(|e| e.path())

@@ -35,12 +35,6 @@ user-facing surface is here.
   `--still-length` with a video; a trim on a still; an appearance flag with no
   track to style; the reel-split sources). `preflight` takes the rules whose
   message names the content, not the control.
-- A marker past the composition length is refused after the encode
-  (`markers::markers_for_composition`, from `create_dcp`). The plan-time pass
-  hints at a marker sitting at or past the picture length rather than refusing
-  one, because the frame count it works from is the source's and the packaged
-  length also depends on padding the packager applies. Moving the refusal forward
-  needs the padded length to be settled in the plan.
 
 - ISDCF naming takes free-text studio codes and territories, where it could pull
   the current ISDCF registry instead of naming from whatever the user typed.

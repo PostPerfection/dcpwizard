@@ -31,6 +31,16 @@ struct InputDcp {
 }
 
 /// Assemble the inputs into a single-CPL OV at `config.output_dir`. Returns 0 ok.
+pub const ASSEMBLED_OV_TITLE: &str = "Assembled OV";
+
+pub fn assemble_title(title: &str) -> String {
+    if title.is_empty() {
+        ASSEMBLED_OV_TITLE.to_string()
+    } else {
+        title.to_string()
+    }
+}
+
 pub fn assemble(config: &AssembleConfig) -> i32 {
     if config.inputs.len() < 2 {
         tracing::error!("assemble needs at least two input DCPs");
@@ -194,11 +204,7 @@ pub fn assemble(config: &AssembleConfig) -> i32 {
     // the assembled program is a new composition, so it gets its own FFOC/LFOC
     crate::cpl::apply_default_markers(&mut cpl_reels);
 
-    let title = if config.title.is_empty() {
-        "Assembled OV".to_string()
-    } else {
-        config.title.clone()
-    };
+    let title = assemble_title(&config.title);
 
     // the program combines several sources, so no input CPL's block describes it
     let main_sound = match main_sound_track {

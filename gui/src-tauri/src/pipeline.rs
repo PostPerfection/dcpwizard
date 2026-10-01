@@ -286,16 +286,6 @@ fn isdcf_name_for(request: &IsdcfNameRequest) -> Result<String, String> {
     ))
 }
 
-/// The output folder under its new name, when the panel derived it from the
-/// title. A folder the user chose themselves is left alone.
-fn renamed_output_dir(output_dir: &str, title: &str, name: &str) -> PathBuf {
-    let output_path = PathBuf::from(output_dir);
-    match output_path.file_name().and_then(|folder| folder.to_str()) {
-        Some(folder) if folder == title => output_path.with_file_name(name),
-        _ => output_path,
-    }
-}
-
 /// The ISDCF content title the panel would build, for the live preview.
 #[tauri::command]
 pub async fn isdcf_name_preview(request: IsdcfNameRequest) -> Result<String, String> {
@@ -435,11 +425,17 @@ fn apply_isdcf_name_to_job(
         picture_raster,
         ..Default::default()
     };
-    let name = isdcf_name_for(&request)?;
-    job.output_dir =
-        renamed_output_dir(job.output_dir.to_string_lossy().as_ref(), &job.title, &name);
-    job.title = name;
+    job.title = isdcf_name_for(&request)?;
     Ok(())
+}
+
+// the panel sends the folder the package goes in, not the package folder
+fn apply_package_name_to_job(
+    job: &mut JobConfig,
+    picture_raster: Option<(u32, u32)>,
+) -> Result<(), String> {
+    job.output_dir = dcpwizard_core::package_dir::new_package_dir(&job.output_dir, &job.title)?;
+    apply_isdcf_name_to_job(job, picture_raster)
 }
 
 // ─── Queue state (managed by Tauri) ────────────────────────────────────────
@@ -464,13 +460,6 @@ pub type JobQueue = postkit::gui_job_queue::GuiJobQueue<JobConfig>;
 /// own jobs.jsonl and names a different file.
 pub fn jobs_path() -> PathBuf {
     postkit::gui_job_queue::jobs_path("DCPWIZARD_GUI_JOBS_FILE", dcpwizard_core::store::data_dir())
-}
-
-/// Files a finished DCP always has at its root.
-const DCP_ROOT_FILES: [&str; 2] = ["ASSETMAP.xml", "VOLINDEX.xml"];
-
-fn holds_dcp(dir: &std::path::Path) -> bool {
-    DCP_ROOT_FILES.iter().any(|name| dir.join(name).exists())
 }
 
 /// What a panel field holds, or None when the user left it empty.
@@ -954,18 +943,10 @@ pub async fn submit_job(
     };
 
     let (plan, planned_picture) = checked_job_plan(&job)?;
-    apply_isdcf_name_to_job(&mut job, planned_picture.map(|picture| picture.raster))?;
+    apply_package_name_to_job(&mut job, planned_picture.map(|picture| picture.raster))?;
     let submitted_title = job.title.clone();
     let submitted_output_dir = job.output_dir.to_string_lossy().into_owned();
 
-    // packages are folders named by title, so a reused title lands in the old
-    // package. refuse now, not after the encode.
-    if holds_dcp(&job.output_dir) {
-        return Err(format!(
-            "Output folder already holds a DCP: {}. Use a new title or output folder, or delete the old package first.",
-            job.output_dir.display()
-        ));
-    }
     if queue.is_building_into(&job.output_dir) {
         return Err(format!(
             "A build is already running into {}. Wait for it to finish or cancel it.",
@@ -1298,7 +1279,7 @@ pub async fn disk_space(path: String) -> Result<DiskSpace, String> {
 #[tauri::command]
 pub async fn retitle_dcp(path: String, title: String) -> Result<String, String> {
     let dir = PathBuf::from(&path);
-    if !holds_dcp(&dir) {
+    if !dcpwizard_core::package_dir::holds_dcp(&dir) {
         return Err(format!("{path} does not hold a DCP"));
     }
     let title = title.trim().to_string();
@@ -1321,20 +1302,34 @@ pub async fn retitle_dcp(path: String, title: String) -> Result<String, String> 
         ));
     }
 
-    let folder_is_named_after_the_title =
-        dir.file_name().and_then(|n| n.to_str()) == Some(&old_title);
-    let title_works_as_a_folder_name =
-        !title.contains(std::path::MAIN_SEPARATOR) && !title.contains('/');
-    if !folder_is_named_after_the_title || !title_works_as_a_folder_name {
+    let Some(renamed) = retitled_package_dir(&dir, &old_title, &title) else {
         return Ok(path);
-    }
-    let renamed = dir.with_file_name(&title);
-    if renamed.exists() {
+    };
+    let log = dcpwizard_core::job_log::job_log_path(&dir)?;
+    let renamed_log = dcpwizard_core::job_log::job_log_path(&renamed)?;
+    if renamed.exists() || renamed_log.exists() {
         return Ok(path);
     }
     std::fs::rename(&dir, &renamed)
         .map_err(|e| format!("Retitled, but could not rename the folder: {e}"))?;
+    if log.exists() {
+        std::fs::rename(&log, &renamed_log).map_err(|e| {
+            format!(
+                "Retitled and moved the package to {}, but could not rename its job log: {e}",
+                renamed.display()
+            )
+        })?;
+    }
     Ok(renamed.to_string_lossy().into_owned())
+}
+
+fn retitled_package_dir(dir: &Path, old_title: &str, new_title: &str) -> Option<PathBuf> {
+    let old_folder_name = dcpwizard_core::package_dir::package_folder_name(old_title).ok()?;
+    if dir.file_name() != Some(std::ffi::OsStr::new(&old_folder_name)) {
+        return None;
+    }
+    let new_folder_name = dcpwizard_core::package_dir::package_folder_name(new_title).ok()?;
+    Some(dir.with_file_name(new_folder_name))
 }
 
 /// Delete a built DCP folder and everything in it. Refuses any folder that is
@@ -1345,7 +1340,7 @@ pub async fn delete_dcp(app: AppHandle, path: String) -> Result<(), String> {
     if !dir.exists() {
         return Err(format!("{path} no longer exists"));
     }
-    if !holds_dcp(&dir) {
+    if !dcpwizard_core::package_dir::holds_dcp(&dir) {
         return Err(format!("{path} does not hold a DCP, refusing to delete it"));
     }
     let queue = app.state::<JobQueue>();
@@ -1426,13 +1421,14 @@ pub async fn create_vf(
         signer: None,
     };
 
+    let package_dir = dcpwizard_core::vf::new_vf_package_dir(&config)?;
     // create_vf does blocking IO (mxf wrap, hashing), keep it off the async runtime.
     let code = tokio::task::spawn_blocking(move || dcpwizard_core::vf::create_vf(&config))
         .await
         .map_err(|e| format!("VF task panicked: {e}"))?;
 
     if code == 0 {
-        Ok(format!("Created Version File DCP at {output_dir}"))
+        Ok(package_dir.to_string_lossy().into_owned())
     } else {
         Err(format!(
             "VF creation failed (rc={code}); see log for details"
@@ -2198,18 +2194,64 @@ fn build_dcp_config(
 }
 
 fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
+    let queue = app.state::<JobQueue>();
+    run_with_job_log(
+        &job.output_dir,
+        || queue.is_cancelled(),
+        |log_file, log_path| run_logged_job(app, job, log_file, log_path),
+    )
+}
+
+fn run_with_job_log(
+    output: &Path,
+    cancelled: impl Fn() -> bool,
+    run: impl FnOnce(Arc<Mutex<std::fs::File>>, &Path) -> Result<String, String>,
+) -> Result<String, String> {
+    let log_path = dcpwizard_core::job_log::job_log_path(output)?;
+    std::fs::create_dir_all(output)
+        .map_err(|e| format!("Cannot create the output folder {}: {e}", output.display()))?;
+    let log = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Cannot create the job log {}: {e}", log_path.display()))?;
+    let running_job_log = crate::crash_log::RunningJobLog::open(&log).map_err(|e| {
+        format!(
+            "Cannot open the job log {} for crash lines: {e}",
+            log_path.display()
+        )
+    })?;
+    let log_file = Arc::new(Mutex::new(log));
+
+    // a panic still gets its Finished line before it is passed on
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(log_file.clone(), &log_path)
+    }));
+    let outcome = match &result {
+        Ok(Ok(_)) => dcpwizard_core::job_log::JobOutcome::Done,
+        Ok(Err(_)) if cancelled() => dcpwizard_core::job_log::JobOutcome::Cancelled,
+        Ok(Err(error)) => dcpwizard_core::job_log::JobOutcome::Failed(error),
+        Err(_) => dcpwizard_core::job_log::JobOutcome::Failed("panicked"),
+    };
+    log_to(
+        &log_file,
+        &dcpwizard_core::job_log::finished_line(
+            &dcpwizard_core::job_log::log_timestamp(),
+            &outcome,
+        ),
+    );
+    drop(running_job_log);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn run_logged_job(
+    app: &AppHandle,
+    job: &JobConfig,
+    log_file: Arc<Mutex<std::fs::File>>,
+    log_path: &Path,
+) -> Result<String, String> {
     let job_started = Instant::now();
     let queue = app.state::<JobQueue>();
     let cancel = queue.cancel_flag();
     let pause = queue.pause_flag();
-
     let output = &job.output_dir;
-    let log_path = dcpwizard_core::job_log::job_log_path(output)?;
-    std::fs::create_dir_all(output)
-        .map_err(|e| format!("Cannot create the output folder {}: {e}", output.display()))?;
-    let log_file = Arc::new(Mutex::new(std::fs::File::create(&log_path).map_err(
-        |e| format!("Cannot create the job log {}: {e}", log_path.display()),
-    )?));
 
     log_to(&log_file, "=== DCP Wizard Pipeline ===");
     for component in guikit::component_versions::installed_components(
@@ -2250,11 +2292,19 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     );
     log_to(
         &log_file,
-        &format!(
-            "Started: {}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-        ),
+        &format!("Started: {}", dcpwizard_core::job_log::log_timestamp()),
     );
+    for line in
+        postkit::machine_info::machine_info_lines(guikit::gpu::accelerator_status().requested)
+    {
+        log_to(&log_file, &line);
+    }
+    let source_line = match &job.source {
+        Some(source) => dcpwizard_core::job_log::source_line(source),
+        None => "Source: not probed".to_string(),
+    };
+    log_to(&log_file, &source_line);
+    log_to(&log_file, &dcpwizard_core::job_log::settings_line(job)?);
 
     let (fps_num, fps_den) = frame_rate_of(&job.framerate);
     let encode_fps = postkit::encode::FrameRate::new(fps_num, fps_den);
@@ -2478,18 +2528,12 @@ fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     if job.still_length_frames == 0 {
         let device_frames =
             postkit::grok_encoder::accelerated_frames().saturating_sub(device_frames_before);
-        log_to(
-            &log_file,
-            &format!(
-                "[ENCODE] Frames on the device: {device_frames} of {}",
-                encode_result.frames_encoded
-            ),
-        );
-        if device_frames == 0 && guikit::gpu::accelerator_status().requested {
-            log_to(
-                &log_file,
-                "[ENCODE] WARNING: the GPU was requested and no frame ran on the device",
-            );
+        for line in dcpwizard_core::job_log::device_frames_lines(
+            device_frames,
+            encode_result.frames_encoded,
+            guikit::gpu::accelerator_status().requested,
+        ) {
+            log_to(&log_file, &line);
         }
     }
 
@@ -2880,6 +2924,55 @@ mod tests {
         assert!(!verify_after_build(Some(false)));
     }
 
+    fn finished_line_after(
+        cancelled: bool,
+        run: impl FnOnce(Arc<Mutex<std::fs::File>>, &Path) -> Result<String, String>,
+    ) -> String {
+        let _turn = crate::crash_log::RUNNING_JOB_LOG_TEST_TURN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("dcp");
+        let _ = run_with_job_log(&output, || cancelled, run);
+        let log = std::fs::read_to_string(directory.path().join("dcp.log")).unwrap();
+        log.lines().last().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn the_log_ends_with_a_finished_line_however_the_job_ends() {
+        let done = finished_line_after(false, |log_file, _| {
+            log_to(&log_file, "[PACKAGE] Done");
+            Ok("DCP created".to_string())
+        });
+        assert!(
+            done.starts_with("Finished: ") && done.ends_with(", done"),
+            "{done}"
+        );
+        let failed = finished_line_after(false, |_, _| Err("ffmpeg exited with 1".to_string()));
+        assert!(
+            failed.ends_with(", failed: ffmpeg exited with 1"),
+            "{failed}"
+        );
+        let cancelled = finished_line_after(true, |_, _| Err("Cancelled".to_string()));
+        assert!(cancelled.ends_with(", cancelled"), "{cancelled}");
+    }
+
+    #[test]
+    fn a_panicking_job_still_ends_its_log_and_the_panic_reaches_the_caller() {
+        let _turn = crate::crash_log::RUNNING_JOB_LOG_TEST_TURN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("dcp");
+        let panicked = std::panic::catch_unwind(|| {
+            run_with_job_log(&output, || false, |_, _| panic!("the encoder gave up"))
+        });
+        assert!(panicked.is_err(), "the panic is passed on");
+        let log = std::fs::read_to_string(directory.path().join("dcp.log")).unwrap();
+        let finished = log.lines().last().unwrap_or_default();
+        assert!(finished.ends_with(", failed: panicked"), "{log}");
+    }
+
     #[test]
     fn stage_timing_reads_as_minutes_and_seconds() {
         assert_eq!(
@@ -2930,6 +3023,7 @@ mod tests {
 
     fn test_source() -> postkit::probe::VideoInfo {
         postkit::probe::VideoInfo {
+            codec_name: "h264".to_string(),
             width: 1920,
             height: 1080,
             fps_num: 24,
@@ -3144,27 +3238,31 @@ mod tests {
     }
 
     #[test]
-    fn the_isdcf_name_takes_over_a_folder_derived_from_the_title() {
-        assert_eq!(
-            renamed_output_dir(
-                "/out/My Film",
-                "My Film",
-                "MyFilm_TST-1_F_EN-XX_20_2K_SMPTE_OV"
-            ),
-            PathBuf::from("/out/MyFilm_TST-1_F_EN-XX_20_2K_SMPTE_OV")
-        );
+    fn the_package_goes_in_a_folder_named_by_the_title_inside_the_chosen_folder() {
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            output_dir: PathBuf::from("/out/deliveries"),
+            ..test_job()
+        };
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert_eq!(job.title, "My Film");
+        assert_eq!(job.output_dir, PathBuf::from("/out/deliveries/My Film"));
     }
 
     #[test]
-    fn a_folder_the_user_chose_keeps_its_name() {
-        assert_eq!(
-            renamed_output_dir(
-                "/out/deliveries",
-                "My Film",
-                "MyFilm_TST-1_F_EN-XX_20_2K_SMPTE_OV"
-            ),
-            PathBuf::from("/out/deliveries")
-        );
+    fn the_package_folder_keeps_the_typed_title_when_isdcf_naming_is_on() {
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            output_dir: PathBuf::from("/out/deliveries"),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..test_job()
+        };
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert!(job.title.starts_with("MyFilm_"), "{}", job.title);
+        assert_eq!(job.output_dir, PathBuf::from("/out/deliveries/My Film"));
     }
 
     #[test]
@@ -3213,7 +3311,6 @@ mod tests {
     fn the_submitted_auto_name_uses_the_planned_raster() {
         let mut job = JobConfig {
             title: "My Film".into(),
-            output_dir: PathBuf::from("/out/My Film"),
             resolution: "auto".into(),
             naming: NamingMetadata {
                 isdcf_naming: true,
@@ -3224,7 +3321,6 @@ mod tests {
         apply_isdcf_name_to_job(&mut job, Some((4096, 1716))).unwrap();
         assert!(job.title.contains("_S_"), "{}", job.title);
         assert!(job.title.contains("_4K_"), "{}", job.title);
-        assert_eq!(job.output_dir, PathBuf::from("/out").join(&job.title));
     }
 
     #[test]
@@ -3289,15 +3385,27 @@ mod tests {
     }
 
     #[test]
-    fn only_a_folder_holding_a_dcp_counts_as_one() {
-        // delete_dcp refuses anything this rejects, so a recent entry pointing
-        // at a folder of source media cannot delete it.
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!holds_dcp(dir.path()));
-        std::fs::write(dir.path().join("movie.mov"), b"x").unwrap();
-        assert!(!holds_dcp(dir.path()));
-        std::fs::write(dir.path().join("ASSETMAP.xml"), b"x").unwrap();
-        assert!(holds_dcp(dir.path()));
+    fn a_retitle_renames_a_folder_named_after_the_old_title_by_folder_name_rules() {
+        assert_eq!(
+            retitled_package_dir(Path::new("/out/My_ Film"), "My: Film.", "Next: Film."),
+            Some(PathBuf::from("/out/Next_ Film"))
+        );
+    }
+
+    #[test]
+    fn a_retitle_leaves_a_folder_the_user_named_alone() {
+        assert_eq!(
+            retitled_package_dir(Path::new("/out/Delivery"), "My Film", "Next Film"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_retitle_to_a_title_with_no_usable_folder_name_keeps_the_folder() {
+        assert_eq!(
+            retitled_package_dir(Path::new("/out/My Film"), "My Film", ".."),
+            None
+        );
     }
 
     #[test]

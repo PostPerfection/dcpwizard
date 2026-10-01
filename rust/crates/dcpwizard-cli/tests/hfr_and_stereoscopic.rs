@@ -141,7 +141,7 @@ fn package_at(dir: &Path, config_home: &Path, fps: u32) -> PathBuf {
         ])
         .assert()
         .success();
-    out
+    out.join("HFR")
 }
 
 #[test]
@@ -272,7 +272,8 @@ fn a_stereoscopic_dcp_carries_one_eye_in_each_phase() {
     solid_colour(&right, "blue", FPS);
     let sound = dir.path().join("silence.wav");
     write_silence(&sound);
-    let out = dir.path().join("dcp3d");
+    let output = dir.path().join("dcp3d");
+    let out = output.join("ThreeD");
 
     dcpwizard(config_home.path())
         .args([
@@ -286,7 +287,7 @@ fn a_stereoscopic_dcp_carries_one_eye_in_each_phase() {
             "--audio",
             sound.to_str().unwrap(),
             "-o",
-            out.to_str().unwrap(),
+            output.to_str().unwrap(),
             "--container",
             "2k-flat",
         ])

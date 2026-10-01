@@ -122,6 +122,7 @@ fn subtitle_only_vf_references_ov_and_volume_validates() {
         signer: None,
     };
     assert_eq!(create_vf(&config), 0);
+    let vf = dcpwizard_core::vf::vf_package_dir(&config).unwrap();
 
     // the OV picture id the VF must keep referencing (VF ships no picture MXF)
     let ov_cpl = read_cpl(&ov);

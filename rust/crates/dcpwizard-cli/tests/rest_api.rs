@@ -226,9 +226,11 @@ fn make_source(directory: &Path) -> (PathBuf, PathBuf) {
     (j2k, audio)
 }
 
+const TITLE: &str = "Rest Api";
+
 fn base_config(output: PathBuf, j2k: PathBuf, audio: PathBuf) -> DcpConfig {
     DcpConfig {
-        title: "Rest Api".into(),
+        title: TITLE.into(),
         standard: dcpwizard_core::Standard::Smpte,
         resolution: dcpwizard_core::Resolution::TwoK,
         content_type: dcpwizard_core::ContentType::Test,
@@ -352,9 +354,14 @@ fn a_posted_config_builds_a_dcp_the_verify_route_then_passes() {
         "the create job failed: {}",
         job["message"]
     );
-    assert!(has_assetmap(&output), "no ASSETMAP in {}", output.display());
+    let package = output.join(TITLE);
+    assert!(
+        has_assetmap(&package),
+        "no ASSETMAP in {}",
+        package.display()
+    );
 
-    let verify = harness.post("/verify", output.to_str().unwrap());
+    let verify = harness.post("/verify", package.to_str().unwrap());
     assert!(verify.starts_with("HTTP/1.1 202"), "{verify}");
     let verify_job = harness.wait_for_job(&job_id_of(&verify));
     assert_eq!(

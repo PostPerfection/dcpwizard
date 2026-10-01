@@ -6,6 +6,7 @@ const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
 const FRAME_RATE: u32 = 24;
 const FRAMES: u32 = 3;
+const TITLE: &str = "Verified";
 
 const PASSED_LINE: &str = "DCP verification PASSED";
 const SKIP_LINE: &str = "--no-verify: the finished package was not verified";
@@ -54,7 +55,7 @@ fn create(source: &Path, out: &Path, config_home: &Path, extra: &[&str]) -> std:
     command.args([
         "create",
         "--title",
-        "Verified",
+        TITLE,
         "--video",
         source.to_str().unwrap(),
         "-o",
@@ -83,7 +84,8 @@ fn a_create_verifies_the_package_it_wrote() {
     );
     assert!(!printed.contains(SKIP_LINE), "{printed}");
     // the verification read a real package, not an empty directory
-    assert!(out.join("ASSETMAP.xml").exists() || out.join("ASSETMAP").exists());
+    let package = out.join(TITLE);
+    assert!(package.join("ASSETMAP.xml").exists() || package.join("ASSETMAP").exists());
 }
 
 #[test]
@@ -123,7 +125,7 @@ fn verify_strict_runs_the_bv21_profile_check() {
         dcpwizard(config_home.path())
             .arg("verify")
             .args(extra)
-            .arg(&out)
+            .arg(out.join(TITLE))
             .output()
             .expect("dcpwizard has to run")
     };
@@ -136,4 +138,67 @@ fn verify_strict_runs_the_bv21_profile_check() {
 
     let plain = everything_printed(&verify(&[]));
     assert!(!plain.contains(BV21_SECTION_LINE), "{plain}");
+}
+
+#[test]
+fn a_title_with_a_slash_names_a_folder_with_an_underscore() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+
+    let run = dcpwizard(config_home.path())
+        .args([
+            "create",
+            "--title",
+            "Part 1/2",
+            "--video",
+            source.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--twok",
+            "--no-verify",
+        ])
+        .output()
+        .expect("dcpwizard has to run");
+    assert!(run.status.success(), "{}", everything_printed(&run));
+    assert!(out.join("Part 1_2").join("ASSETMAP.xml").exists());
+    assert!(!out.join("Part 1").exists());
+}
+
+fn files_with_sizes_and_times(directory: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(files_with_sizes_and_times(&path));
+            continue;
+        }
+        let metadata = std::fs::metadata(&path).unwrap();
+        files.push((path, metadata.len(), metadata.modified().unwrap()));
+    }
+    files.sort();
+    files
+}
+
+#[test]
+fn a_second_create_under_the_same_title_is_refused_and_leaves_the_first_package_alone() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+
+    let first = create(&source, &out, config_home.path(), &["--no-verify"]);
+    assert!(first.status.success(), "{}", everything_printed(&first));
+    let first_files = files_with_sizes_and_times(&out);
+
+    let second = create(&source, &out, config_home.path(), &["--no-verify"]);
+    let printed = everything_printed(&second);
+    assert!(!second.status.success(), "{printed}");
+    let expected = format!(
+        "A DCP already exists at {}. Use a new title or output folder, or delete the old package first.",
+        out.join(TITLE).display()
+    );
+    assert!(printed.contains(&expected), "{printed}");
+    assert_eq!(files_with_sizes_and_times(&out), first_files);
 }

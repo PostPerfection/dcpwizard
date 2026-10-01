@@ -491,12 +491,13 @@ pub fn check_reel_split_support(content: &ReelSplitContent) -> Result<(), String
 pub const MARKERS_REFUSED_ON_SPLIT: &str = "--marker is not supported with reel splitting: a \
     marker offset is relative to its own reel. A split composition gets the default FFOC/LFOC pair";
 
-// the packaged length is only known after the encode, where the offsets are checked against it
+// with no frame count here the offsets are checked against the packaged length after the encode
 const MARKER_LENGTH_NOT_KNOWN_YET: u64 = u64::MAX;
 
 fn check_markers(plan: &CreatePlan) -> Result<(), String> {
+    let picture_frames = planned_picture_frames(plan).unwrap_or(MARKER_LENGTH_NOT_KNOWN_YET);
     plan.markers.iter().try_for_each(|spec| {
-        crate::markers::parse_marker_arg(spec, plan.fps, MARKER_LENGTH_NOT_KNOWN_YET).map(|_| ())
+        crate::markers::parse_marker_arg(spec, plan.fps, picture_frames).map(|_| ())
     })
 }
 
@@ -828,9 +829,37 @@ mod tests {
         let error = only_refusal(&plan);
         assert!(error.contains("invalid frame 'abc'"), "{error}");
 
-        plan.markers = vec!["FFEC=00:58:12:03".into()];
+        plan.markers = vec!["FFEC=00:00:00:00".into()];
         assert_eq!(check_markers(&plan), Ok(()));
         assert_eq!(check_before_encode(&plan), Ok(()));
+    }
+
+    #[test]
+    fn a_marker_at_or_past_the_planned_picture_length_is_refused_before_the_encode() {
+        let dir = tempfile::tempdir().unwrap();
+        let codestreams = dir.path().join("j2k");
+        write_codestreams(&codestreams, 3, 2048, 1080);
+        let mut plan = plan_with_picture(codestreams);
+        plan.pad_tail_frames = 2;
+
+        plan.markers = vec!["LFOC=4".into()];
+        assert_eq!(check_before_encode(&plan), Ok(()));
+
+        plan.markers = vec!["LFOC=5".into()];
+        let error = only_refusal(&plan);
+        assert!(
+            error.contains(
+                "marker LFOC at frame 5 is at or past the picture's 5 frames, the last frame is 4"
+            ),
+            "{error}"
+        );
+
+        let unknown_length = CreatePlan {
+            picture_kind: PictureKind::Video,
+            markers: vec!["FFEC=00:58:12:03".into()],
+            ..Default::default()
+        };
+        assert_eq!(check_markers(&unknown_length), Ok(()));
     }
 
     /// Filling only adds silence, so a source the packaged count cannot hold is

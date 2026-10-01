@@ -2,6 +2,7 @@
 
 use tauri::Manager;
 
+const PROJECT_FILE_EXTENSION: &str = "dcpwizard";
 const MAIN_WINDOW_LABEL: &str = "main";
 #[cfg(target_os = "linux")]
 const MAIN_WEBVIEW_LABEL: &str = "main-webview";
@@ -18,6 +19,7 @@ const MAIN_WINDOW_MINIMUM_HEIGHT: f64 = 500.0;
 #[cfg(target_os = "linux")]
 const MAIN_WINDOW_BACKGROUND: tauri::window::Color = tauri::window::Color(0, 0, 0, 255);
 
+mod crash_log;
 mod library;
 mod pipeline;
 mod preferences;
@@ -40,6 +42,7 @@ pub fn run() {
 
     #[cfg(unix)]
     guikit::startup::fork_terminal_guard();
+    crash_log::install();
 
     let job_queue = pipeline::JobQueue::new(pipeline::jobs_path());
     job_queue.load_jobs_file();
@@ -52,6 +55,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .manage(job_queue)
+        .manage(guikit::launch_project::LaunchProject::default())
         .invoke_handler(tauri::generate_handler![
             guikit::preview::preview_load,
             guikit::preview::preview_play_pause,
@@ -72,6 +76,7 @@ pub fn run() {
             guikit::preview::preview_set_subtitle_visibility,
             guikit::gpu::set_gpu,
             component_versions,
+            guikit::launch_project::take_launch_project_path,
             preferences::load_preferences,
             preferences::save_preferences,
             preferences::reset_preferences,
@@ -113,11 +118,13 @@ pub fn run() {
                 },
             )?;
             app.manage(guikit::preview::create_player(app, MAIN_WINDOW_LABEL));
+            guikit::launch_project::store_from_args(app.handle(), PROJECT_FILE_EXTENSION);
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            guikit::launch_project::handle_run_event(app, &event, PROJECT_FILE_EXTENSION);
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 app.state::<guikit::preview::PreviewPlayer>().shutdown();
                 app.state::<pipeline::JobQueue>().stop_for_exit();

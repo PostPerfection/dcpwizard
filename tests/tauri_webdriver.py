@@ -33,6 +33,8 @@ FILE_DIALOG_LOCATION_CHORD = "ctrl+l"
 # that walks into the folder instead of choosing it
 DROP_COMPLETION_KEY = "Delete"
 CONFIRM_KEY = "Return"
+# a save dialog opens with only the stem of its suggested file name selected
+SELECT_ALL_CHORD = "ctrl+a"
 
 # viewport centre after scrolling the element into view
 CENTRE_OF_ELEMENT = """
@@ -245,18 +247,32 @@ class Window:
         )
         time.sleep(INPUT_SETTLE_SECONDS)
 
-    # with no window manager under Xvfb the picker reads keys only once focused
     def answer_file_dialog(self, path, windows_before):
+        dialog = self._focus_new_dialog(windows_before)
+        self.press(FILE_DIALOG_HOME_CHORD)
+        self.press(FILE_DIALOG_LOCATION_CHORD)
+        self.type_text(str(path))
+        self.press(DROP_COMPLETION_KEY)
+        self._confirm_dialog(dialog)
+
+    # the save dialog's name field takes a whole path
+    def answer_save_dialog(self, path, windows_before):
+        dialog = self._focus_new_dialog(windows_before)
+        self.press(SELECT_ALL_CHORD)
+        self.type_text(str(path))
+        self._confirm_dialog(dialog)
+
+    # with no window manager under Xvfb the picker reads keys only once focused
+    def _focus_new_dialog(self, windows_before):
         dialog = wait_until(
             "no file dialog opened",
             lambda: next(iter(visible_windows() - windows_before), None),
             FILE_DIALOG_TIMEOUT_SECONDS,
         )
         xdotool("windowfocus", "--sync", dialog)
-        self.press(FILE_DIALOG_HOME_CHORD)
-        self.press(FILE_DIALOG_LOCATION_CHORD)
-        self.type_text(str(path))
-        self.press(DROP_COMPLETION_KEY)
+        return dialog
+
+    def _confirm_dialog(self, dialog):
         self.press(CONFIRM_KEY)
         wait_until(
             "the file dialog stayed open",
