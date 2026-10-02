@@ -123,7 +123,7 @@ Free and open-source alternative to easyDCP Creator+.
 ### Export & Playback
 - **Export DCP** to ProRes, H.264, H.265, DNxHR, or image sequence
 - **Frame extraction**, extract individual frames as images (thumbnails/preview)
-- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback. MP4, ProRes and other sources use libmpv. Stereoscopic J2K also uses libmpv. Encrypted picture does not preview
+- **Frame-accurate preview**: DCP directories, CPLs, picture MXFs and J2K directories decode in process through Grok. The CPU worker pool sustains 2K playback. MP4, ProRes and other sources use libmpv. Stereoscopic J2K also uses libmpv. An encrypted package or picture MXF asks for the KDM and the recipient private key, or the KEYS.json, then plays its decrypted picture and sound. The keys are reused for that path until the app closes
 
 ### Delivery & Automation
 - **Copy to drive** with a free-space precheck and post-copy hash verification (USB/CRU); **format-drive** (ext2/ext3, volume label, mounted-target refusal) and **check-drive** (report fs type + label) for cinema hard-drive delivery

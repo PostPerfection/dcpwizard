@@ -9,15 +9,14 @@
 //! gets a new CPL id, and PKL/ASSETMAP/VOLINDEX are regenerated with fresh
 //! hashes.
 //!
-//! Key material lives only in memory: an UnwrappedKdm (recipient-key path, keys
-//! zeroed on drop) or a dcpwizard KEYS.json. Keys never reach logs, errors, or
-//! temp files, and no key-bearing struct is Debug-printed.
+//! Key material lives only in memory: a postkit ContentKeys from a KDM plus the
+//! recipient key or from a dcpwizard KEYS.json, zeroed on drop. Keys never reach
+//! logs, errors, or temp files, and no key-bearing struct is Debug-printed.
 
 use asdcplib::crypto::{AesDecContext, HmacContext};
 use asdcplib::{jp2k, pcm};
-use postkit::certificate::UnwrappedKdm;
+use postkit::content_keys::ContentKeys;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// 16 MB covers a single 4K J2K frame or one PCM edit unit.
@@ -37,75 +36,14 @@ pub struct DcpDecryptConfig {
     pub keys: Option<PathBuf>,
 }
 
-/// In-memory content keys, keyed by KeyId. Either an unwrapped KDM (whose keys
-/// zero on drop) or the raw keys from a KEYS.json. Never logged. Shared with the
-/// transcode-dcp KDM path.
-pub(crate) enum KeySource {
-    Kdm(UnwrappedKdm),
-    Keys(HashMap<uuid::Uuid, [u8; 16]>),
-}
-
-impl KeySource {
-    /// The 16-byte AES-128 content key for `key_id`, if held. The copy is
-    /// short-lived (handed straight to an AesDecContext) and never logged.
-    pub(crate) fn content_key(&self, key_id: &uuid::Uuid) -> Option<[u8; 16]> {
-        match self {
-            KeySource::Kdm(k) => k.content_key(key_id).copied(),
-            KeySource::Keys(m) => m.get(key_id).copied(),
-        }
-    }
-
-    /// Build the AES + HMAC contexts for an encrypted essence, keyed by the MXF's
-    /// own cryptographic_key_id. Fails loud when no held key covers that KeyId.
-    pub(crate) fn contexts(
-        &self,
-        info: &asdcplib::WriterInfo,
-        what: &str,
-    ) -> Result<(AesDecContext, HmacContext), String> {
-        let key_id = uuid::Uuid::from_bytes(info.cryptographic_key_id);
-        let key = self
-            .content_key(&key_id)
-            .ok_or_else(|| format!("KDM/keys do not cover {what} KeyId {key_id}"))?;
-        let mut dec = AesDecContext::new();
-        dec.init_key(&key)
-            .map_err(|e| format!("AES key init failed: {e}"))?;
-        let mut hmac = HmacContext::new();
-        hmac.init_key(&key, info.label_set)
-            .map_err(|e| format!("HMAC key init failed: {e}"))?;
-        Ok((dec, hmac))
-    }
-}
-
-/// Resolve a key source from any of `--keys` / `--kdm` + `--recipient-key`.
-/// Returns `Ok(None)` when no key material was supplied.
-pub(crate) fn key_source_opt(
-    keys: &Option<PathBuf>,
-    kdm: &Option<PathBuf>,
-    recipient_key: &Option<PathBuf>,
-) -> Result<Option<KeySource>, String> {
-    if let Some(keys) = keys {
-        let bundle = crate::encrypt::KeyBundle::read(keys)?;
-        let mut map = HashMap::new();
-        for k in &bundle.keys {
-            let (_key_type, key_id, key) = k.to_raw()?;
-            map.insert(key_id, key);
-        }
-        return Ok(Some(KeySource::Keys(map)));
-    }
-    match (kdm, recipient_key) {
-        (Some(kdm), Some(rk)) => Ok(Some(KeySource::Kdm(postkit::certificate::unwrap_kdm_file(
-            kdm, rk,
-        )?))),
-        (None, None) => Ok(None),
-        _ => Err("decrypting needs both --kdm and --recipient-key (or use --keys)".into()),
-    }
-}
-
 /// Resolve the key source for decrypt: `--keys` KEYS.json, or `--kdm` + `--recipient-key`.
-fn build_key_source(config: &DcpDecryptConfig) -> Result<KeySource, String> {
-    key_source_opt(&config.keys, &config.kdm, &config.recipient_key)?.ok_or_else(|| {
-        "decrypt needs either --keys KEYS.json or both --kdm and --recipient-key".into()
-    })
+fn build_key_source(config: &DcpDecryptConfig) -> Result<ContentKeys, String> {
+    ContentKeys::from_options(
+        config.kdm.as_deref(),
+        config.recipient_key.as_deref(),
+        config.keys.as_deref(),
+    )?
+    .ok_or_else(|| "decrypt needs either --keys KEYS.json or both --kdm and --recipient-key".into())
 }
 
 /// One MXF shipped in the output DCP (declared in CPL/PKL/ASSETMAP).
@@ -362,7 +300,7 @@ fn decrypt_dcp_inner(config: &DcpDecryptConfig) -> Result<usize, String> {
 fn process_picture(
     src: &Path,
     asset_id: &str,
-    keys: &KeySource,
+    keys: &ContentKeys,
     out_dir: &Path,
 ) -> Result<(ShippedAsset, PicInfo), String> {
     let mut reader = jp2k::MxfReader::new();
@@ -394,7 +332,7 @@ fn process_picture(
         return Ok((asset, pic));
     }
 
-    let (mut dec, mut hmac) = keys.contexts(&info, "picture")?;
+    let (mut dec, mut hmac) = keys.decrypt_and_hmac_contexts(&info, "picture")?;
 
     let work = out_dir.join(format!(".decrypt_{}", uuid::Uuid::new_v4()));
     let j2k_dir = work.join("j2k");
@@ -436,7 +374,7 @@ fn process_picture(
 pub(crate) fn process_sound(
     src_file: &str,
     asset_id: &str,
-    keys: &KeySource,
+    keys: &ContentKeys,
     fps: u32,
     out_dir: &Path,
 ) -> Result<Option<ShippedAsset>, String> {
@@ -463,7 +401,7 @@ pub(crate) fn process_sound(
     let ad = reader
         .audio_descriptor()
         .map_err(|e| format!("read audio descriptor: {e}"))?;
-    let (mut dec, mut hmac) = keys.contexts(&info, "sound")?;
+    let (mut dec, mut hmac) = keys.decrypt_and_hmac_contexts(&info, "sound")?;
 
     let work = out_dir.join(format!(".decrypt_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot create work dir: {e}"))?;
@@ -500,7 +438,7 @@ pub(crate) fn process_timed_text(
     src_file: &str,
     asset_id: &str,
     prefix: &str,
-    keys: Option<&KeySource>,
+    keys: Option<&ContentKeys>,
     out_dir: &Path,
 ) -> Result<Option<(ShippedAsset, u64)>, String> {
     if src_file.is_empty() || asset_id.is_empty() {
@@ -535,7 +473,7 @@ pub(crate) fn process_timed_text(
     let keys = keys.ok_or_else(|| {
         format!("{prefix} asset {asset_id} is encrypted and no key material was supplied")
     })?;
-    let (mut dec, mut hmac) = keys.contexts(&info, prefix)?;
+    let (mut dec, mut hmac) = keys.decrypt_and_hmac_contexts(&info, prefix)?;
 
     // no resource is bigger than the file carrying it, so one buffer this size
     // always holds whichever the reader hands back
@@ -635,7 +573,7 @@ pub(crate) fn process_aux_data(
     src_file: &str,
     asset_id: &str,
     data_type: &str,
-    keys: Option<&KeySource>,
+    keys: Option<&ContentKeys>,
     out_dir: &Path,
 ) -> Result<Option<(ShippedAsset, crate::cpl::AuxData)>, String> {
     if src_file.is_empty() || asset_id.is_empty() {
@@ -679,7 +617,7 @@ pub(crate) fn process_aux_data(
     let keys = keys.ok_or_else(|| {
         format!("aux data asset {asset_id} is encrypted and no key material was supplied")
     })?;
-    let (mut dec, mut hmac) = keys.contexts(&info, "aux data")?;
+    let (mut dec, mut hmac) = keys.decrypt_and_hmac_contexts(&info, "aux data")?;
 
     let work = out_dir.join(format!(".decrypt_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot create work dir: {e}"))?;

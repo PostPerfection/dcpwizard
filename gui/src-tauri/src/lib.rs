@@ -67,6 +67,7 @@ pub fn run() {
             guikit::preview::preview_frame_back_step,
             guikit::preview::preview_stop,
             guikit::preview::preview_load_dcp,
+            guikit::preview::preview_needs_content_keys,
             guikit::preview::preview_get_position,
             guikit::preview::preview_get_duration,
             guikit::preview::preview_get_metadata,

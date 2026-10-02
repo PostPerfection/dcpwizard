@@ -27,6 +27,39 @@
     </div>
   </div>
 
+  <div id="content-keys-dialog" class="content-keys-dialog" hidden>
+    <div class="content-keys-panel">
+      <h2>Content keys</h2>
+      <p class="content-keys-lead">This package is encrypted. Choose the KDM and the recipient private key it was issued to, or the KEYS.json the DCP was built with.</p>
+      <div class="prop-field">
+        <label>KDM</label>
+        <div class="input-with-btn">
+          <input id="content-keys-kdm" type="text" placeholder="Select KDM…" readonly>
+          <button type="button" id="content-keys-browse-kdm" class="btn-sm">…</button>
+        </div>
+      </div>
+      <div class="prop-field">
+        <label>Recipient Private Key</label>
+        <div class="input-with-btn">
+          <input id="content-keys-recipient-key" type="text" placeholder="Select private key…" readonly>
+          <button type="button" id="content-keys-browse-recipient-key" class="btn-sm">…</button>
+        </div>
+      </div>
+      <div class="prop-field">
+        <label>Keys File (KEYS.json)</label>
+        <div class="input-with-btn">
+          <input id="content-keys-keys" type="text" placeholder="Select DCP keys file…" readonly>
+          <button type="button" id="content-keys-browse-keys" class="btn-sm">…</button>
+        </div>
+      </div>
+      <ul id="content-keys-refusals" class="content-keys-refusals"></ul>
+      <div class="content-keys-actions">
+        <button type="button" id="content-keys-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="content-keys-play" class="btn-primary">Play</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Context menu -->
   <div id="context-menu" class="context-menu" hidden>
     <button data-action="preview">▶ Preview</button>

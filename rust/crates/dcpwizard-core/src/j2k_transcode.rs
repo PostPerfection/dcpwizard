@@ -108,14 +108,17 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
     // encrypted input needs key material: with a KDM+recipient key or KEYS.json
     // each source frame is decrypted in memory before decode; without it we
     // cannot re-encode what we cannot decode, so fail loud.
-    let key_source =
-        match crate::decrypt::key_source_opt(&config.keys, &config.kdm, &config.recipient_key) {
-            Ok(k) => k,
-            Err(e) => {
-                tracing::error!("{e}");
-                return -1;
-            }
-        };
+    let key_source = match postkit::content_keys::ContentKeys::from_options(
+        config.kdm.as_deref(),
+        config.recipient_key.as_deref(),
+        config.keys.as_deref(),
+    ) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!("{e}");
+            return -1;
+        }
+    };
     if cpl_content.contains("<KeyId>") && key_source.is_none() {
         tracing::error!(
             "input DCP is encrypted; supply --kdm + --recipient-key or --keys to transcode it"
@@ -383,7 +386,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
 fn transcode_picture(
     src_mxf: &Path,
     config: &DcpTranscodeConfig,
-    key_source: Option<&crate::decrypt::KeySource>,
+    key_source: Option<&postkit::content_keys::ContentKeys>,
 ) -> Option<NewPicture> {
     let mut reader = MxfReader::new();
     if let Err(e) = reader.open_read(&src_mxf.to_string_lossy()) {
@@ -415,7 +418,7 @@ fn transcode_picture(
             );
             return None;
         };
-        if let Err(e) = ks.contexts(&info, "picture") {
+        if let Err(e) = ks.decrypt_and_hmac_contexts(&info, "picture") {
             tracing::error!("{e}");
             return None;
         }
@@ -477,7 +480,7 @@ fn transcode_picture(
             .open_read(&src_mxf.to_string_lossy())
             .map_err(|e| format!("Failed to open picture MXF {}: {e}", src_mxf.display()))?;
         let mut crypto = match key_source {
-            Some(ks) => Some(ks.contexts(writer_info, "picture")?),
+            Some(ks) => Some(ks.decrypt_and_hmac_contexts(writer_info, "picture")?),
             None => None,
         };
         let mut buf = vec![0u8; MAX_FRAME_BUF];
@@ -557,7 +560,7 @@ fn transcode_picture(
 /// reads themselves, so no frame is decoded.
 fn source_bandwidth_mbps(
     src_mxf: &Path,
-    key_source: Option<&crate::decrypt::KeySource>,
+    key_source: Option<&postkit::content_keys::ContentKeys>,
     writer_info: &asdcplib::WriterInfo,
     frame_count: u32,
     fps: u32,
@@ -567,7 +570,7 @@ fn source_bandwidth_mbps(
         .open_read(&src_mxf.to_string_lossy())
         .map_err(|e| format!("Failed to open picture MXF {}: {e}", src_mxf.display()))?;
     let mut crypto = match key_source {
-        Some(ks) => Some(ks.contexts(writer_info, "picture")?),
+        Some(ks) => Some(ks.decrypt_and_hmac_contexts(writer_info, "picture")?),
         None => None,
     };
     let mut buf = vec![0u8; MAX_FRAME_BUF];
@@ -620,7 +623,7 @@ fn copy_track(
 fn sound_track(
     src_file: &str,
     asset_id: &str,
-    key_source: Option<&crate::decrypt::KeySource>,
+    key_source: Option<&postkit::content_keys::ContentKeys>,
     fps: u32,
     out_dir: &Path,
 ) -> Result<Option<ShippedAsset>, String> {
@@ -640,7 +643,7 @@ fn timed_text_track(
     src_file: &str,
     asset_id: &str,
     prefix: &str,
-    key_source: Option<&crate::decrypt::KeySource>,
+    key_source: Option<&postkit::content_keys::ContentKeys>,
     out_dir: &Path,
 ) -> Result<Option<(ShippedAsset, u64)>, String> {
     Ok(
@@ -654,7 +657,7 @@ fn timed_text_track(
 /// rebuilt reel declares the track's edit rate and duration off its descriptor.
 fn aux_data_track(
     entry: &crate::multi_cpl::TimelineEntry,
-    key_source: Option<&crate::decrypt::KeySource>,
+    key_source: Option<&postkit::content_keys::ContentKeys>,
     out_dir: &Path,
 ) -> Result<Option<(ShippedAsset, crate::cpl::AuxData)>, String> {
     Ok(crate::decrypt::process_aux_data(

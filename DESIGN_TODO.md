@@ -61,8 +61,9 @@ user-facing surface is here.
 - Playlist / SPL playback (DCP-o-matic ships this as a separate dcpomatic2_playlist
   tool feeding dcpomatic2_player). Sequence several packages into one list the
   player walks in order. The embedded preview is otherwise at parity with that
-  player: postkit `preview` resolves a CPL by uuid, decrypts encrypted picture
-  essence with the content key, colour-manages and can drive a GPU decoder. What it
+  player: postkit `preview` resolves a CPL by uuid, the grok player decrypts
+  picture and sound with the KDM and recipient key or the KEYS.json the user
+  picks, and both colour-manage and can drive a GPU decoder. What it
   lacks is the list, since `PlaybackOptions` names one `input` and one `cpl_uuid`,
   so this needs a queue above it plus GUI ordering. Nothing about package
   correctness depends on it.
