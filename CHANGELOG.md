@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [1.5.0] - 2026-10-02
+
 ### Changed
 - **Recipient identity imports from DCP-o-matic**: *Import from DCP-o-matic…* in Settings > Certificates and `preferences import-dcpomatic [--config config.xml]` copy the leaf decryption certificate and its private key from DCP-o-matic's config.xml, by default the one DCP-o-matic itself would load, and set `recipientCert` and `recipientKey` to the copies. The key file is written readable by its owner only, and the certificate's thumbprint is reported.
 - **Settings holds the recipient identity**: Settings > Certificates saves the Recipient Certificate a distributor issues KDMs to and the Recipient Private Key that unwraps them as `recipientCert` and `recipientKey`, and *Export certificate…* writes a copy of the certificate to send to the distributor, refusing a file that holds anything but certificates. `decrypt`, `export`, `transcode-dcp` and `watermark` with `--kdm` and no `--recipient-key` use `recipientKey`, and choosing a KDM in the preview's key dialog or the Tools export fills an empty recipient key field from it. The signing certificate and key rows have browse buttons.
