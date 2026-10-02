@@ -511,7 +511,13 @@ fn process_job(job: &Job, control: &JobControl, encode_threads: u32) -> Result<(
         }
         JobType::ExportDcp => {
             let config = parse_params::<crate::export::ExportConfig>(&job.params, "ExportDcp")?;
-            crate::export::export_dcp(&config)
+            crate::export::export_dcp(&config, &control.cancel, &mut |frame, total_frames| {
+                crate::dcp::ProgressSink::stage(
+                    control,
+                    (frame * 100 / total_frames) as u32,
+                    &format!("{frame}/{total_frames} frames"),
+                );
+            })
         }
         JobType::ImportVideo => {
             let config = parse_params::<crate::import::ImportConfig>(&job.params, "ImportVideo")?;
