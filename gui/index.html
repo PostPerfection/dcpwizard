@@ -1190,6 +1190,80 @@
               <button id="ingest-start" class="btn-primary" disabled>Rebuild ASSETMAP &amp; PKL</button>
               <div id="ingest-results" class="results-box"></div>
             </section>
+
+            <section class="panel">
+              <h2>Export DCP</h2>
+              <p class="field-hint">Decode a one-reel DCP to a movie file or a PNG sequence.</p>
+              <div class="prop-field">
+                <label>Input (DCP folder, CPL or picture MXF)</label>
+                <div class="input-with-btn">
+                  <input id="export-input" type="text" placeholder="Select DCP…" readonly>
+                  <button id="export-browse-folder" class="btn-sm">DCP folder</button>
+                  <button id="export-browse-file" class="btn-sm">CPL or MXF</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <div class="prop-field">
+                  <label>Format</label>
+                  <select id="export-format">
+                    <option value="prores">ProRes</option>
+                    <option value="h264">H.264</option>
+                    <option value="h265">H.265</option>
+                    <option value="dnxhr">DNxHR</option>
+                    <option value="image-sequence">PNG sequence</option>
+                  </select>
+                </div>
+                <div class="prop-field" id="export-crf-field" hidden>
+                  <label>CRF</label>
+                  <input type="number" id="export-crf" value="18" min="0" max="51">
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Output</label>
+                <div class="input-with-btn">
+                  <input id="export-output" type="text" placeholder="Choose output…" readonly>
+                  <button id="export-browse-output" class="btn-sm">Save as</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Sound override (optional MXF or WAV)</label>
+                <div class="input-with-btn">
+                  <input id="export-audio" type="text" placeholder="Sound from the DCP" readonly>
+                  <button id="export-browse-audio" class="btn-sm">…</button>
+                </div>
+              </div>
+              <p class="field-hint">Encrypted DCP: a KDM with the recipient private key it was issued to, or a KEYS.json.</p>
+              <div class="prop-field">
+                <label>KDM</label>
+                <div class="input-with-btn">
+                  <input id="export-kdm" type="text" placeholder="Select KDM…" readonly>
+                  <button id="export-browse-kdm" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Recipient private key</label>
+                <div class="input-with-btn">
+                  <input id="export-recipient-key" type="text" placeholder="Select private key…" readonly>
+                  <button id="export-browse-recipient-key" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>KEYS.json</label>
+                <div class="input-with-btn">
+                  <input id="export-keys" type="text" placeholder="Select KEYS.json…" readonly>
+                  <button id="export-browse-keys" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="field-row">
+                <button id="export-start" class="btn-primary">Export</button>
+                <button id="export-cancel" class="btn-sm" disabled>Cancel</button>
+              </div>
+              <div class="progress-section">
+                <progress id="export-progress" max="100" value="0"></progress>
+                <span id="export-progress-text" class="progress-stats"></span>
+              </div>
+              <div id="export-results" class="results-box"><span id="export-result-text"></span> <button id="export-reveal" class="btn-sm" hidden>Show in folder</button></div>
+            </section>
           </div>
         </div>
 
