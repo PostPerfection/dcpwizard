@@ -20,6 +20,7 @@ const MAIN_WINDOW_MINIMUM_HEIGHT: f64 = 500.0;
 const MAIN_WINDOW_BACKGROUND: tauri::window::Color = tauri::window::Color(0, 0, 0, 255);
 
 mod crash_log;
+mod export;
 mod library;
 mod pipeline;
 mod preferences;
@@ -55,6 +56,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .manage(job_queue)
+        .manage(export::ExportState::default())
         .manage(guikit::launch_project::LaunchProject::default())
         .invoke_handler(tauri::generate_handler![
             guikit::preview::preview_load,
@@ -95,6 +97,8 @@ pub fn run() {
             pipeline::probe_audio_map,
             pipeline::isdcf_name_preview,
             pipeline::create_vf,
+            export::export_dcp,
+            export::export_cancel,
             library::library_list,
             library::library_add,
             library::library_remove,

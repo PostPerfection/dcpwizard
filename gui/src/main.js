@@ -19,6 +19,7 @@ import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { initAssetStripResize } from "./asset-strip-resize.js";
+import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 initAssetStripResize();
 
 // === Browse wrapper (remembers last directory) ===
@@ -1856,6 +1857,108 @@ document.getElementById("vf-create")?.addEventListener("click", async () => {
 });
 
 renderVfReplacements();
+
+// === Export DCP ===
+const EXPORT_FIELD_IDS = {
+  input: "export-input",
+  output: "export-output",
+  format: "export-format",
+  crf: "export-crf",
+  audio: "export-audio",
+  kdm: "export-kdm",
+  recipientKey: "export-recipient-key",
+  keys: "export-keys",
+};
+
+function exportFields() {
+  return Object.fromEntries(
+    Object.entries(EXPORT_FIELD_IDS).map(([field, id]) => [field, document.getElementById(id).value]),
+  );
+}
+
+async function browseExportFile(fieldId, filters) {
+  const path = await open({ directory: false, multiple: false, filters });
+  if (path) document.getElementById(fieldId).value = path;
+}
+
+function showExportResult(text, revealedPath) {
+  const box = document.getElementById("export-results");
+  const reveal = document.getElementById("export-reveal");
+  box.classList.add("visible");
+  document.getElementById("export-result-text").textContent = text;
+  reveal.hidden = !revealedPath;
+  reveal.dataset.path = revealedPath || "";
+}
+
+function setExportRunning(running) {
+  document.getElementById("export-start").disabled = running;
+  document.getElementById("export-cancel").disabled = !running;
+}
+
+document.getElementById("export-browse-folder")?.addEventListener("click", async () => {
+  const directory = await open({ directory: true });
+  if (directory) document.getElementById("export-input").value = directory;
+});
+document.getElementById("export-browse-file")?.addEventListener("click", () =>
+  browseExportFile("export-input", [{ name: "CPL or MXF", extensions: ["xml", "mxf"] }]));
+document.getElementById("export-browse-audio")?.addEventListener("click", () =>
+  browseExportFile("export-audio", [{ name: "Sound", extensions: ["mxf", "wav"] }]));
+document.getElementById("export-browse-kdm")?.addEventListener("click", () =>
+  browseExportFile("export-kdm", [{ name: "KDM", extensions: ["xml"] }, { name: "All", extensions: ["*"] }]));
+document.getElementById("export-browse-recipient-key")?.addEventListener("click", () =>
+  browseExportFile("export-recipient-key", [{ name: "Private key", extensions: ["pem", "key"] }, { name: "All", extensions: ["*"] }]));
+document.getElementById("export-browse-keys")?.addEventListener("click", () =>
+  browseExportFile("export-keys", [{ name: "KEYS.json", extensions: ["json"] }]));
+
+document.getElementById("export-format")?.addEventListener("change", (event) => {
+  document.getElementById("export-crf-field").hidden = !takesCrf(event.target.value);
+});
+
+document.getElementById("export-browse-output")?.addEventListener("click", async () => {
+  const format = document.getElementById("export-format").value;
+  if (!isMovieFormat(format)) {
+    const directory = await open({ directory: true });
+    if (directory) document.getElementById("export-output").value = directory;
+    return;
+  }
+  const extensions = movieExtensions(format);
+  const file = await save({
+    defaultPath: `export.${extensions[0]}`,
+    filters: [{ name: "Movie", extensions }],
+  });
+  if (file) document.getElementById("export-output").value = withMovieExtension(file, format);
+});
+
+listen("export-progress", (event) => {
+  document.getElementById("export-progress").value = exportProgressPercent(event.payload);
+  document.getElementById("export-progress-text").textContent = exportProgressText(event.payload);
+});
+
+document.getElementById("export-start")?.addEventListener("click", async () => {
+  const { request, refusals } = exportRequestFrom(exportFields());
+  if (refusals) {
+    showExportResult(refusals.join("\n"));
+    return;
+  }
+  setExportRunning(true);
+  document.getElementById("export-progress").value = 0;
+  document.getElementById("export-progress-text").textContent = "";
+  showExportResult("Exporting…");
+  try {
+    await invoke("export_dcp", { request });
+    showExportResult(`Exported to ${request.output}`, request.output);
+  } catch (error) {
+    showExportResult(String(error));
+  } finally {
+    setExportRunning(false);
+  }
+});
+
+document.getElementById("export-cancel")?.addEventListener("click", () => invoke("export_cancel"));
+
+document.getElementById("export-reveal")?.addEventListener("click", (event) => {
+  revealItemInDir(event.target.dataset.path);
+});
 
 // === Jobs ===
 const DAEMON_JOB_SOURCE = "daemon";

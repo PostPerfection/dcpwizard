@@ -26,6 +26,7 @@ STATUS_TIMEOUT_SECONDS = 60
 # a click or a key press is answered in the page, not over the network
 REACTION_TIMEOUT_SECONDS = 15
 CREATE_TIMEOUT_SECONDS = 900
+EXPORT_TIMEOUT_SECONDS = 300
 
 REELS_CHORD = "ctrl+2"
 REELS_VIEW = "view-reels"
@@ -77,6 +78,11 @@ PREVIOUS_FIELD_CHORD = "shift+Tab"
 NEXT_FIELD_KEY = "Tab"
 MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
 NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
+
+TOOLS_CHORD = "ctrl+5"
+TOOLS_VIEW = "view-tools"
+EXPORT_FINISHED_PREFIX = "Exported to "
+EXPORT_RUNNING_TEXT = "Exporting\u2026"
 
 # the composition metadata fields, what each is given, and the CPL element it lands in
 COMPOSITION_METADATA = [
@@ -251,10 +257,8 @@ def write_project_beside(package_directory):
     return project_path
 
 
-# one DCP for the whole session, the encode is the slow part of this suite
-@pytest.fixture(scope="session")
-def two_reel_dcp(tmp_path_factory):
-    root = tmp_path_factory.mktemp("two-reel")
+# the CPL of a package built by the CLI from the fixture media
+def create_package(root, *create_arguments):
     picture, sound = write_media(root)
     output = root / "dcp"
     created = subprocess.run(
@@ -265,7 +269,7 @@ def two_reel_dcp(tmp_path_factory):
             "--video", str(picture),
             "--audio", str(sound),
             "--output", str(output),
-            "--split-at", FIXTURE_SPLIT_AT,
+            *create_arguments,
         ),
         capture_output=True,
         text=True,
@@ -275,8 +279,21 @@ def two_reel_dcp(tmp_path_factory):
     # create writes the package into <output>/<title>
     cpls = sorted(output.glob("*/CPL_*.xml"))
     assert len(cpls) == 1, cpls
-    package = cpls[0].parent
-    return TwoReelPackage(package, cpls[0], write_project_beside(package))
+    return cpls[0]
+
+
+# one DCP for the whole session, the encode is the slow part of this suite
+@pytest.fixture(scope="session")
+def two_reel_dcp(tmp_path_factory):
+    cpl_path = create_package(tmp_path_factory.mktemp("two-reel"), "--split-at", FIXTURE_SPLIT_AT)
+    package = cpl_path.parent
+    return TwoReelPackage(package, cpl_path, write_project_beside(package))
+
+
+# export refuses a CPL with more than one reel
+@pytest.fixture(scope="session")
+def one_reel_cpl(tmp_path_factory):
+    return create_package(tmp_path_factory.mktemp("one-reel"))
 
 
 def named(parent, name):
@@ -750,3 +767,64 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     for field, _, value, _ in COMPOSITION_METADATA:
         assert session.property(field, "value") == value, field
     assert session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS
+
+
+def counted_video_frames(movie):
+    probed = subprocess.run(
+        (
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-count_packets",
+            "-show_entries", "stream=nb_read_packets",
+            "-of", "csv=p=0",
+            str(movie),
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert probed.returncode == 0, probed.stderr
+    return int(probed.stdout.strip())
+
+
+def export_result(session):
+    return session.property("#export-result-text", "textContent")
+
+
+def test_the_export_tool_writes_a_prores_from_a_dcp(window, one_reel_cpl, tmp_path):
+    session = window.session
+    output = tmp_path / "export.mov"
+    package = one_reel_cpl.parent
+    [(frames, _)] = reel_pictures(one_reel_cpl)
+
+    window.press(TOOLS_CHORD)
+    wait_for_view(session, TOOLS_VIEW)
+    choose_in_dialog(window, "#export-browse-folder", package)
+    wait_until(
+        "the chosen package never reached the input field",
+        lambda: session.property("#export-input", "value") == str(package),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#export-format", "value") == "prores"
+    save_in_dialog(window, "#export-browse-output", output)
+    wait_until(
+        "the chosen movie never reached the output field",
+        lambda: session.property("#export-output", "value") == str(output),
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.click("#export-start")
+    result = wait_until(
+        "the export never finished",
+        lambda: export_result(session) not in ("", EXPORT_RUNNING_TEXT) and export_result(session),
+        EXPORT_TIMEOUT_SECONDS,
+    )
+    assert result == f"{EXPORT_FINISHED_PREFIX}{output}"
+    assert session.property("#export-reveal", "hidden") is False
+    wait_until(
+        "the progress line never reached the last frame",
+        lambda: session.property("#export-progress-text", "textContent").startswith(
+            f"{frames} / {frames}, "
+        ),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert counted_video_frames(output) == frames
