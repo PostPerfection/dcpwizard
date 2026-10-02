@@ -269,10 +269,9 @@ imfwizard. What the traces said, and what is still owed:
   fps. Unmeasured on the 5070, where the device chain is the limit.
 - hercules (RTX 2080 Ti, Threadripper 3960X, 2026-10-01) is device bound: frames
   fed from memory run at 110 fps on the 60 s Toms clip with the device 98% busy,
-  while the same encode from the file runs at 50 fps. The limit there is ffmpeg's
-  one muxer thread writing 35 MB padded frames into the pipe 32 KB at a time. The
-  fix, in-process decode against an LGPL FFmpeg we build, is planned in postkit's
-  DESIGN_TODO.
+  while the same encode from the file ran at 50 fps through the ffmpeg pipe. Since
+  postkit 73af6fd (2026-10-02) the decode runs in process through the LGPL FFmpeg
+  libraries, and the rpm's CLI runs the same clip at 103 to 105 fps there.
 - For the laptop none of the device work shows in a real encode: fed from the pipe it
   is bound by the DNxHR decode on the CPU at about 50 fps.
 - The 5070 tester, reported 2026-09-28 (Ryzen 9 9950X, 16 cores, grok 20.4.12,
