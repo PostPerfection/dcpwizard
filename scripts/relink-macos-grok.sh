@@ -8,6 +8,7 @@ TARGET_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
 DYLIB_NAME="libgrokj2k.1.dylib"
 INSTALL_NAME="@executable_path/../Frameworks/${DYLIB_NAME}"
 PLUGIN_NAME="libgrokj2k_plugin.dylib"
+FRAMEWORKS_RPATH="@executable_path/../Frameworks"
 
 if [[ "${TAURI_ENV_DEBUG:-false}" == "true" ]]; then
     PROFILE_DIR="debug"
@@ -17,11 +18,11 @@ fi
 
 STAGED_DYLIB="${TAURI_DIR}/${DYLIB_NAME}"
 STAGED_PLUGIN="${TAURI_DIR}/${PLUGIN_NAME}"
-FILES=(
-    "${STAGED_DYLIB}"
+EXECUTABLES=(
     "${TAURI_DIR}/target/${PROFILE_DIR}/dcpwizard-gui"
     "${TAURI_DIR}/dcpwizard-${TARGET_TRIPLE}"
 )
+FILES=("${STAGED_DYLIB}" "${EXECUTABLES[@]}")
 
 for file in "${FILES[@]}"; do
     if [[ ! -f "${file}" ]]; then
@@ -38,6 +39,15 @@ if [[ -f "${STAGED_PLUGIN}" ]]; then
     install_name_tool -id "@executable_path/${PLUGIN_NAME}" "${STAGED_PLUGIN}"
     FILES+=("${STAGED_PLUGIN}")
 fi
+
+# the FFmpeg and mpv dylibs in Frameworks have @rpath install names
+for executable in "${EXECUTABLES[@]}"
+do
+    if ! otool -l "${executable}" | grep -qF "path ${FRAMEWORKS_RPATH} ("
+    then
+        install_name_tool -add_rpath "${FRAMEWORKS_RPATH}" "${executable}"
+    fi
+done
 
 for file in "${FILES[@]}"; do
     for reference in $(otool -L "${file}" | awk 'NR > 1 && /libgrok/ {print $1}'); do
@@ -66,4 +76,4 @@ for file in "${FILES[@]}"; do
     fi
 done
 
-echo "relink-macos-grok: the gui and its sidecar load ${INSTALL_NAME}"
+echo "relink-macos-grok: the gui and its sidecar load ${INSTALL_NAME} and search ${FRAMEWORKS_RPATH}"
