@@ -584,6 +584,48 @@ fn an_encrypted_dcp_exports_under_its_keys_file() {
     assert_only_entries(directory.path(), &[&output]);
 }
 
+// one 24 fps edit unit of the stereo tone is 12000 bytes
+const PCM_FRAME_BUFFER_BYTES: usize = 1 << 20;
+
+fn pcm_frames(sound_mxf: &Path) -> Vec<Vec<u8>> {
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader.open_read(&sound_mxf.to_string_lossy()).unwrap();
+    let frame_count = reader.audio_descriptor().unwrap().container_duration;
+    let mut buffer = vec![0u8; PCM_FRAME_BUFFER_BYTES];
+    (0..frame_count)
+        .map(|frame| {
+            let length = reader.read_frame(frame, &mut buffer, None, None).unwrap();
+            buffer[..length].to_vec()
+        })
+        .collect()
+}
+
+#[test]
+fn a_decrypted_sound_mxf_holds_the_cleartext_pcm() {
+    let encrypted = encrypted_fixture();
+    let directory = TempDir::new().unwrap();
+    let output = directory.path().join("decrypted");
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", dcp_fixture().config_home.path())
+        .arg("decrypt")
+        .arg("--input")
+        .arg(&encrypted.package)
+        .arg("--output")
+        .arg(&output)
+        .arg("--keys")
+        .arg(&encrypted.keys)
+        .assert()
+        .success();
+
+    let cleartext = pcm_frames(&dcp_fixture().sound_mxf);
+    assert_eq!(cleartext.len(), FRAMES as usize);
+    assert!(
+        pcm_frames(&only_file_starting_with(&output, "sound_")) == cleartext,
+        "the decrypted sound has to hold the cleartext package's PCM frame for frame"
+    );
+}
+
 #[test]
 fn an_encrypted_dcp_exports_under_a_kdm() {
     let encrypted = encrypted_fixture();

@@ -465,26 +465,10 @@ pub(crate) fn process_sound(
         .map_err(|e| format!("read audio descriptor: {e}"))?;
     let (mut dec, mut hmac) = keys.contexts(&info, "sound")?;
 
-    let mut pcm_data = Vec::new();
-    let mut buf = vec![0u8; MAX_FRAME_BUF];
-    for i in 0..ad.container_duration {
-        let n = reader
-            .read_frame(i, &mut buf, Some(&mut dec), Some(&mut hmac))
-            .map_err(|e| format!("decrypt sound frame {i} (wrong key or MIC mismatch): {e}"))?;
-        pcm_data.extend_from_slice(&buf[..n]);
-    }
-
     let work = out_dir.join(format!(".decrypt_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&work).map_err(|e| format!("cannot create work dir: {e}"))?;
     let wav_path = work.join("sound.wav");
-    let sample_rate = ad.audio_sampling_rate.numerator.max(1) as u32;
-    if let Err(e) = write_wav(
-        &wav_path,
-        ad.channel_count as u16,
-        ad.quantization_bits as u16,
-        sample_rate,
-        &pcm_data,
-    ) {
+    if let Err(e) = write_decrypted_wav(&mut reader, &ad, &mut dec, &mut hmac, &wav_path) {
         let _ = std::fs::remove_dir_all(&work);
         return Err(e);
     }
@@ -756,25 +740,46 @@ fn ship(path: &Path, id: String, filename: String) -> Result<ShippedAsset, Strin
     })
 }
 
-/// Write a PCM WAV from raw interleaved sample bytes.
-fn write_wav(
+fn write_decrypted_wav(
+    reader: &mut pcm::MxfReader,
+    ad: &pcm::AudioDescriptor,
+    dec: &mut AesDecContext,
+    hmac: &mut HmacContext,
     path: &Path,
-    channels: u16,
-    bits: u16,
-    sample_rate: u32,
-    data: &[u8],
 ) -> Result<(), String> {
+    let channels = ad.channel_count as u16;
+    let bits = ad.quantization_bits as u16;
     let spec = postkit::wav_io::WavSpec {
         channels,
-        sample_rate,
+        sample_rate: ad.audio_sampling_rate.numerator.max(1) as u32,
         bits_per_sample: bits,
         sample_format: postkit::wav_io::SampleFormat::Int,
     };
-    let frames = (data.len() / ((bits / 8) as usize * channels as usize)) as u64;
+    let (sampling, edit) = (ad.audio_sampling_rate, ad.edit_rate);
+    let positive = |value: i32| value.max(1) as u64;
+    // asdcplib rounds a fractional samples-per-edit-unit up
+    let samples_per_edit_unit = (positive(sampling.numerator) * positive(edit.denominator))
+        .div_ceil(positive(sampling.denominator) * positive(edit.numerator));
+    let expected_frames = ad.container_duration as u64 * samples_per_edit_unit;
+    let expected_bytes = expected_frames * u64::from(bits.div_ceil(8)) * u64::from(channels);
+
     let cannot_write = |e: std::io::Error| format!("cannot write WAV {}: {e}", path.display());
-    let mut writer =
-        postkit::wav_io::WavWriter::create_plain_pcm(path, spec, frames).map_err(cannot_write)?;
-    writer.write_bytes(data).map_err(cannot_write)?;
+    let mut writer = postkit::wav_io::WavWriter::create_plain_pcm(path, spec, expected_frames)
+        .map_err(cannot_write)?;
+    let mut buf = vec![0u8; MAX_FRAME_BUF];
+    let mut bytes_read = 0u64;
+    for i in 0..ad.container_duration {
+        let n = reader
+            .read_frame(i, &mut buf, Some(&mut *dec), Some(&mut *hmac))
+            .map_err(|e| format!("decrypt sound frame {i} (wrong key or MIC mismatch): {e}"))?;
+        writer.write_bytes(&buf[..n]).map_err(cannot_write)?;
+        bytes_read += n as u64;
+    }
+    if bytes_read != expected_bytes {
+        return Err(format!(
+            "sound MXF frames hold {bytes_read} bytes of PCM where its audio descriptor gives {expected_bytes}"
+        ));
+    }
     writer.finalize().map_err(cannot_write)
 }
 
