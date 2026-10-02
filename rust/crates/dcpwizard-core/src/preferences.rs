@@ -84,8 +84,12 @@ impl Default for Preferences {
     }
 }
 
+pub fn preferences_directory() -> PathBuf {
+    postkit::preferences::config_dir("dcpwizard")
+}
+
 pub fn preferences_path() -> PathBuf {
-    postkit::preferences::config_dir("dcpwizard").join("preferences.json")
+    preferences_directory().join("preferences.json")
 }
 
 pub fn load_preferences() -> io::Result<Preferences> {

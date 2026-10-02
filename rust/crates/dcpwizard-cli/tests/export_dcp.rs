@@ -771,6 +771,75 @@ fn a_kdm_decrypts_with_the_configured_recipient_key() {
     );
 }
 
+fn import_dcpomatic(config_home: &Path) -> Command {
+    let mut command = Command::cargo_bin("dcpwizard").unwrap();
+    command
+        .env("XDG_CONFIG_HOME", config_home)
+        .args(["preferences", "import-dcpomatic"]);
+    command
+}
+
+#[test]
+fn a_kdm_decrypts_with_the_identity_imported_from_dcpomatic() {
+    let directory = TempDir::new().unwrap();
+    let encrypted = encrypted_fixture();
+    let issued = issue_kdm_to_a_new_recipient(encrypted, directory.path());
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap();
+    let dcpomatic_config = directory.path().join("dcpomatic-config.xml");
+    std::fs::write(
+        &dcpomatic_config,
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Config><Decryption><Certificate>{}</Certificate><Certificate>{}</Certificate><PrivateKey>{}</PrivateKey></Decryption></Config>\n",
+            read(&encrypted.chain.join("root.pem")),
+            read(&issued.recipient),
+            read(&issued.recipient_key),
+        ),
+    )
+    .unwrap();
+    let config_home = directory.path().join("imported");
+    let thumbprint = postkit::certificate::cert_info_from_file(&issued.recipient)
+        .unwrap()
+        .thumbprint;
+
+    import_dcpomatic(&config_home)
+        .arg("--config")
+        .arg(&dcpomatic_config)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dcpomatic-recipient.key"))
+        .stderr(predicate::str::contains(thumbprint));
+    let output = directory.path().join("decrypted");
+    decrypt_under_kdm_alone(&config_home, &issued.kdm, &output).success();
+
+    assert!(
+        pcm_frames(&only_file_starting_with(&output, "sound_"))
+            == pcm_frames(&dcp_fixture().sound_mxf),
+        "the decrypted sound has to hold the cleartext package's PCM frame for frame"
+    );
+}
+
+// macOS looks under the home directory whatever XDG_CONFIG_HOME says
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn importing_from_dcpomatic_without_a_config_names_every_candidate() {
+    let config_home = TempDir::new().unwrap();
+    let root = config_home.path().join("dcpomatic2");
+
+    let assert = import_dcpomatic(config_home.path()).assert().failure();
+
+    let output = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    for candidate in [
+        root.join("2.18").join("config.xml"),
+        root.join("2.16").join("config.xml"),
+        root.join("config.xml"),
+    ] {
+        assert!(
+            output.contains(&candidate.display().to_string()),
+            "{output}"
+        );
+    }
+}
+
 #[test]
 fn a_kdm_without_a_recipient_key_given_or_configured_is_refused() {
     let directory = TempDir::new().unwrap();

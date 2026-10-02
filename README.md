@@ -68,7 +68,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **DKDM re-wrap**, re-issue KDMs from a Distribution KDM
 - **KDM formulation** via `--formulation` on `kdm`/`kdm-batch`/`kdm-rewrap` (the four ISDCF Doc 5 spellings; derived from `--device-cert` when omitted)
 - **Forensic marking control** via `-p/--disable-forensic-marking-picture` and `-a/--disable-forensic-marking-audio [CHANNEL]`, for press and festival screenings
-- **Recipient identity** in Settings > Certificates: the Recipient Certificate a distributor issues KDMs to and the Recipient Private Key that unwraps them, saved as the paths `recipientCert` and `recipientKey`. *Export certificate…* writes a copy of the certificate to send to the distributor and refuses a file that holds anything but certificates. `decrypt`, `export`, `transcode-dcp` and `watermark` with `--kdm` and no `--recipient-key` use `recipientKey`, and choosing a KDM in the GUI fills an empty recipient key field from it
+- **Recipient identity** in Settings > Certificates: the Recipient Certificate a distributor issues KDMs to and the Recipient Private Key that unwraps them, saved as the paths `recipientCert` and `recipientKey`. *Export certificate…* writes a copy of the certificate to send to the distributor and refuses a file that holds anything but certificates. *Import from DCP-o-matic…* and `dcpwizard preferences import-dcpomatic [--config config.xml]` copy the leaf decryption certificate and its private key out of DCP-o-matic's config.xml into the dcpwizard config directory and set both paths, the key file readable by its owner only. Without a path they read the newest config DCP-o-matic itself would load. `decrypt`, `export`, `transcode-dcp` and `watermark` with `--kdm` and no `--recipient-key` use `recipientKey`, and choosing a KDM in the GUI fills an empty recipient key field from it
 - **Certificate generation**, X.509 cert chain (root → intermediate → signer)
 - **Certificate inspection**, display subject, issuer, validity, thumbprint, CA status
 
@@ -627,6 +627,8 @@ dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp \
 dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp --keys ./secret/my_film.keys.json
 # --recipient-key defaults to the recipientKey preference, so a KDM alone is enough
 dcpwizard preferences set recipientKey ~/keys/recipient.key
+# or take the recipient certificate and key DCP-o-matic decrypts with
+dcpwizard preferences import-dcpomatic
 dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp --kdm kdm.xml
 
 # Encode images to JPEG 2000 codestreams in ./out/j2k

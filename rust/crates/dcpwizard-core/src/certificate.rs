@@ -18,11 +18,11 @@ pub fn read_certificate(cert_path: &Path) -> CertInfo {
 }
 
 const NO_RECIPIENT_CERTIFICATE: &str = "no recipient certificate is configured";
-const PEM_BEGIN_MARKER: &[u8] = b"-----BEGIN ";
-const PEM_MARKER_END: &[u8] = b"-----";
-const CERTIFICATE_PEM_LABEL: &[u8] = b"CERTIFICATE";
+pub(crate) const PEM_BEGIN_MARKER: &[u8] = b"-----BEGIN ";
+pub(crate) const PEM_MARKER_END: &[u8] = b"-----";
+pub(crate) const CERTIFICATE_PEM_LABEL: &[u8] = b"CERTIFICATE";
 
-fn position_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn position_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
