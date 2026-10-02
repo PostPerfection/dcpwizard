@@ -157,7 +157,19 @@ jobs:
           fi
           cp -L "$GROK_LIB/$library" "gui/src-tauri/$library"
 
-      # adds the FFmpeg and libmpv libraries and their licence file to the deb, rpm and .app
+      # asdcplib links OpenSSL and Xerces-C as shared libraries whatever OPENSSL_STATIC says
+      - name: Stage Homebrew libraries (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRIPLE=$(rustc -vV | grep host | awk '{print $2}')
+          staging="$GITHUB_WORKSPACE/gui/src-tauri/homebrew-libraries"
+          scripts/stage-macos-homebrew-libraries.sh "gui/src-tauri/dcpwizard-${TRIPLE}" "$staging"
+          ls -la "$staging"
+          echo "STAGED_HOMEBREW_LIBRARIES=$staging" >> "$GITHUB_ENV"
+
+      # adds the FFmpeg and libmpv libraries and their licence file to the deb, rpm and .app, and the Homebrew libraries to the .app
       - name: Generate the FFmpeg and libmpv bundle config (Unix)
         if: runner.os != 'Windows'
         shell: bash

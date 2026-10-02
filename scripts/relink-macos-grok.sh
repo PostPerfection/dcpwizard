@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TAURI_DIR="${ROOT}/gui/src-tauri"
@@ -9,6 +10,9 @@ DYLIB_NAME="libgrokj2k.1.dylib"
 INSTALL_NAME="@executable_path/../Frameworks/${DYLIB_NAME}"
 PLUGIN_NAME="libgrokj2k_plugin.dylib"
 FRAMEWORKS_RPATH="@executable_path/../Frameworks"
+STAGING_DIRECTORY="${TAURI_DIR}/homebrew-libraries"
+SYSTEM_OR_BUNDLE_REFERENCE='^(/usr/lib/|/System/|@rpath/|@executable_path/|@loader_path/)'
+BUILD_OR_HOMEBREW_PATH='/Users/runner|/opt/homebrew|/usr/local'
 
 if [[ "${TAURI_ENV_DEBUG:-false}" == "true" ]]; then
     PROFILE_DIR="debug"
@@ -49,6 +53,21 @@ do
     fi
 done
 
+# the bundle config names every staged library as a framework
+for executable in "${EXECUTABLES[@]}"
+do
+    for reference in $(otool -L "${executable}" | awk -v system_or_bundle="${SYSTEM_OR_BUNDLE_REFERENCE}" 'NR > 1 && !/libgrok/ && $1 !~ system_or_bundle {print $1}')
+    do
+        name="$(basename "${reference}")"
+        if [[ ! -f "${STAGING_DIRECTORY}/${name}" ]]
+        then
+            echo "relink-macos-grok: ${executable} loads ${reference}, which ${STAGING_DIRECTORY} does not carry" >&2
+            exit 1
+        fi
+        install_name_tool -change "${reference}" "@rpath/${name}" "${executable}"
+    done
+done
+
 for file in "${FILES[@]}"; do
     for reference in $(otool -L "${file}" | awk 'NR > 1 && /libgrok/ {print $1}'); do
         case "$(basename "${reference}")" in
@@ -76,4 +95,13 @@ for file in "${FILES[@]}"; do
     fi
 done
 
-echo "relink-macos-grok: the gui and its sidecar load ${INSTALL_NAME} and search ${FRAMEWORKS_RPATH}"
+for file in "${FILES[@]}" "${STAGING_DIRECTORY}"/*.dylib
+do
+    if otool -L "${file}" | grep -E "${BUILD_OR_HOMEBREW_PATH}" >&2
+    then
+        echo "relink-macos-grok: ${file} loads a library from the build tree or Homebrew" >&2
+        exit 1
+    fi
+done
+
+echo "relink-macos-grok: the gui and its sidecar load ${INSTALL_NAME}, search ${FRAMEWORKS_RPATH} and load nothing from Homebrew"
