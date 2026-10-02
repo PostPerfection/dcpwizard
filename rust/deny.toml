@@ -24,6 +24,7 @@ allow = [
     "MPL-2.0",  # option-ext
     "bzip2-1.0.6",  # libbz2-rs-sys
     "CDLA-Permissive-2.0",  # webpki-roots
+    "WTFPL",  # ffmpeg-next, ffmpeg-sys-next
 ]
 
 [[licenses.clarify]]
