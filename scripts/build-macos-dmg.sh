@@ -40,8 +40,12 @@ cargo build --release -p dcpwizard-cli --manifest-path "$ROOT/rust/Cargo.toml"
 "$ROOT/scripts/setup-tauri-bin.sh"
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.1.dylib" "$ROOT/gui/src-tauri/libgrokj2k.1.dylib"
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.dylib" "$ROOT/gui/src-tauri/libgrokj2k_plugin.dylib"
+TARGET_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
+STAGED_HOMEBREW_LIBRARIES="$ROOT/gui/src-tauri/homebrew-libraries"
+rm -rf "$STAGED_HOMEBREW_LIBRARIES"
+"$ROOT/scripts/stage-macos-homebrew-libraries.sh" "$ROOT/gui/src-tauri/dcpwizard-$TARGET_TRIPLE" "$STAGED_HOMEBREW_LIBRARIES"
 
-FFMPEG_MPV_FILES="$("$ROOT/scripts/ffmpeg-mpv-bundle-config.sh" "$FFMPEG_MPV_DIR" Darwin)"
+FFMPEG_MPV_FILES="$("$ROOT/scripts/ffmpeg-mpv-bundle-config.sh" "$FFMPEG_MPV_DIR" Darwin "$STAGED_HOMEBREW_LIBRARIES")"
 PRODUCT_NAME="$(jq -r .productName "$ROOT/gui/src-tauri/tauri.conf.json")"
 VERSION="$(jq -r .version "$ROOT/gui/src-tauri/tauri.conf.json")"
 

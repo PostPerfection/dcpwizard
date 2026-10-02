@@ -5,10 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ARCHIVE_ROOT="${1:-${FFMPEG_MPV_DIR:-}}"
 PLATFORM="${2:-$(uname -s)}"
+STAGED_HOMEBREW_LIBRARIES="${3:-${STAGED_HOMEBREW_LIBRARIES:-}}"
 
 if [[ -z "$ARCHIVE_ROOT" ]]
 then
-    echo "usage: $0 [ffmpeg-mpv archive root, default \$FFMPEG_MPV_DIR] [Linux or Darwin, default uname -s]" >&2
+    echo "usage: $0 [ffmpeg-mpv archive root, default \$FFMPEG_MPV_DIR] [Linux or Darwin, default uname -s] [Darwin only: staged Homebrew library directory, default \$STAGED_HOMEBREW_LIBRARIES]" >&2
     exit 2
 fi
 
@@ -76,6 +77,11 @@ linux_config() {
 }
 
 macos_config() {
+    if [[ ! -d "$STAGED_HOMEBREW_LIBRARIES" ]]
+    then
+        echo "ffmpeg-mpv-bundle-config: the staged Homebrew library directory '$STAGED_HOMEBREW_LIBRARIES' does not exist" >&2
+        exit 1
+    fi
     local otool library
     otool="$(command -v otool || command -v llvm-otool)"
     local frameworks=()
@@ -83,6 +89,11 @@ macos_config() {
     do
         frameworks+=("$LIBRARY_DIRECTORY/$(basename "$("$otool" -D "$library" | tail -n +2)")")
     done < <(find "$LIBRARY_DIRECTORY" -maxdepth 1 -type f -name '*.dylib' | sort)
+    # the staging script names each copy after its id
+    while IFS= read -r library
+    do
+        frameworks+=("$library")
+    done < <(find "$STAGED_HOMEBREW_LIBRARIES" -maxdepth 1 -type f -name '*.dylib' | sort)
 
     jq -c \
         --argjson frameworks "$(printf '%s\n' "${frameworks[@]}" | json_array)" \
