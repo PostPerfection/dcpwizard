@@ -1402,11 +1402,32 @@
                 <legend>Certificates</legend>
                 <div class="prop-field">
                   <label for="set-signing-cert">Signing Certificate</label>
-                  <input type="text" id="set-signing-cert" placeholder="/path/to/cert.pem">
+                  <div class="input-with-btn">
+                    <input type="text" id="set-signing-cert" placeholder="/path/to/cert.pem">
+                    <button type="button" id="set-browse-signing-cert" class="btn-sm">…</button>
+                  </div>
                 </div>
                 <div class="prop-field">
                   <label for="set-signing-key">Signing Key</label>
-                  <input type="text" id="set-signing-key" placeholder="/path/to/key.pem">
+                  <div class="input-with-btn">
+                    <input type="text" id="set-signing-key" placeholder="/path/to/key.pem">
+                    <button type="button" id="set-browse-signing-key" class="btn-sm">…</button>
+                  </div>
+                </div>
+                <div class="prop-field">
+                  <label for="set-recipient-cert">Recipient Certificate</label>
+                  <div class="input-with-btn">
+                    <input type="text" id="set-recipient-cert" placeholder="/path/to/recipient.pem">
+                    <button type="button" id="set-browse-recipient-cert" class="btn-sm">…</button>
+                    <button type="button" id="set-export-recipient-cert" class="btn-sm">Export certificate…</button>
+                  </div>
+                </div>
+                <div class="prop-field">
+                  <label for="set-recipient-key">Recipient Private Key</label>
+                  <div class="input-with-btn">
+                    <input type="text" id="set-recipient-key" placeholder="/path/to/recipient.key">
+                    <button type="button" id="set-browse-recipient-key" class="btn-sm">…</button>
+                  </div>
                 </div>
               </fieldset>
               <fieldset>
