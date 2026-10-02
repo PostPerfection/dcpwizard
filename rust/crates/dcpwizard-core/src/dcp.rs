@@ -362,6 +362,18 @@ pub fn create_dcp_with_progress(
     if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
         return Err(format!("Failed to create output directory: {e}"));
     }
+    match postkit::mxf_wrap::remove_part_written_mxfs(&config.output_dir) {
+        Ok(removed) => {
+            for path in removed {
+                tracing::info!("removed {}, left by an earlier run", path.display());
+            }
+        }
+        Err(e) => {
+            return Err(format!(
+                "Failed to remove part-written MXFs from the output directory: {e}"
+            ));
+        }
+    }
 
     // Fail early if the essence won't fit: the wrapped MXFs are ~the size of the
     // J2K frames plus audio/atmos, so check that against the output filesystem.

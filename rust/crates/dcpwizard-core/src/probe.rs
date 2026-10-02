@@ -1,6 +1,32 @@
 pub use postkit::probe::*;
 
+use postkit::encode::InputType;
 use std::path::Path;
+
+const JPEG_2000_CODEC_NAME: &str = "jpeg2000";
+
+pub fn probe_video(path: &Path) -> Option<VideoInfo> {
+    if postkit::encode::detect_input_type(path) != InputType::PictureMxf {
+        return postkit::probe::probe_video(path);
+    }
+    let info = postkit::mxf_unwrap::probe_picture_mxf(path).ok()?;
+    let untagged = PixelFormatInfo::default();
+    Some(VideoInfo {
+        codec_name: JPEG_2000_CODEC_NAME.to_string(),
+        width: info.width,
+        height: info.height,
+        fps_num: info.edit_rate_num,
+        fps_den: info.edit_rate_den,
+        has_audio: false,
+        total_frames: u32::try_from(info.frames).ok()?,
+        pix_fmt: untagged.pix_fmt,
+        color_space: untagged.color_space,
+        color_range: untagged.color_range,
+        color_transfer: untagged.color_transfer,
+        color_primaries: untagged.color_primaries,
+        bit_rate: None,
+    })
+}
 
 /// Whether the local ffmpeg build lists a given encoder (e.g. "libvpx-vp9").
 pub fn ffmpeg_has_encoder(name: &str) -> bool {

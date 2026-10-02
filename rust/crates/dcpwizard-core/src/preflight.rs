@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use postkit::colour::ColourSpace;
+use postkit::encode::InputType;
 use postkit::subtitle_raster::BurnStyleOverrides;
 
 use crate::source_picture::{EncodeGeometry, SourcePictureOptions};
@@ -21,6 +22,10 @@ pub enum PictureKind {
     Video,
     Still,
     Codestreams,
+}
+
+pub fn is_precompressed(input_type: InputType) -> bool {
+    matches!(input_type, InputType::J2kSequence | InputType::PictureMxf)
 }
 
 /// What a `create` job settles before the encode, as both front ends describe it.
@@ -147,6 +152,11 @@ impl CreatePlan {
         self.picture_kind == PictureKind::Codestreams
     }
 
+    fn is_picture_mxf(&self) -> bool {
+        self.is_codestreams()
+            && postkit::encode::detect_input_type(&self.picture) == InputType::PictureMxf
+    }
+
     // the GUI plans an image sequence directory as Video too
     fn video_file(&self) -> Option<&Path> {
         (self.picture_kind == PictureKind::Video && self.picture.is_file())
@@ -169,7 +179,8 @@ pub struct PlannedPicture {
 type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
 
 // cheapest and most specific first: the first refusal printed is the one to fix
-const PLAN_CHECKS: [PlanCheck; 25] = [
+const PLAN_CHECKS: [PlanCheck; 26] = [
+    check_picture_mxf,
     check_precompressed_colourspace,
     check_precompressed_picture,
     check_video_decodable,
@@ -222,6 +233,31 @@ pub fn check_before_encode(plan: &CreatePlan) -> Result<(), Vec<String>> {
         return Ok(());
     }
     Err(refusals)
+}
+
+// wrapped codestreams cannot be retimed to another rate
+fn check_picture_mxf(plan: &CreatePlan) -> Result<(), String> {
+    if !plan.is_picture_mxf() {
+        return Ok(());
+    }
+    let info = postkit::mxf_unwrap::probe_picture_mxf(&plan.picture)?;
+    if info.edit_rate_den != 1 {
+        return Err(format!(
+            "{} runs at {}/{} fps, and a DCP runs at a whole number of frames a second",
+            plan.picture.display(),
+            info.edit_rate_num,
+            info.edit_rate_den
+        ));
+    }
+    if info.edit_rate_num != plan.fps {
+        return Err(format!(
+            "{} runs at {} fps, the job asks for {} fps",
+            plan.picture.display(),
+            info.edit_rate_num,
+            plan.fps
+        ));
+    }
+    Ok(())
 }
 
 fn check_precompressed_colourspace(plan: &CreatePlan) -> Result<(), String> {
@@ -316,6 +352,9 @@ fn check_input_range(plan: &CreatePlan) -> Result<(), String> {
 fn source_frame_count(plan: &CreatePlan) -> Option<u64> {
     let source_frames = match plan.picture_kind {
         PictureKind::Still => plan.still_frames,
+        PictureKind::Codestreams if plan.is_picture_mxf() => {
+            u64::from(plan.source.as_ref()?.total_frames)
+        }
         PictureKind::Codestreams => crate::trim::frame_count(&plan.picture),
         PictureKind::Video => u64::from(plan.source.as_ref()?.total_frames),
     };
@@ -688,6 +727,15 @@ pub fn check_atmos_frame_count(atmos_frames: u64, picture_frames: u64) -> Result
 /// What the encode will produce for this job, or None when nothing here can
 /// measure the source.
 pub fn plan_picture(plan: &CreatePlan) -> Result<Option<PlannedPicture>, String> {
+    if plan.is_picture_mxf() {
+        return Ok(plan.source.as_ref().map(|info| {
+            let raster = (info.width, info.height);
+            PlannedPicture {
+                raster,
+                content: raster,
+            }
+        }));
+    }
     if plan.is_codestreams() {
         let Some(frame) = crate::reel::collect_frames(&plan.picture)
             .into_iter()
@@ -778,6 +826,93 @@ mod tests {
         for frame in 0..count {
             write_codestream(&dir.join(format!("frame_{frame:08}.j2c")), width, height);
         }
+    }
+
+    const PICTURE_MXF_FRAMES: usize = 4;
+    const PICTURE_MXF_FPS: u32 = 24;
+    const PICTURE_MXF_SIZE: u32 = 64;
+
+    fn write_picture_mxf(dir: &Path, fps_num: u32, fps_den: u32) -> PathBuf {
+        let codestream = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../extern/postkit/tests/fixtures/cinema2k_64x64.j2c"),
+        )
+        .unwrap();
+        let input_files = (0..PICTURE_MXF_FRAMES)
+            .map(|frame| {
+                let path = dir.join(format!("frame_{frame}.j2c"));
+                std::fs::write(&path, &codestream).unwrap();
+                path
+            })
+            .collect();
+        let mxf = dir.join("picture.mxf");
+        let track = postkit::mxf_wrap::mxf_wrap(&postkit::mxf_wrap::MxfWrapOptions {
+            input_files,
+            output: mxf.clone(),
+            essence_type: postkit::mxf_wrap::EssenceType::J2k,
+            standard: postkit::mxf_wrap::MxfStandard::AsDcp,
+            fps_num,
+            fps_den,
+            partition_size: 0,
+            encryption: None,
+            mca_config: None,
+            resource_ids: Vec::new(),
+            hdr: None,
+            asset_uuid: None,
+            timed_text_duration_frames: None,
+        });
+        assert!(track.success, "wrap failed: {}", track.error);
+        mxf
+    }
+
+    fn picture_mxf_plan(mxf: PathBuf) -> CreatePlan {
+        CreatePlan {
+            source: crate::probe::probe_video(&mxf),
+            fps: PICTURE_MXF_FPS,
+            ..plan_with_picture(mxf)
+        }
+    }
+
+    #[test]
+    fn a_picture_mxf_is_planned_at_the_raster_and_length_its_probe_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = picture_mxf_plan(write_picture_mxf(dir.path(), PICTURE_MXF_FPS, 1));
+
+        let planned = plan_picture(&plan)
+            .unwrap()
+            .expect("the probe reads the raster");
+        let expected = (PICTURE_MXF_SIZE, PICTURE_MXF_SIZE);
+        assert_eq!(planned.raster, expected);
+        assert_eq!(planned.content, expected);
+        assert_eq!(
+            planned_picture_frames(&plan),
+            Some(PICTURE_MXF_FRAMES as u64)
+        );
+        assert_eq!(check_before_encode(&plan), Ok(()));
+    }
+
+    #[test]
+    fn a_job_rate_other_than_the_picture_mxf_edit_rate_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mxf = write_picture_mxf(dir.path(), PICTURE_MXF_FPS, 1);
+        let plan = CreatePlan {
+            fps: 25,
+            ..picture_mxf_plan(mxf.clone())
+        };
+
+        assert_eq!(
+            only_refusal(&plan),
+            format!("{} runs at 24 fps, the job asks for 25 fps", mxf.display())
+        );
+    }
+
+    #[test]
+    fn a_fractional_picture_mxf_edit_rate_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mxf = write_picture_mxf(dir.path(), 24_000, 1_001);
+
+        let error = only_refusal(&picture_mxf_plan(mxf));
+        assert!(error.contains("runs at 24000/1001 fps"), "{error}");
     }
 
     fn write_wav(path: &Path, channels: u16, sample_rate: u32) {

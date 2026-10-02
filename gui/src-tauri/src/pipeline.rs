@@ -764,7 +764,7 @@ pub async fn submit_job(
     let xyz_route = dcpwizard_core::encode::xyz_route(source_colourspace)?;
     // a J2K directory is picture that is already encoded: no transform runs
     // over it, so a colour space here would be ignored
-    if postkit::encode::detect_input_type(&video) == postkit::encode::InputType::J2kSequence {
+    if dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video)) {
         dcpwizard_core::encode::check_precompressed_colourspace(source_colourspace)?;
     }
 
@@ -789,7 +789,7 @@ pub async fn submit_job(
         flip_vertical,
         ..dcpwizard_core::source_picture::SourcePictureOptions::default()
     };
-    if postkit::encode::detect_input_type(&video) == postkit::encode::InputType::J2kSequence {
+    if dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video)) {
         dcpwizard_core::source_picture::check_precompressed_picture(&picture)?;
     }
     // the map places every channel by hand, and each of these places channels
@@ -954,7 +954,7 @@ pub async fn submit_job(
             Path::new(path),
             &timed_text_paths,
             &source_colour,
-            postkit::encode::detect_input_type(&video) == postkit::encode::InputType::J2kSequence,
+            dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video)),
         )?;
         dcpwizard_core::subtitle::check_subtitle_burn(
             Path::new(path),
@@ -1111,8 +1111,9 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
             .and_then(|spec| dcpwizard_core::pad::parse_pad_frames(spec, fps).ok())
             .unwrap_or(0)
     };
-    let codestreams = postkit::encode::detect_input_type(&job.video_path)
-        == postkit::encode::InputType::J2kSequence;
+    let codestreams = dcpwizard_core::preflight::is_precompressed(
+        postkit::encode::detect_input_type(&job.video_path),
+    );
     dcpwizard_core::preflight::CreatePlan {
         picture: job.video_path.clone(),
         picture_kind: match (job.still_length_frames > 0, codestreams) {
@@ -1697,6 +1698,17 @@ fn resolve_job_picture(
 ) -> Result<dcpwizard_core::source_picture::ResolvedPicture, String> {
     let info = dcpwizard_core::probe::probe_video(source)
         .ok_or_else(|| format!("cannot read the size of {}", source.display()))?;
+    // codestreams are wrapped as they are
+    if dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(source)) {
+        let processing = postkit::picture_processing::PictureProcessing::default();
+        let plan = processing.plan(info.width, info.height)?;
+        return Ok(dcpwizard_core::source_picture::ResolvedPicture {
+            encode_width: plan.output_width,
+            encode_height: plan.output_height,
+            processing,
+            plan,
+        });
+    }
     dcpwizard_core::source_picture::resolve_picture(
         &job.picture,
         source,
@@ -3580,6 +3592,75 @@ mod tests {
         };
         let error = checked_job_plan(&job).expect_err("48 fps 4K must fail");
         assert!(error.contains("4K"), "{error}");
+    }
+
+    const PICTURE_MXF_FRAMES: usize = 4;
+    const PICTURE_MXF_FRAME_RATE: u32 = 24;
+
+    fn picture_mxf_job(directory: &Path, framerate: &str) -> JobConfig {
+        let codestream = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../extern/postkit/tests/fixtures/cinema2k_64x64.j2c"),
+        )
+        .unwrap();
+        let input_files = (0..PICTURE_MXF_FRAMES)
+            .map(|frame| {
+                let path = directory.join(format!("frame_{frame}.j2c"));
+                std::fs::write(&path, &codestream).unwrap();
+                path
+            })
+            .collect();
+        let mxf = directory.join("picture.mxf");
+        let track = postkit::mxf_wrap::mxf_wrap(&postkit::mxf_wrap::MxfWrapOptions {
+            input_files,
+            output: mxf.clone(),
+            essence_type: postkit::mxf_wrap::EssenceType::J2k,
+            standard: postkit::mxf_wrap::MxfStandard::AsDcp,
+            fps_num: PICTURE_MXF_FRAME_RATE,
+            fps_den: 1,
+            partition_size: 0,
+            encryption: None,
+            mca_config: None,
+            resource_ids: Vec::new(),
+            hdr: None,
+            asset_uuid: None,
+            timed_text_duration_frames: None,
+        });
+        assert!(track.success, "wrap failed: {}", track.error);
+        JobConfig {
+            video_path: mxf.clone(),
+            framerate: framerate.into(),
+            source: probe_job_source(&mxf, false),
+            output_dir: directory.to_path_buf(),
+            resolution: "auto".into(),
+            ..test_job()
+        }
+    }
+
+    #[test]
+    fn a_picture_mxf_is_planned_as_codestreams_at_its_raster() {
+        let directory = tempfile::tempdir().unwrap();
+        let job = picture_mxf_job(directory.path(), "24");
+        assert_eq!(
+            job_plan(&job).picture_kind,
+            dcpwizard_core::preflight::PictureKind::Codestreams
+        );
+        let (_, planned_picture) = checked_job_plan(&job).expect("a 24 fps picture MXF passes");
+        assert_eq!(
+            planned_picture.expect("the picture is planned").raster,
+            (64, 64)
+        );
+    }
+
+    #[test]
+    fn a_job_rate_other_than_the_picture_mxf_edit_rate_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let job = picture_mxf_job(directory.path(), "25");
+        let error = checked_job_plan(&job).expect_err("25 fps against a 24 fps MXF must fail");
+        assert!(
+            error.contains("runs at 24 fps, the job asks for 25 fps"),
+            "{error}"
+        );
     }
 
     #[test]

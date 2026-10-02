@@ -4,7 +4,8 @@
 
 use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 use dcpwizard_core::overlapped_picture::{
-    PackageShape, PictureSource, PictureWrapTarget, encode_and_wrap_picture, overlap_refusal,
+    PackageShape, PictureSource, PictureWrapInProgress, PictureWrapTarget, encode_and_wrap_picture,
+    overlap_refusal,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -14,6 +15,8 @@ const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
 const FRAMES: u64 = 4;
 const FPS: u32 = 24;
+const PART_WRITTEN_PICTURE: &str = "picture_00000000-0000-0000-0000-000000000001.mxf.part";
+const FINISHED_PICTURE: &str = "picture_00000000-0000-0000-0000-000000000002.mxf";
 
 fn make_clip(path: &Path) {
     let output = std::process::Command::new("ffmpeg")
@@ -206,4 +209,61 @@ fn a_package_that_reshapes_the_picture_refuses_an_overlapped_wrap() {
         ..Default::default()
     };
     assert_eq!(create_dcp(&config), -1);
+}
+
+#[test]
+fn a_picture_wrap_removes_part_written_mxfs_left_by_an_earlier_run() {
+    let root = tempfile::tempdir().unwrap();
+    let dcp_dir = root.path().join("dcp");
+    std::fs::create_dir_all(&dcp_dir).unwrap();
+    let part_written = dcp_dir.join(PART_WRITTEN_PICTURE);
+    let finished = dcp_dir.join(FINISHED_PICTURE);
+    std::fs::write(&part_written, b"unfinished").unwrap();
+    std::fs::write(&finished, b"finished").unwrap();
+
+    let wrap = PictureWrapInProgress::start(PictureWrapTarget {
+        dcp_dir: dcp_dir.clone(),
+        fps: FPS,
+        hdr_dci: false,
+    })
+    .expect("the wrap starts");
+
+    assert!(
+        !part_written.exists(),
+        "{} survived",
+        part_written.display()
+    );
+    assert!(finished.is_file(), "{} was removed", finished.display());
+    wrap.abandon();
+}
+
+#[test]
+fn packaging_removes_part_written_mxfs_left_by_an_earlier_run() {
+    let root = tempfile::tempdir().unwrap();
+    let j2k_dir = root.path().join("j2k");
+    std::fs::create_dir_all(&j2k_dir).unwrap();
+    dcpwizard_core::pad::generate_black_frame(WIDTH, HEIGHT, FPS, &j2k_dir.join("frame_00000.j2c"))
+        .expect("encode a frame");
+    let dcp_dir = root.path().join("dcp");
+    std::fs::create_dir_all(&dcp_dir).unwrap();
+    let part_written = dcp_dir.join(PART_WRITTEN_PICTURE);
+    std::fs::write(&part_written, b"unfinished").unwrap();
+
+    let config = DcpConfig {
+        title: "Rerun".into(),
+        standard: dcpwizard_core::Standard::Smpte,
+        resolution: dcpwizard_core::Resolution::TwoK,
+        content_type: dcpwizard_core::ContentType::Test,
+        frame_rate_num: FPS,
+        frame_rate_den: 1,
+        output_dir: dcp_dir.clone(),
+        j2k_dir: Some(j2k_dir),
+        ..Default::default()
+    };
+    assert_eq!(create_dcp(&config), 0, "packaging must succeed");
+    assert!(
+        !part_written.exists(),
+        "{} survived",
+        part_written.display()
+    );
 }

@@ -129,7 +129,7 @@ fn source_refusal(source: &PictureSource) -> Option<&'static str> {
              nothing feeds the wrap frame by frame",
         );
     }
-    if source.input_type == postkit::encode::InputType::J2kSequence {
+    if crate::preflight::is_precompressed(source.input_type) {
         return Some("a J2K sequence is never encoded, so nothing feeds the wrap frame by frame");
     }
     None
@@ -180,6 +180,15 @@ pub fn encode_and_wrap_picture(
 fn new_picture_asset(target: &PictureWrapTarget) -> Result<uuid::Uuid, String> {
     std::fs::create_dir_all(&target.dcp_dir)
         .map_err(|e| format!("cannot create {}: {e}", target.dcp_dir.display()))?;
+    let removed = postkit::mxf_wrap::remove_part_written_mxfs(&target.dcp_dir).map_err(|e| {
+        format!(
+            "cannot remove part-written MXFs from {}: {e}",
+            target.dcp_dir.display()
+        )
+    })?;
+    for path in removed {
+        tracing::info!("removed {}, left by an earlier run", path.display());
+    }
     Ok(uuid::Uuid::new_v4())
 }
 

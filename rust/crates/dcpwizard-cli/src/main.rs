@@ -4463,8 +4463,11 @@ fn run() {
                 ));
             }
 
-            // Detect if input is a video file (not a J2K directory)
-            let is_video_file = video_path.is_file()
+            let picture_mxf_input = postkit::encode::detect_input_type(&video_path)
+                == postkit::encode::InputType::PictureMxf;
+            // Detect if input is a video file (not a J2K directory or picture MXF)
+            let is_video_file = !picture_mxf_input
+                && video_path.is_file()
                 && video_path
                     .extension()
                     .and_then(|e| e.to_str())
@@ -4636,14 +4639,14 @@ fn run() {
             // one description of the job, checked and hinted before anything is
             // encoded. The frame count costs a decode, so the source is probed
             // once here and the video branch reuses it.
-            let source_info = (is_video_file || still_input)
+            let source_info = (is_video_file || still_input || picture_mxf_input)
                 .then(|| dcpwizard_core::probe::probe_video(&video_path))
                 .flatten();
             let plan_fps = frame_rate.map(|frame_rate| {
                 frame_rate.unwrap_or_else(|| {
                     source_info
                         .as_ref()
-                        .filter(|_| is_video_file)
+                        .filter(|_| is_video_file || picture_mxf_input)
                         .map(|info| {
                             dcpwizard_core::hfr::source_rate_to_dcp(info.fps_num, info.fps_den).0
                         })
@@ -5645,12 +5648,15 @@ fn run() {
 
                 remove_intermediates_if_packaged(&output_dir, &video_path, code)
             } else {
-                // Input is a J2K directory or image sequence
+                // Input is a J2K directory, picture MXF or image sequence
                 print_hints(hints_pass);
                 let resolution = package_resolution;
                 let ct = content_type;
 
-                let fps = frame_rate.unwrap_or(24);
+                let fps = match source_info.as_ref().filter(|_| picture_mxf_input) {
+                    Some(info) => info.fps_num,
+                    None => frame_rate.unwrap_or(24),
+                };
                 let reel_split_frames =
                     match resolve_reel_splits(split_at.as_deref(), split_chapters, None, fps) {
                         Ok(f) => f,
@@ -5737,6 +5743,33 @@ fn run() {
                         job_log.line(&line);
                     }
                     encoded.j2k_dir
+                } else if picture_mxf_input {
+                    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let cancel_clone = cancel.clone();
+                    let _ = ctrlc::set_handler(move || {
+                        cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    });
+                    let unwrap_dir = output_dir.join("j2k");
+                    let unwrapped = postkit::mxf_unwrap::unwrap_picture_mxf(
+                        &video_path,
+                        &unwrap_dir,
+                        &cancel,
+                        &mut |frame, total_frames| {
+                            eprint!("\r[unwrap] {frame}/{total_frames} frames   ");
+                        },
+                    );
+                    eprintln!();
+                    let unwrapped = match unwrapped {
+                        Ok(unwrapped) => unwrapped,
+                        Err(e) => exit_encode_failed(&cancel, e),
+                    };
+                    tracing::info!(
+                        "Unwrapped {} frame(s) at {}/{} fps from the picture MXF",
+                        unwrapped.frames,
+                        unwrapped.edit_rate_num,
+                        unwrapped.edit_rate_den
+                    );
+                    unwrap_dir
                 } else {
                     video_path.clone()
                 };
