@@ -361,11 +361,16 @@ pub fn export_dcp(
         None => None,
     };
 
-    let key_source =
-        crate::decrypt::key_source_opt(&config.keys, &config.kdm, &config.recipient_key)?;
+    let key_source = postkit::content_keys::ContentKeys::from_options(
+        config.kdm.as_deref(),
+        config.recipient_key.as_deref(),
+        config.keys.as_deref(),
+    )?;
     let picture_contexts = match (&key_source, picture.writer_info.encrypted_essence) {
         (_, false) => None,
-        (Some(keys), true) => Some(keys.contexts(&picture.writer_info, "picture")?),
+        (Some(keys), true) => {
+            Some(keys.decrypt_and_hmac_contexts(&picture.writer_info, "picture")?)
+        }
         (None, true) => return Err(encrypted_without_keys(&sources.picture)),
     };
     if let (Some(sound), Some(_), None) = (&sound, &encrypted_sound, &key_source) {

@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -20,6 +20,7 @@ import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, project
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { initAssetStripResize } from "./asset-strip-resize.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
+import { contentKeysFrom } from "./content-keys-form.js";
 initAssetStripResize();
 
 // === Browse wrapper (remembers last directory) ===
@@ -1489,13 +1490,96 @@ document.getElementById("btn-preview")?.addEventListener("click", () => {
   else previewPackage(target.path);
 });
 
+// content keys entered this session, by the package or picture path they opened
+const sessionContentKeys = new Map();
+
+// contentKeys is null for a path that is not encrypted
+async function contentKeysFor(path) {
+  let encrypted;
+  try {
+    encrypted = await previewNeedsContentKeys(path);
+  } catch (e) {
+    setStatus(`Preview failed: ${e}`);
+    return { cancelled: true };
+  }
+  if (!encrypted) return { contentKeys: null };
+  const remembered = sessionContentKeys.get(path);
+  if (remembered) return { contentKeys: remembered };
+  const contentKeys = await askForContentKeys();
+  if (!contentKeys) return { cancelled: true };
+  sessionContentKeys.set(path, contentKeys);
+  return { contentKeys };
+}
+
+// keys that failed to load are asked for again next time
+function forgetContentKeysIfRefused(path, loaded) {
+  loaded.then((worked) => {
+    if (!worked) sessionContentKeys.delete(path);
+  });
+}
+
+const CONTENT_KEY_FIELDS = [
+  { field: "kdm", input: "content-keys-kdm", browse: "content-keys-browse-kdm" },
+  { field: "recipientKey", input: "content-keys-recipient-key", browse: "content-keys-browse-recipient-key" },
+  { field: "keys", input: "content-keys-keys", browse: "content-keys-browse-keys" },
+];
+
+for (const { input, browse } of CONTENT_KEY_FIELDS) {
+  document.getElementById(browse)?.addEventListener("click", async () => {
+    const file = await open({ directory: false });
+    if (file) document.getElementById(input).value = file;
+  });
+}
+
+function askForContentKeys() {
+  const dialog = document.getElementById("content-keys-dialog");
+  const refusalList = document.getElementById("content-keys-refusals");
+  if (!dialog || !refusalList) return Promise.resolve(null);
+  for (const { input } of CONTENT_KEY_FIELDS) document.getElementById(input).value = "";
+  refusalList.innerHTML = "";
+  coverPreviewSurface();
+  dialog.hidden = false;
+
+  return new Promise((resolve) => {
+    const playButton = document.getElementById("content-keys-play");
+    const cancelButton = document.getElementById("content-keys-cancel");
+    const close = (contentKeys) => {
+      dialog.hidden = true;
+      uncoverPreviewSurface();
+      playButton.removeEventListener("click", onPlay);
+      cancelButton.removeEventListener("click", onCancel);
+      resolve(contentKeys);
+    };
+    const onPlay = () => {
+      const fields = {};
+      for (const { field, input } of CONTENT_KEY_FIELDS) fields[field] = document.getElementById(input).value;
+      const { contentKeys, refusals } = contentKeysFrom(fields);
+      if (contentKeys) {
+        close(contentKeys);
+        return;
+      }
+      refusalList.innerHTML = "";
+      for (const refusal of refusals) {
+        const item = document.createElement("li");
+        item.textContent = refusal;
+        refusalList.appendChild(item);
+      }
+    };
+    const onCancel = () => close(null);
+    playButton.addEventListener("click", onPlay);
+    cancelButton.addEventListener("click", onCancel);
+  });
+}
+
 // The preview shows what the build will do to the picture, so a file a reel
 // takes as its picture carries the crop and that reel's timed text, and any
 // other file plays plain.
-function previewSourcePicture(path) {
+async function previewSourcePicture(path) {
+  const { contentKeys, cancelled } = await contentKeysFor(path);
+  if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
-  previewFile(path);
+  forgetContentKeysIfRefused(path, previewFile(path, contentKeys));
   const reel = project.reels.find(r => r.picture?.path === path);
   previewShowsJobPicture = Boolean(reel);
   setPreviewCrop(reel ? currentCrop() : null);
@@ -1506,11 +1590,13 @@ function previewSourcePicture(path) {
 
 // A built DCP carries the crop in its pictures already, and its timed text is
 // read back out of the package rather than off the source files.
-function previewPackage(dirPath) {
+async function previewPackage(dirPath) {
+  const { contentKeys, cancelled } = await contentKeysFor(dirPath);
+  if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
   previewShowsJobPicture = false;
-  previewDcp(dirPath);
+  forgetContentKeysIfRefused(dirPath, previewDcp(dirPath, contentKeys));
   setPreviewCrop(null);
   showPreviewTrack(dirPath, "subtitle", generation);
   showPreviewTrack(dirPath, "closed-caption", generation);
