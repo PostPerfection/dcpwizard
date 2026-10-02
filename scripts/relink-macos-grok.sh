@@ -97,7 +97,7 @@ done
 
 for file in "${FILES[@]}" "${STAGING_DIRECTORY}"/*.dylib
 do
-    if otool -L "${file}" | grep -E "${BUILD_OR_HOMEBREW_PATH}" >&2
+    if otool -L "${file}" | awk 'NR > 1' | grep -E "${BUILD_OR_HOMEBREW_PATH}" >&2
     then
         echo "relink-macos-grok: ${file} loads a library from the build tree or Homebrew" >&2
         exit 1
