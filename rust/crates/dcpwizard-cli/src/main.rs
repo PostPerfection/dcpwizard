@@ -1584,9 +1584,9 @@ enum Commands {
         #[arg(last = true)]
         create_arguments: Vec<String>,
     },
-    /// Export a DCP picture MXF to a delivery format via ffmpeg
+    /// Export a DCP to a delivery format, decoded by grok and encoded by ffmpeg
     Export {
-        /// Input picture MXF
+        /// Picture MXF, DCP directory or CPL
         #[arg(long)]
         input: String,
         /// Output file (or directory for image-sequence)
@@ -1601,6 +1601,15 @@ enum Commands {
         /// Optional sound MXF to mux into the output
         #[arg(long)]
         audio: Option<String>,
+        /// KDM XML (needs --recipient-key)
+        #[arg(long)]
+        kdm: Option<String>,
+        /// Recipient RSA private key (PEM) matching --kdm
+        #[arg(long)]
+        recipient_key: Option<String>,
+        /// dcpwizard KEYS.json, an alternative key source to --kdm
+        #[arg(long)]
+        keys: Option<String>,
     },
     /// Generate shell completion
     Completion {
@@ -4203,6 +4212,8 @@ fn run() {
         accelerator_error = Some(e);
     }
 
+    // export never decodes on the device
+    let reports_device_frames = gpu_enabled && !matches!(cli.command, Commands::Export { .. });
     let code = match cli.command {
         Commands::Preferences { .. } => unreachable!(),
         Commands::Create {
@@ -6776,6 +6787,9 @@ fn run() {
             format,
             crf,
             audio,
+            kdm,
+            recipient_key,
+            keys,
         } => {
             use dcpwizard_core::export::{ExportConfig, ExportFormat, export_dcp};
             let fmt = match format.to_lowercase().as_str() {
@@ -6792,14 +6806,39 @@ fn run() {
                 }
             };
             let config = ExportConfig {
-                input_mxf: PathBuf::from(input),
+                input: PathBuf::from(input),
                 output_path: PathBuf::from(output),
                 format: fmt,
                 quality_crf: crf,
                 audio_mxf: audio.map(PathBuf::from),
+                kdm: kdm.map(PathBuf::from),
+                recipient_key: recipient_key.map(PathBuf::from),
+                keys: keys.map(PathBuf::from),
             };
-            match export_dcp(&config) {
-                Ok(()) => 0,
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let cancel_clone = cancel.clone();
+            let _ = ctrlc::set_handler(move || {
+                cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            let started = std::time::Instant::now();
+            let mut frames_written = 0u64;
+            let exported = export_dcp(&config, &cancel, &mut |frame, total_frames| {
+                frames_written = frame;
+                let fps = frame as f64 / started.elapsed().as_secs_f64();
+                eprint!("\r[export] {frame}/{total_frames} frames {fps:.1} fps");
+            });
+            if frames_written > 0 {
+                eprintln!();
+            }
+            match exported {
+                Ok(()) => {
+                    let seconds = started.elapsed().as_secs_f64();
+                    eprintln!(
+                        "[export] {frames_written} frames in {seconds:.1} s, {:.1} fps",
+                        frames_written as f64 / seconds
+                    );
+                    0
+                }
                 Err(message) => {
                     eprintln!("export failed: {message}");
                     1
@@ -8098,7 +8137,7 @@ fn run() {
         }
     };
 
-    if gpu_enabled {
+    if reports_device_frames {
         tracing::info!(
             "grok's accelerator plugin ran {} frames on the device",
             postkit::grok_encoder::accelerated_frames()

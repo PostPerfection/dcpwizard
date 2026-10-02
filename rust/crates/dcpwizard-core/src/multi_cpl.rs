@@ -21,6 +21,8 @@ pub struct TimelineEntry {
     pub reel_number: u32,
     pub duration_frames: u64,
     pub entry_point: u64,
+    #[serde(default)]
+    pub sound_entry_point: u64,
     pub edit_rate: String,
     pub picture_asset_id: String,
     pub sound_asset_id: String,
@@ -135,6 +137,7 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
     let mut reel_id = String::new();
     let mut duration = 0u64;
     let mut entry_point = 0u64;
+    let mut sound_entry_point = 0u64;
     let mut edit_rate = String::new();
     let mut picture_id = String::new();
     let mut sound_id = String::new();
@@ -159,6 +162,7 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             reel_id.clear();
             duration = 0;
             entry_point = 0;
+            sound_entry_point = 0;
             edit_rate.clear();
             picture_id.clear();
             sound_id.clear();
@@ -200,6 +204,7 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
                     reel_number,
                     duration_frames: duration,
                     entry_point,
+                    sound_entry_point,
                     edit_rate: edit_rate.clone(),
                     picture_asset_id: picture_id.clone(),
                     sound_asset_id: sound_id.clone(),
@@ -296,9 +301,12 @@ pub fn get_timeline(cpl_path: &Path) -> Vec<TimelineEntry> {
             }
             if let Some(ep) = extract_xml_value(trimmed, "EntryPoint")
                 && let Ok(v) = ep.parse::<u64>()
-                && in_picture
             {
-                entry_point = v;
+                if in_picture {
+                    entry_point = v;
+                } else if in_sound {
+                    sound_entry_point = v;
+                }
             }
             if let Some(er) = extract_xml_value(trimmed, "EditRate")
                 && edit_rate.is_empty()

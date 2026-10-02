@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// 16 MB covers a single 4K J2K frame or one PCM edit unit.
-const MAX_FRAME_BUF: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FRAME_BUF: usize = 16 * 1024 * 1024;
 
 /// Decrypt an encrypted DCP into a cleartext DCP of the same structure. Keys
 /// come from either a KDM + recipient private key, or a dcpwizard KEYS.json.
