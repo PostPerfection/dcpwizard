@@ -650,12 +650,15 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
 
     let (cpl_id, _) = only_cpl(&encrypted.package);
     let kdm = directory.path().join("kdm.xml");
+    let history = directory.path().join("kdm-history.log");
     Command::cargo_bin("dcpwizard")
         .unwrap()
         .env("XDG_CONFIG_HOME", directory.path().join("config"))
         .env("XDG_DATA_HOME", directory.path().join("data"))
         .args([
             "kdm",
+            "--history-file",
+            history.to_str().unwrap(),
             "--cpl-id",
             &cpl_id,
             "--content-title",
@@ -696,13 +699,7 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
     assert_prores_export_holds_the_fixture(&output, "the ProRes export under a KDM");
     assert_only_entries(
         directory.path(),
-        &[
-            &recipient,
-            &recipient_key,
-            &kdm,
-            &output,
-            &directory.path().join("data"),
-        ],
+        &[&recipient, &recipient_key, &kdm, &output, &history],
     );
 }
 
