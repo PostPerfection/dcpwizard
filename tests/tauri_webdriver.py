@@ -60,6 +60,17 @@ def visible_windows():
     return set(found.stdout.split())
 
 
+# a window already listed as visible can still refuse focus while it maps
+def focused_new_window(windows_before):
+    window = next(iter(visible_windows() - windows_before), None)
+    if window is None:
+        return None
+    try:
+        xdotool("windowfocus", "--sync", window)
+    except WebDriverError:
+        return None
+    return window
+
 def xdotool(*arguments):
     done = subprocess.run(("xdotool",) + arguments, capture_output=True, text=True)
     if done.returncode != 0:
@@ -264,13 +275,11 @@ class Window:
 
     # with no window manager under Xvfb the picker reads keys only once focused
     def _focus_new_dialog(self, windows_before):
-        dialog = wait_until(
-            "no file dialog opened",
-            lambda: next(iter(visible_windows() - windows_before), None),
+        return wait_until(
+            "no file dialog opened and took focus",
+            lambda: focused_new_window(windows_before),
             FILE_DIALOG_TIMEOUT_SECONDS,
         )
-        xdotool("windowfocus", "--sync", dialog)
-        return dialog
 
     def _confirm_dialog(self, dialog):
         self.press(CONFIRM_KEY)
