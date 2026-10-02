@@ -160,9 +160,9 @@ Download from the [GitHub Releases](https://github.com/PostPerfection/dcpwizard/
 | **macOS** (Apple Silicon) | `dcpwizard-macos-aarch64.tar.gz` | `.dmg` |
 | **Windows** (x86_64) | `dcpwizard-windows-x86_64.zip` | `.msi` |
 
-The CLI links the Grok JPEG 2000 library (libgrokj2k) dynamically, and each archive carries it in `lib/` beside the binary. Unpack the archive and run the binary from where it sits, `LD_LIBRARY_PATH` does not have to be set. On Linux nothing else has to be installed. The macOS archive vendors its non-system libraries under `lib/` and runs without Homebrew, and the Windows zip carries libcrypto and the VC++ runtime.
+The CLI links the Grok JPEG 2000 library (libgrokj2k) and FFmpeg dynamically, and each archive carries them, in `lib/` beside the binary or beside the exe in the Windows zip. Unpack the archive and run the binary from where it sits, `LD_LIBRARY_PATH` does not have to be set. On Linux the bundled FFmpeg loads libdav1d, libva, libdrm and libzimg from the system, on Ubuntu 24.04 `sudo apt install libdav1d7 libva2 libva-drm2 libdrm2 libzimg2`. The macOS archive vendors its non-system libraries under `lib/` and runs without Homebrew, and the Windows zip carries libcrypto and the VC++ runtime.
 
-The desktop packages carry libgrokj2k too, in `/usr/lib/dcpwizard`. The package manager pulls in the rest: libmpv for the preview player, ffmpeg for video import, xmlsec1 and xmllint for verification, curl for certificate fetching.
+The desktop packages carry libgrokj2k, FFmpeg and libmpv themselves, in `/usr/lib/dcpwizard`. The package manager pulls in the rest: the ffmpeg program for sound, stills and probes, xmlsec1 and xmllint for verification, curl for certificate fetching, and the system libraries the bundled ones load.
 
 ```bash
 sudo apt install ./DCP.Wizard_*_amd64.deb    # Debian, Ubuntu
@@ -171,7 +171,9 @@ sudo dnf install ./DCP.Wizard-*.x86_64.rpm   # Fedora
 
 On Fedora, enable [RPM Fusion](https://rpmfusion.org/Configuration) first: ffmpeg comes from there. Nothing else has to be installed by hand.
 
-The `.AppImage` carries libmpv as well, and runs ffmpeg, xmlsec1 and xmllint from the PATH. For the `.dmg`, install libmpv with `brew install mpv`.
+The `.AppImage` carries libmpv as well, and runs ffmpeg, xmlsec1 and xmllint from the PATH. The `.dmg` and the Windows installers carry FFmpeg and libmpv too.
+
+The bundled FFmpeg 8.1.3 and libmpv are the LGPL builds of the [ffmpeg-mpv-builds v1.0.0](https://github.com/PostPerfection/ffmpeg-mpv-builds/releases/tag/v1.0.0) release, whose `ffmpeg-mpv-sources.tar` holds their sources, and every package carries their licences as `THIRD-PARTY-LICENSES-ffmpeg-mpv.txt`.
 
 ### GPU builds
 
@@ -180,7 +182,7 @@ GPU encoding and preview decode need Grok's accelerator plugin, a commercial pro
 **GPU encoding on Fedora.** An rpm with the CUDA plugin is built from a local Grok installation that carries it:
 
 ```bash
-./scripts/build-fedora-rpm.sh /path/to/grok/install
+./scripts/build-fedora-rpm.sh /path/to/grok/install /path/to/ffmpeg-mpv-linux-x86_64
 ```
 
 The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-1.4.0-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
@@ -204,7 +206,7 @@ The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example 
 **GPU encoding on macOS.** A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
 
 ```bash
-./scripts/build-macos-dmg.sh /path/to/grok/install
+./scripts/build-macos-dmg.sh /path/to/grok/install /path/to/ffmpeg-mpv-macos-arm64
 ```
 
 The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-1.4.0-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
@@ -324,7 +326,7 @@ cargo build --release
 | Dependency | Purpose | Install |
 |-----------|---------|---------|
 | `ffmpeg` | Video transcoding and import. Needs ffmpeg 8+ with libzimg (`zscale`). | Linux: CI uses [BtbN n8.1 gpl](https://github.com/BtbN/FFmpeg-Builds/releases). macOS: **not Homebrew** — see the macOS install section (martin-riedl 9.0.1 arm64). Windows: BtbN n8.1 win64 gpl. |
-| `mpv` | GUI preview player for sources that are not JPEG 2000. Required to *link* the GUI (`libmpv`). | The ffmpeg-mpv-builds release, see [Install from source](#install-from-source) |
+| `mpv` | GUI preview player for sources that are not JPEG 2000. Every desktop package carries `libmpv`, a source build links it. | Bundled. To build: the ffmpeg-mpv-builds release, see [Install from source](#install-from-source) |
 
 ### Docker
 

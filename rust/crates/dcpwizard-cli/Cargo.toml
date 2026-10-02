@@ -42,16 +42,24 @@ maintainer = "Post Perfection <dev@postperfection.com>"
 section = "video"
 priority = "optional"
 # $auto finds no package for the bundled libgrokj2k and drops every dependency
-depends = "libc6 (>= 2.39), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), zlib1g (>= 1:1.1.4)"
-recommends = "ffmpeg, mpv"
+depends = "libc6 (>= 2.39), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), zlib1g (>= 1:1.1.4), libdav1d7, libdrm2, libva2, libva-drm2, libzimg2"
+recommends = "ffmpeg"
 # the desktop package installs the same /usr/bin and /usr/lib files
 conflicts = "dcp-wizard"
 replaces = "dcp-wizard"
 assets = [
     ["target/release/dcpwizard", "usr/bin/", "755"],
     ["target/release/libgrokj2k.so.1", "usr/lib/dcpwizard/", "644"],
+    # sonames of the ffmpeg-mpv-builds v1.0.0 release the workflows pin
+    ["target/release/libavcodec.so.62", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libavfilter.so.11", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libavformat.so.62", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libavutil.so.60", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libswresample.so.6", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libswscale.so.9", "usr/lib/dcpwizard/", "644"],
     ["../../../README.md", "usr/share/doc/dcpwizard/README.md", "644"],
     ["../../../CHANGELOG.md", "usr/share/doc/dcpwizard/CHANGELOG.md", "644"],
+    ["target/release/THIRD-PARTY-LICENSES-ffmpeg-mpv.txt", "usr/share/doc/dcpwizard/THIRD-PARTY-LICENSES-ffmpeg-mpv.txt", "644"],
 ]
 extended-description = """\
 DCP Wizard creates valid Digital Cinema Packages from video sources, \
