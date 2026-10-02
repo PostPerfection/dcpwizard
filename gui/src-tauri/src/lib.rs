@@ -84,6 +84,8 @@ pub fn run() {
             preferences::save_preferences,
             preferences::reset_preferences,
             preferences::export_recipient_certificate,
+            preferences::find_dcpomatic_config,
+            preferences::import_dcpomatic_identity,
             pipeline::submit_job,
             pipeline::cancel_job,
             pipeline::pause_job,

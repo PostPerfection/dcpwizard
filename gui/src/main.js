@@ -235,6 +235,26 @@ document.getElementById("set-export-recipient-cert")?.addEventListener("click", 
   }
 });
 
+document.getElementById("set-import-dcpomatic")?.addEventListener("click", async () => {
+  let config;
+  try {
+    config = await invoke("find_dcpomatic_config");
+  } catch (error) {
+    setStatus(`${error}, choose the DCP-o-matic config.xml`);
+    config = await open({ directory: false, filters: [{ name: "DCP-o-matic config", extensions: ["xml"] }] });
+  }
+  if (!config) return;
+  try {
+    const { preferences, thumbprint } = await invoke("import_dcpomatic_identity", { config });
+    currentPreferences = { ...PREF_DEFAULTS, ...preferences };
+    document.getElementById("set-recipient-cert").value = preferences.recipientCert;
+    document.getElementById("set-recipient-key").value = preferences.recipientKey;
+    setStatus(`Imported the DCP-o-matic recipient identity, certificate thumbprint ${thumbprint}`);
+  } catch (error) {
+    setStatus(`Could not import the DCP-o-matic recipient identity: ${error}`);
+  }
+});
+
 // Load prefs into settings form
 function loadSettings() {
   const prefs = getPrefs();

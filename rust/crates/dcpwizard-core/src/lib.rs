@@ -18,6 +18,7 @@ pub mod cpl_annotation;
 pub mod dashboard;
 pub mod dcdm;
 pub mod dcp;
+pub mod dcpomatic_identity;
 pub mod decrypt;
 pub mod disk;
 pub mod dolby_vision;

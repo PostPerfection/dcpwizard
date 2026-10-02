@@ -946,6 +946,14 @@ enum PreferencesCommand {
         #[arg(help = "New value")]
         value: String,
     },
+    #[command(about = "Import the recipient certificate and private key from DCP-o-matic")]
+    ImportDcpomatic {
+        #[arg(
+            long,
+            help = "DCP-o-matic config.xml to read, by default the first of 2.18/config.xml, 2.16/config.xml and config.xml in dcpomatic2 under $XDG_CONFIG_HOME, else ~/.config on Linux and %LOCALAPPDATA% on Windows, or in ~/Library/Preferences/com.dcpomatic/2 on macOS"
+        )]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -4073,6 +4081,18 @@ fn run_preferences_command(action: &PreferencesCommand) -> i32 {
             }),
         PreferencesCommand::Set { name, value } => {
             dcpwizard_core::preferences::set_preference(name, value).and_then(|preferences| {
+                serde_json::to_string_pretty(&preferences).map_err(|error| error.to_string())
+            })
+        }
+        PreferencesCommand::ImportDcpomatic { config } => {
+            dcpwizard_core::dcpomatic_identity::import_dcpomatic_identity_into_preferences(
+                config.as_deref(),
+            )
+            .and_then(|(preferences, identity)| {
+                eprintln!(
+                    "imported the DCP-o-matic recipient certificate with thumbprint {}",
+                    identity.thumbprint
+                );
                 serde_json::to_string_pretty(&preferences).map_err(|error| error.to_string())
             })
         }
