@@ -114,9 +114,10 @@ fn the_leaf_and_its_key_are_written_from_the_decryption_element() {
         1,
         "{certificate}"
     );
+    // xml parsing turns the crlf a windows build writes into lf
     assert_eq!(
         std::fs::read(&imported.private_key).unwrap(),
-        format!("{}\n", chain.pem("signer.key").trim()).into_bytes()
+        format!("{}\n", chain.pem("signer.key").replace("\r\n", "\n").trim()).into_bytes()
     );
     #[cfg(unix)]
     {
