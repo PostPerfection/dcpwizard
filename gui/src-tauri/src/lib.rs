@@ -83,6 +83,7 @@ pub fn run() {
             preferences::load_preferences,
             preferences::save_preferences,
             preferences::reset_preferences,
+            preferences::export_recipient_certificate,
             pipeline::submit_job,
             pipeline::cancel_job,
             pipeline::pause_job,

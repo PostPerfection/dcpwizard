@@ -43,6 +43,8 @@ pub struct Preferences {
     pub detect_picture_findings: bool,
     pub signing_cert: String,
     pub signing_key: String,
+    pub recipient_cert: String,
+    pub recipient_key: String,
     pub output_dir: String,
     pub isdcf_naming: bool,
     pub channels: String,
@@ -71,6 +73,8 @@ impl Default for Preferences {
             detect_picture_findings: false,
             signing_cert: String::new(),
             signing_key: String::new(),
+            recipient_cert: String::new(),
+            recipient_key: String::new(),
             output_dir: String::new(),
             isdcf_naming: false,
             channels: "5.1".to_string(),
@@ -201,6 +205,18 @@ pub fn set_preference(name: &str, value: &str) -> Result<Preferences, String> {
     let preferences = postkit::preferences::set_json_preference(&preferences, name, value)?;
     save_preferences(&preferences).map_err(|error| error.to_string())?;
     Ok(preferences)
+}
+
+// a recipient key without a KDM is refused
+pub fn recipient_key_or_preference(
+    kdm: Option<&Path>,
+    explicit: Option<PathBuf>,
+    preferences: &Preferences,
+) -> Option<PathBuf> {
+    if explicit.is_some() || kdm.is_none() || preferences.recipient_key.is_empty() {
+        return explicit;
+    }
+    Some(PathBuf::from(&preferences.recipient_key))
 }
 
 #[cfg(test)]
@@ -380,6 +396,53 @@ mod tests {
 
         assert_eq!(preferences.creator, "New");
         assert!(!preferences.additional.contains_key("creator_name"));
+    }
+
+    fn with_recipient_key(recipient_key: &str) -> Preferences {
+        Preferences {
+            recipient_key: recipient_key.to_string(),
+            ..Preferences::default()
+        }
+    }
+
+    const KDM: &str = "/kdm/film.kdm.xml";
+
+    #[test]
+    fn an_explicit_recipient_key_wins_over_the_preference() {
+        let explicit = recipient_key_or_preference(
+            Some(Path::new(KDM)),
+            Some(PathBuf::from("/keys/explicit.key")),
+            &with_recipient_key("/keys/configured.key"),
+        );
+
+        assert_eq!(explicit, Some(PathBuf::from("/keys/explicit.key")));
+    }
+
+    #[test]
+    fn a_kdm_without_a_recipient_key_takes_the_configured_one() {
+        let configured = recipient_key_or_preference(
+            Some(Path::new(KDM)),
+            None,
+            &with_recipient_key("/keys/configured.key"),
+        );
+
+        assert_eq!(configured, Some(PathBuf::from("/keys/configured.key")));
+    }
+
+    #[test]
+    fn no_recipient_key_is_given_or_configured() {
+        let missing =
+            recipient_key_or_preference(Some(Path::new(KDM)), None, &with_recipient_key(""));
+
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn the_configured_recipient_key_stays_out_without_a_kdm() {
+        let without_kdm =
+            recipient_key_or_preference(None, None, &with_recipient_key("/keys/configured.key"));
+
+        assert_eq!(without_kdm, None);
     }
 
     #[test]

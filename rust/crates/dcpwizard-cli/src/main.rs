@@ -1321,10 +1321,10 @@ enum Commands {
         /// Optional target height (with --width, rescales the picture)
         #[arg(long)]
         height: Option<u32>,
-        /// KDM XML to decrypt an encrypted source (needs --recipient-key)
+        /// KDM XML to decrypt an encrypted source (needs --recipient-key or the recipientKey preference)
         #[arg(long)]
         kdm: Option<String>,
-        /// Recipient RSA private key (PEM) matching --kdm
+        /// Recipient RSA private key (PEM) matching --kdm, defaults to the recipientKey preference
         #[arg(long)]
         recipient_key: Option<String>,
         /// dcpwizard KEYS.json, an alternative key source to --kdm
@@ -1339,10 +1339,10 @@ enum Commands {
         /// Output DCP directory (must differ from input)
         #[arg(short, long)]
         output: String,
-        /// KDM XML (needs --recipient-key)
+        /// KDM XML (needs --recipient-key or the recipientKey preference)
         #[arg(long)]
         kdm: Option<String>,
-        /// Recipient RSA private key (PEM) matching --kdm
+        /// Recipient RSA private key (PEM) matching --kdm, defaults to the recipientKey preference
         #[arg(long)]
         recipient_key: Option<String>,
         /// dcpwizard KEYS.json, an alternative key source to --kdm
@@ -1601,10 +1601,10 @@ enum Commands {
         /// Optional sound MXF to mux into the output
         #[arg(long)]
         audio: Option<String>,
-        /// KDM XML (needs --recipient-key)
+        /// KDM XML (needs --recipient-key or the recipientKey preference)
         #[arg(long)]
         kdm: Option<String>,
-        /// Recipient RSA private key (PEM) matching --kdm
+        /// Recipient RSA private key (PEM) matching --kdm, defaults to the recipientKey preference
         #[arg(long)]
         recipient_key: Option<String>,
         /// dcpwizard KEYS.json, an alternative key source to --kdm
@@ -1905,11 +1905,11 @@ enum Commands {
         #[arg(long)]
         video_bit_rate: Option<u32>,
 
-        /// KDM XML to decrypt an encrypted source (needs --recipient-key)
+        /// KDM XML to decrypt an encrypted source (needs --recipient-key or the recipientKey preference)
         #[arg(long)]
         kdm: Option<String>,
 
-        /// Recipient RSA private key (PEM) matching --kdm
+        /// Recipient RSA private key (PEM) matching --kdm, defaults to the recipientKey preference
         #[arg(long)]
         recipient_key: Option<String>,
 
@@ -6222,8 +6222,12 @@ fn run() {
                 target_bitrate_mbps: Some(video_bit_rate),
                 target_width: width.unwrap_or(0),
                 target_height: height.unwrap_or(0),
+                recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
+                    kdm.as_deref().map(Path::new),
+                    recipient_key.map(PathBuf::from),
+                    &preferences,
+                ),
                 kdm: kdm.map(PathBuf::from),
-                recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
                 watermark: None,
                 encode_threads,
@@ -6241,8 +6245,12 @@ fn run() {
             let config = dcpwizard_core::decrypt::DcpDecryptConfig {
                 input_dir: PathBuf::from(input),
                 output_dir: PathBuf::from(output),
+                recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
+                    kdm.as_deref().map(Path::new),
+                    recipient_key.map(PathBuf::from),
+                    &preferences,
+                ),
                 kdm: kdm.map(PathBuf::from),
-                recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
             };
             dcpwizard_core::decrypt::decrypt_dcp(&config)
@@ -6811,8 +6819,12 @@ fn run() {
                 format: fmt,
                 quality_crf: crf,
                 audio_mxf: audio.map(PathBuf::from),
+                recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
+                    kdm.as_deref().map(Path::new),
+                    recipient_key.map(PathBuf::from),
+                    &preferences,
+                ),
                 kdm: kdm.map(PathBuf::from),
-                recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
             };
             let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -7329,8 +7341,12 @@ fn run() {
                 target_bitrate_mbps: video_bit_rate,
                 target_width: 0,
                 target_height: 0,
+                recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
+                    kdm.as_deref().map(Path::new),
+                    recipient_key.map(PathBuf::from),
+                    &preferences,
+                ),
                 kdm: kdm.map(PathBuf::from),
-                recipient_key: recipient_key.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
                 watermark: Some(mark),
                 encode_threads,

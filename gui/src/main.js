@@ -21,6 +21,7 @@ import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIE
 import { initAssetStripResize } from "./asset-strip-resize.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
+import { prefilledRecipientKey } from "./recipient-identity.js";
 initAssetStripResize();
 
 // === Browse wrapper (remembers last directory) ===
@@ -149,7 +150,7 @@ const PREF_DEFAULTS = {
   encrypt: false, stereo3d: false, validate: true,
   creator: "", facility: "", bandwidth: DEFAULT_BANDWIDTH_MBPS, gpu: false,
   gpuLicense: "", gpuRegistrationUrl: "", encodeThreads: AUTOMATIC_ENCODE_THREADS,
-  signingCert: "", signingKey: "", outputDir: "", isdcfNaming: false,
+  signingCert: "", signingKey: "", recipientCert: "", recipientKey: "", outputDir: "", isdcfNaming: false,
   channels: "5.1", showHintsBeforeBuild: true, detectPictureFindings: false,
 };
 
@@ -205,6 +206,35 @@ async function initializePreferences() {
   await loadComponentVersions(invoke);
 }
 
+const CERTIFICATE_SETTING_FIELDS = [
+  { field: "signingCert", input: "set-signing-cert", browse: "set-browse-signing-cert" },
+  { field: "signingKey", input: "set-signing-key", browse: "set-browse-signing-key" },
+  { field: "recipientCert", input: "set-recipient-cert", browse: "set-browse-recipient-cert" },
+  { field: "recipientKey", input: "set-recipient-key", browse: "set-browse-recipient-key" },
+];
+
+for (const { input, browse } of CERTIFICATE_SETTING_FIELDS) {
+  document.getElementById(browse)?.addEventListener("click", async () => {
+    const file = await open({ directory: false });
+    if (file) document.getElementById(input).value = file;
+  });
+}
+
+document.getElementById("set-export-recipient-cert")?.addEventListener("click", async () => {
+  const certificate = document.getElementById("set-recipient-cert").value;
+  const destination = await save({
+    defaultPath: certificate.split(/[/\\]/).pop(),
+    filters: [{ name: "Certificate", extensions: ["pem"] }],
+  });
+  if (!destination) return;
+  try {
+    await invoke("export_recipient_certificate", { certificate, destination });
+    setStatus(`Exported the recipient certificate to ${destination}`);
+  } catch (error) {
+    setStatus(`Could not export the recipient certificate: ${error}`);
+  }
+});
+
 // Load prefs into settings form
 function loadSettings() {
   const prefs = getPrefs();
@@ -215,13 +245,12 @@ function loadSettings() {
     "set-creator": prefs.creator,
     "set-facility": prefs.facility,
     "set-bandwidth": prefs.bandwidth,
-    "set-signing-cert": prefs.signingCert,
-    "set-signing-key": prefs.signingKey,
     "set-output-dir": prefs.outputDir,
     "set-gpu-license": prefs.gpuLicense,
     "set-gpu-registration-url": prefs.gpuRegistrationUrl,
     "set-encode-threads": prefs.encodeThreads || "",
   };
+  for (const { field, input } of CERTIFICATE_SETTING_FIELDS) map[input] = prefs[field];
   for (const [id, val] of Object.entries(map)) {
     const el = document.getElementById(id);
     if (el) el.value = val;
@@ -298,8 +327,9 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     creator: document.getElementById("set-creator")?.value,
     facility: document.getElementById("set-facility")?.value,
     bandwidth: parseInt(document.getElementById("set-bandwidth")?.value) || DEFAULT_BANDWIDTH_MBPS,
-    signingCert: document.getElementById("set-signing-cert")?.value,
-    signingKey: document.getElementById("set-signing-key")?.value,
+    ...Object.fromEntries(
+      CERTIFICATE_SETTING_FIELDS.map(({ field, input }) => [field, document.getElementById(input)?.value]),
+    ),
     outputDir: document.getElementById("set-output-dir")?.value,
     isdcfNaming: document.getElementById("set-isdcf-naming")?.checked || false,
     showHintsBeforeBuild: !!document.getElementById("set-show-hints")?.checked,
@@ -1524,10 +1554,18 @@ const CONTENT_KEY_FIELDS = [
   { field: "keys", input: "content-keys-keys", browse: "content-keys-browse-keys" },
 ];
 
-for (const { input, browse } of CONTENT_KEY_FIELDS) {
+// a recipient key without a KDM is refused
+function prefillRecipientKeyBesideKdm(recipientKeyInput) {
+  const input = document.getElementById(recipientKeyInput);
+  input.value = prefilledRecipientKey(getPrefs(), input.value);
+}
+
+for (const { field, input, browse } of CONTENT_KEY_FIELDS) {
   document.getElementById(browse)?.addEventListener("click", async () => {
     const file = await open({ directory: false });
-    if (file) document.getElementById(input).value = file;
+    if (!file) return;
+    document.getElementById(input).value = file;
+    if (field === "kdm") prefillRecipientKeyBesideKdm("content-keys-recipient-key");
   });
 }
 
@@ -1989,8 +2027,10 @@ document.getElementById("export-browse-file")?.addEventListener("click", () =>
   browseExportFile("export-input", [{ name: "CPL or MXF", extensions: ["xml", "mxf"] }]));
 document.getElementById("export-browse-audio")?.addEventListener("click", () =>
   browseExportFile("export-audio", [{ name: "Sound", extensions: ["mxf", "wav"] }]));
-document.getElementById("export-browse-kdm")?.addEventListener("click", () =>
-  browseExportFile("export-kdm", [{ name: "KDM", extensions: ["xml"] }, { name: "All", extensions: ["*"] }]));
+document.getElementById("export-browse-kdm")?.addEventListener("click", async () => {
+  await browseExportFile("export-kdm", [{ name: "KDM", extensions: ["xml"] }, { name: "All", extensions: ["*"] }]);
+  if (document.getElementById(EXPORT_FIELD_IDS.kdm).value) prefillRecipientKeyBesideKdm(EXPORT_FIELD_IDS.recipientKey);
+});
 document.getElementById("export-browse-recipient-key")?.addEventListener("click", () =>
   browseExportFile("export-recipient-key", [{ name: "Private key", extensions: ["pem", "key"] }, { name: "All", extensions: ["*"] }]));
 document.getElementById("export-browse-keys")?.addEventListener("click", () =>

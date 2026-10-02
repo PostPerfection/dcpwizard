@@ -626,12 +626,16 @@ fn a_decrypted_sound_mxf_holds_the_cleartext_pcm() {
     );
 }
 
-#[test]
-fn an_encrypted_dcp_exports_under_a_kdm() {
-    let encrypted = encrypted_fixture();
-    let directory = TempDir::new().unwrap();
-    let recipient = directory.path().join("screen.pem");
-    let recipient_key = directory.path().join("screen.key");
+struct IssuedKdm {
+    recipient: PathBuf,
+    recipient_key: PathBuf,
+    kdm: PathBuf,
+    history: PathBuf,
+}
+
+fn issue_kdm_to_a_new_recipient(encrypted: &EncryptedFixture, directory: &Path) -> IssuedKdm {
+    let recipient = directory.join("screen.pem");
+    let recipient_key = directory.join("screen.key");
     let options = postkit::certificate::CertOptions {
         cert_type: postkit::certificate::CertType::Leaf,
         common_name: "screen".into(),
@@ -649,12 +653,12 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
     );
 
     let (cpl_id, _) = only_cpl(&encrypted.package);
-    let kdm = directory.path().join("kdm.xml");
-    let history = directory.path().join("kdm-history.log");
+    let kdm = directory.join("kdm.xml");
+    let history = directory.join("kdm-history.log");
     Command::cargo_bin("dcpwizard")
         .unwrap()
-        .env("XDG_CONFIG_HOME", directory.path().join("config"))
-        .env("XDG_DATA_HOME", directory.path().join("data"))
+        .env("XDG_CONFIG_HOME", directory.join("config"))
+        .env("XDG_DATA_HOME", directory.join("data"))
         .args([
             "kdm",
             "--history-file",
@@ -681,6 +685,19 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
         .arg(&kdm)
         .assert()
         .success();
+    IssuedKdm {
+        recipient,
+        recipient_key,
+        kdm,
+        history,
+    }
+}
+
+#[test]
+fn an_encrypted_dcp_exports_under_a_kdm() {
+    let encrypted = encrypted_fixture();
+    let directory = TempDir::new().unwrap();
+    let issued = issue_kdm_to_a_new_recipient(encrypted, directory.path());
 
     let output = directory.path().join("kdm_screener.mov");
     export_command(
@@ -689,9 +706,9 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
         &output,
     )
     .arg("--kdm")
-    .arg(&kdm)
+    .arg(&issued.kdm)
     .arg("--recipient-key")
-    .arg(&recipient_key)
+    .arg(&issued.recipient_key)
     .args(["--format", "prores"])
     .assert()
     .success();
@@ -699,8 +716,88 @@ fn an_encrypted_dcp_exports_under_a_kdm() {
     assert_prores_export_holds_the_fixture(&output, "the ProRes export under a KDM");
     assert_only_entries(
         directory.path(),
-        &[&recipient, &recipient_key, &kdm, &output, &history],
+        &[
+            &issued.recipient,
+            &issued.recipient_key,
+            &issued.kdm,
+            &output,
+            &issued.history,
+        ],
     );
+}
+
+fn decrypt_under_kdm_alone(
+    config_home: &Path,
+    kdm: &Path,
+    output: &Path,
+) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", config_home)
+        .arg("decrypt")
+        .arg("--input")
+        .arg(&encrypted_fixture().package)
+        .arg("--output")
+        .arg(output)
+        .arg("--kdm")
+        .arg(kdm)
+        .assert()
+}
+
+fn configure_recipient_key(config_home: &Path, recipient_key: &Path) {
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", config_home)
+        .args(["preferences", "set", "recipientKey"])
+        .arg(recipient_key)
+        .assert()
+        .success();
+}
+
+#[test]
+fn a_kdm_decrypts_with_the_configured_recipient_key() {
+    let directory = TempDir::new().unwrap();
+    let issued = issue_kdm_to_a_new_recipient(encrypted_fixture(), directory.path());
+    let config_home = directory.path().join("configured");
+    configure_recipient_key(&config_home, &issued.recipient_key);
+    let output = directory.path().join("decrypted");
+
+    decrypt_under_kdm_alone(&config_home, &issued.kdm, &output).success();
+
+    assert!(
+        pcm_frames(&only_file_starting_with(&output, "sound_"))
+            == pcm_frames(&dcp_fixture().sound_mxf),
+        "the decrypted sound has to hold the cleartext package's PCM frame for frame"
+    );
+}
+
+#[test]
+fn a_kdm_without_a_recipient_key_given_or_configured_is_refused() {
+    let directory = TempDir::new().unwrap();
+    let issued = issue_kdm_to_a_new_recipient(encrypted_fixture(), directory.path());
+    let output = directory.path().join("decrypted");
+
+    decrypt_under_kdm_alone(&directory.path().join("unconfigured"), &issued.kdm, &output)
+        .failure()
+        .stdout(predicate::str::contains(
+            "decrypting needs both --kdm and --recipient-key (or use --keys)",
+        ));
+}
+
+#[test]
+fn a_configured_recipient_key_leaves_a_cleartext_export_alone() {
+    let fixture = dcp_fixture();
+    let directory = TempDir::new().unwrap();
+    let config_home = directory.path().join("configured");
+    configure_recipient_key(&config_home, &directory.path().join("screen.key"));
+    let output = directory.path().join("cleartext_screener.mov");
+
+    export_command(&config_home, &fixture.picture_mxf, &output)
+        .args(["--format", "prores"])
+        .assert()
+        .success();
+
+    assert!(output.is_file(), "the cleartext export has to be written");
 }
 
 #[test]
