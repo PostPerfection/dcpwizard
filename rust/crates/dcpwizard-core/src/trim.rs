@@ -20,18 +20,17 @@ pub fn encode_window(
     start_frames: u64,
     kept_frames: u64,
 ) -> Option<postkit::encode::FrameRange> {
-    if kept_frames == 0 {
+    let input_type = postkit::encode::detect_input_type(picture);
+    if kept_frames == 0
+        || input_type == postkit::encode::InputType::Unknown
+        || crate::preflight::is_precompressed(input_type)
+    {
         return None;
     }
-    match postkit::encode::detect_input_type(picture) {
-        postkit::encode::InputType::Video | postkit::encode::InputType::ImageSequence => {
-            Some(postkit::encode::FrameRange {
-                first_frame: start_frames,
-                frame_count: kept_frames,
-            })
-        }
-        postkit::encode::InputType::J2kSequence | postkit::encode::InputType::Unknown => None,
-    }
+    Some(postkit::encode::FrameRange {
+        first_frame: start_frames,
+        frame_count: kept_frames,
+    })
 }
 
 /// Number of J2K codestreams in a frame directory, in the order they wrap.
