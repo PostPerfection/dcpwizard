@@ -29,5 +29,8 @@ tracing.workspace = true
 uuid.workspace = true
 zip = "8"
 
+[build-dependencies]
+postkit-ffmpeg-link-search = { path = "../../../extern/postkit/ffmpeg-link-search" }
+
 [dev-dependencies]
 tempfile = "3"

@@ -50,15 +50,6 @@ jobs:
             fonts-dejavu-core \
             e2fsprogs
 
-      # apt's 6.1 and chocolatey's have no apv decoder, so linux and windows take
-      # the same pinned 8.1 static build
-      - name: Install ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
-          tar -xJf ffmpeg.tar.xz
-          echo "$PWD/$(ls -d ffmpeg-*linux64-gpl-8.1)/bin" >> "$GITHUB_PATH"
-
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -69,6 +60,34 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include" >> $GITHUB_ENV
           echo "LIBRARY_PATH=$OPENSSL_PREFIX/lib:$(brew --prefix xerces-c)/lib" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$OPENSSL_PREFIX/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix xerces-c)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $env:VCPKG_BUILD_TYPE="release"
+          # vcpkg reads curl 56 and 503 off github's archive host as permanent and
+          # refuses to retry the source download, so retry the whole install
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            vcpkg install libxml2[tools] openssl xerces-c --triplet x64-windows
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 5) { throw "vcpkg install failed after $attempt attempts" }
+            Start-Sleep -Seconds (30 * $attempt)
+          }
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\libxml2" >> $env:GITHUB_PATH
+
+      - uses: PostPerfection/ffmpeg-mpv-builds@v1.0.0
+        with:
+          release: v1.0.0
+
+      # apt's 6.1 and chocolatey's have no apv decoder, so linux and windows take
+      # the same pinned 8.1 static build
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors -o ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+          tar -xJf ffmpeg.tar.xz
+          echo "$PWD/$(ls -d ffmpeg-*linux64-gpl-8.1)/bin" >> "$GITHUB_PATH"
 
       - name: Install ffmpeg (macOS)
         if: runner.os == 'macOS'
@@ -87,21 +106,6 @@ jobs:
           102a26b8940a053298d9929bfaae71e4b6ef65ba5f19a99a88c433108560741a  ffprobe.zip
           SUMS
           echo "$HOME/ffmpeg-bin" >> "$GITHUB_PATH"
-
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $env:VCPKG_BUILD_TYPE="release"
-          # vcpkg reads curl 56 and 503 off github's archive host as permanent and
-          # refuses to retry the source download, so retry the whole install
-          for ($attempt = 1; $attempt -le 5; $attempt++) {
-            vcpkg install libxml2[tools] openssl xerces-c --triplet x64-windows
-            if ($LASTEXITCODE -eq 0) { break }
-            if ($attempt -eq 5) { throw "vcpkg install failed after $attempt attempts" }
-            Start-Sleep -Seconds (30 * $attempt)
-          }
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          echo "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\libxml2" >> $env:GITHUB_PATH
 
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
@@ -253,6 +257,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev xvfb xdotool webkit2gtk-driver
 
+      - uses: PostPerfection/ffmpeg-mpv-builds@v1.0.0
+        with:
+          release: v1.0.0
+
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -275,11 +283,6 @@ jobs:
         uses: PostPerfection/setup-grok@v1.1.3
         with:
           grok-ref: v20.4.14
-
-      - uses: PostPerfection/setup-libmpv@v1
-        with:
-          mpv-release: 20260828
-          mpv-archive: mpv-dev-x86_64-20260828-git-182fa6ca49.7z
 
       - name: Build frontend
         working-directory: gui

@@ -211,16 +211,27 @@ The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name
 
 ### Install from source
 
+Every build, the CLI included, links the FFmpeg 8.1.3 LGPL libraries, and the
+desktop app also links libmpv. Both come from a
+[PostPerfection/ffmpeg-mpv-builds](https://github.com/PostPerfection/ffmpeg-mpv-builds/releases/tag/v1.0.0)
+release, v1.0.0 in CI. Unpack the archive for your platform, here to
+`/path/to/ffmpeg-mpv`. On Linux and macOS put its `lib/pkgconfig` first on
+`PKG_CONFIG_PATH`, on Windows set `FFMPEG_DIR` to it and `MPV_LIB_DIR` to its
+`lib`. On Ubuntu 24.04 install the packages its
+`ubuntu-24.04-runtime-packages.txt` lists. On a machine with a distro FFmpeg
+also set `FFMPEG_DIR` to it on Linux and macOS: the crates' build scripts put
+`$FFMPEG_DIR/lib` first on the link path, ahead of `/usr/lib64`.
+
 #### Linux (Ubuntu/Debian)
 
 ```bash
 sudo apt-get install -y build-essential cmake libclang-dev pkg-config libxml2-dev libssl-dev libxerces-c-dev libasound2-dev
-# For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libmpv-dev patchelf
+# For GUI: also install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
 # Grok (libgrokj2k) must be discoverable by pkg-config at build time and its
 # shared lib loadable at runtime. Build it from source or install a release, then:
-export PKG_CONFIG_PATH="/path/to/grok/lib/pkgconfig:$PKG_CONFIG_PATH"
-export LD_LIBRARY_PATH="/path/to/grok/lib:$LD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="/path/to/ffmpeg-mpv/lib/pkgconfig:/path/to/grok/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/path/to/ffmpeg-mpv/lib:/path/to/grok/lib:$LD_LIBRARY_PATH"
 
 cd rust
 cargo build --release
@@ -231,12 +242,13 @@ cargo build --release
 
 ```bash
 sudo dnf install gcc-c++ cmake clang-devel pkgconf-pkg-config libxml2-devel openssl-devel xerces-c-devel alsa-lib-devel
-# For GUI: also install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel mpv-devel patchelf
+# For GUI: also install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel patchelf
 # ffmpeg comes from RPM Fusion
 
 # Grok as in the Ubuntu section, then:
-export PKG_CONFIG_PATH="/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
-export LD_LIBRARY_PATH="/path/to/grok/lib64:$LD_LIBRARY_PATH"
+export FFMPEG_DIR=/path/to/ffmpeg-mpv
+export PKG_CONFIG_PATH="/path/to/ffmpeg-mpv/lib/pkgconfig:/path/to/grok/lib64/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/path/to/ffmpeg-mpv/lib:/path/to/grok/lib64:$LD_LIBRARY_PATH"
 
 cd rust
 cargo build --release
@@ -249,7 +261,8 @@ cargo build --release
 brew install pkg-config libxml2 openssl@3 xerces-c
 
 export OPENSSL_DIR=$(brew --prefix openssl@3)
-export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix xerces-c)/lib/pkgconfig"
+export PKG_CONFIG_PATH="/path/to/ffmpeg-mpv/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig:$(brew --prefix xerces-c)/lib/pkgconfig"
+export DYLD_LIBRARY_PATH="/path/to/ffmpeg-mpv/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 ```
 
 Grok must be on `PKG_CONFIG_PATH` at build time and its shared library
@@ -298,6 +311,9 @@ cargo build --release
 vcpkg install libxml2 openssl xerces-c --triplet x64-windows
 
 $env:VCPKG_ROOT = "C:\path\to\vcpkg"   # the vcpkg checkout
+$env:FFMPEG_DIR = "C:\path\to\ffmpeg-mpv"
+$env:MPV_LIB_DIR = "C:\path\to\ffmpeg-mpv\lib"
+$env:PATH = "C:\path\to\ffmpeg-mpv\bin;$env:PATH"
 
 cd rust
 cargo build --release
@@ -308,7 +324,7 @@ cargo build --release
 | Dependency | Purpose | Install |
 |-----------|---------|---------|
 | `ffmpeg` | Video transcoding and import. Needs ffmpeg 8+ with libzimg (`zscale`). | Linux: CI uses [BtbN n8.1 gpl](https://github.com/BtbN/FFmpeg-Builds/releases). macOS: **not Homebrew** — see the macOS install section (martin-riedl 9.0.1 arm64). Windows: BtbN n8.1 win64 gpl. |
-| `mpv` | GUI preview player for sources that are not JPEG 2000. Required to *link* the GUI (`libmpv`). | `apt install libmpv-dev` / `brew install mpv` / [mpv.io](https://mpv.io/installation/) |
+| `mpv` | GUI preview player for sources that are not JPEG 2000. Required to *link* the GUI (`libmpv`). | The ffmpeg-mpv-builds release, see [Install from source](#install-from-source) |
 
 ### Docker
 
@@ -347,7 +363,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - GPU encoding toggle, only useful with the commercial Grok accelerator plugin
 
 ```bash
-# GUI extras: Node (pnpm) and libmpv. On macOS: brew install node pnpm mpv
+# GUI extras: Node (pnpm), libmpv comes from the ffmpeg-mpv-builds release. On macOS: brew install node pnpm
 cd gui
 pnpm install
 ../scripts/setup-tauri-bin.sh          # copies rust/target/release/dcpwizard next to Tauri
