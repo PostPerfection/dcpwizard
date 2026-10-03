@@ -805,7 +805,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 [[package]]
 name = "dcpdoctor-core"
 version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=5ea90f6a47b257c07cc858bdd23b8c15e9917c0f#5ea90f6a47b257c07cc858bdd23b8c15e9917c0f"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=3882c98781dd2696aef0f6827f60cebaca022728#3882c98781dd2696aef0f6827f60cebaca022728"
 dependencies = [
  "asdcplib",
  "base64",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "dcpdoctor-imf"
 version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=5ea90f6a47b257c07cc858bdd23b8c15e9917c0f#5ea90f6a47b257c07cc858bdd23b8c15e9917c0f"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=3882c98781dd2696aef0f6827f60cebaca022728#3882c98781dd2696aef0f6827f60cebaca022728"
 dependencies = [
  "dcpdoctor-parse",
  "quick-xml 0.41.0",
@@ -840,7 +840,7 @@ dependencies = [
 [[package]]
 name = "dcpdoctor-parse"
 version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=5ea90f6a47b257c07cc858bdd23b8c15e9917c0f#5ea90f6a47b257c07cc858bdd23b8c15e9917c0f"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=3882c98781dd2696aef0f6827f60cebaca022728#3882c98781dd2696aef0f6827f60cebaca022728"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",

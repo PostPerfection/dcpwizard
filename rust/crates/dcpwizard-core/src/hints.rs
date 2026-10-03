@@ -50,16 +50,6 @@ const LARGEST_SOUND_SPEED_CHANGE: f64 = 25.5 / 24.0;
 /// A caption line is held to the narrower limit a caption reader draws.
 const MOST_CAPTION_LINE_CHARACTERS: usize = 32;
 
-/// Rates not every projector plays, each with the rate to fall back to. None is
-/// a rate with no safer neighbour to name.
-const AWKWARD_FRAME_RATES: [(u32, Option<u32>); 5] = [
-    (25, Some(24)),
-    (30, None),
-    (48, Some(24)),
-    (50, Some(25)),
-    (60, Some(30)),
-];
-
 /// What the hints are decided from. Kept apart from the probing so the rules can
 /// be driven directly.
 #[derive(Debug, Clone, Default)]
@@ -72,7 +62,6 @@ pub struct HintFacts {
     /// Whether the job conforms the source by playing it faster with the sound
     /// pulled up to match, which is what a 23.976 source at 24 fps gets.
     pub conforms_with_pull_up: bool,
-    pub four_k: bool,
     pub stereo_3d: bool,
     pub video_bit_rate_mbps: u32,
     /// The active area a container declares, when one was named.
@@ -223,29 +212,15 @@ fn video_bit_rate_hint(facts: &HintFacts) -> Option<Hint> {
 }
 
 fn frame_rate_hint(facts: &HintFacts) -> Option<Hint> {
-    let (rate, fallback) = AWKWARD_FRAME_RATES
-        .into_iter()
-        .find(|(rate, _)| *rate == facts.fps)?;
-    let advice = match fallback {
-        Some(fallback) => format!("{fallback} fps is the rate to fall back to."),
-        None => "Expect compatibility problems on some of them.".to_string(),
-    };
-    let interop = if rate == 25 && facts.standard == Standard::Interop {
-        " Interop at 25 fps is worse still: use the SMPTE standard."
-    } else {
-        ""
-    };
-    Some(Hint {
-        text: format!("The DCP is {rate} fps, which not every projector plays. {advice}{interop}"),
-    })
+    let interop = facts.standard == Standard::Interop;
+    server_compatibility::frame_rate_not_widely_played(facts.fps, interop)
+        .map(server_compatibility_hint)
 }
 
 fn four_k_stereo_hint(facts: &HintFacts) -> Option<Hint> {
-    (facts.four_k && facts.stereo_3d).then(|| Hint {
-        text: "4K 3D plays on very few projectors. Package it at 2K unless you know the \
-               projector it goes to takes 4K 3D."
-            .to_string(),
-    })
+    let (stored_width, _) = facts.stored_raster?;
+    server_compatibility::four_k_stereoscopic(stored_width, facts.stereo_3d)
+        .map(server_compatibility_hint)
 }
 
 // the shared rules leave off the full stop the other hints end with
@@ -439,12 +414,14 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
                 crate::hfr::conform_source_to_dcp(info.fps_num, info.fps_den, plan.fps)
                     .audio_pull_up
             }),
-        four_k: plan.four_k,
         stereo_3d: plan.right_eye.is_some(),
         video_bit_rate_mbps: plan.video_bit_rate_mbps,
         container: plan.geometry.container,
         content: planned.map(|picture| picture.content),
-        stored_raster: planned.map(|picture| picture.raster),
+        // a sequence nothing here can measure is encoded at the forced raster
+        stored_raster: planned
+            .map(|picture| picture.raster)
+            .or(plan.geometry.forced_raster),
         packaged_channels: packaged_channels(plan),
         upmix: plan.upmix,
         has_audio: plan.audio.is_some() || source.is_some_and(|info| info.has_audio),
@@ -730,52 +707,79 @@ mod tests {
     }
 
     #[test]
-    fn every_awkward_frame_rate_is_hinted_and_24_is_not() {
-        for (rate, fallback) in AWKWARD_FRAME_RATES {
+    fn a_frame_rate_not_every_projector_plays_is_hinted_with_its_rate_and_24_is_not() {
+        for rate in [25, 48] {
             let job = HintFacts {
                 fps: rate,
                 ..facts()
             };
             assert!(
-                mentions(&job, &format!("The DCP is {rate} fps")),
+                raises(
+                    &job,
+                    server_compatibility::frame_rate_not_widely_played(rate, false)
+                ),
                 "{:?}",
                 texts(&job)
             );
-            if let Some(fallback) = fallback {
-                assert!(mentions(&job, &format!("{fallback} fps is the rate")));
-            }
         }
         let common = HintFacts { fps: 24, ..facts() };
-        assert!(!mentions(&common, "not every projector plays"));
+        assert_eq!(hints_from(&common), vec![]);
     }
 
     #[test]
-    fn interop_at_25_fps_adds_the_standard_advice() {
+    fn interop_at_25_fps_gets_the_interop_wording_and_smpte_does_not() {
         let interop = HintFacts {
             fps: 25,
             standard: Standard::Interop,
             ..facts()
         };
-        assert!(mentions(&interop, "Interop at 25 fps is worse"));
+        assert!(
+            raises(
+                &interop,
+                server_compatibility::frame_rate_not_widely_played(25, true)
+            ),
+            "{:?}",
+            texts(&interop)
+        );
 
         let smpte = HintFacts { fps: 25, ..facts() };
-        assert!(!mentions(&smpte, "Interop at 25 fps is worse"));
+        assert!(raises(
+            &smpte,
+            server_compatibility::frame_rate_not_widely_played(25, false)
+        ));
+        assert!(!raises(
+            &smpte,
+            server_compatibility::frame_rate_not_widely_played(25, true)
+        ));
     }
 
     #[test]
-    fn four_k_3d_is_hinted_and_four_k_on_its_own_is_not() {
+    fn four_k_3d_is_hinted_and_four_k_2d_or_2k_3d_is_not() {
         let stereo = HintFacts {
-            four_k: true,
+            stored_raster: Some((4096, 1716)),
             stereo_3d: true,
             ..facts()
         };
-        assert!(mentions(&stereo, "4K 3D"), "{:?}", texts(&stereo));
+        assert!(
+            raises(
+                &stereo,
+                server_compatibility::four_k_stereoscopic(4096, true)
+            ),
+            "{:?}",
+            texts(&stereo)
+        );
 
         let flat = HintFacts {
             stereo_3d: false,
             ..stereo.clone()
         };
-        assert!(!mentions(&flat, "4K 3D"));
+        assert_eq!(hints_from(&flat), vec![]);
+
+        let two_k_stereo = HintFacts {
+            stored_raster: Some((2048, 858)),
+            ..stereo.clone()
+        };
+        assert_eq!(hints_from(&two_k_stereo), vec![]);
     }
 
     /// 25.5/24 is the line: a 25 fps source into a 24 fps DCP stays under it.

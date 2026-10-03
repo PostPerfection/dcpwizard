@@ -339,7 +339,6 @@ fn encrypting_with_a_signer_still_builds() {
 }
 
 const REFUSED_CHECK: &str = "Pre-build check refused the job";
-const FRAME_RATE_HINT: &str = "The DCP is 25 fps";
 
 const CHECKED_TITLE: &str = "Checked";
 
@@ -424,6 +423,9 @@ fn check_prints_the_hints_after_the_refusals() {
     let config_home = TempDir::new().unwrap();
     let source = write_source(directory.path());
     let out = directory.path().join("dcp");
+    let frame_rate_hint =
+        dcpdoctor_core::server_compatibility::frame_rate_not_widely_played(25, false)
+            .expect("25 fps is not widely played");
 
     let printed = create_is_refused(
         checked_create(config_home.path(), &source, &out).args([
@@ -434,10 +436,10 @@ fn check_prints_the_hints_after_the_refusals() {
             directory.path().join("KEYS.json").to_str().unwrap(),
         ]),
         &out,
-        &["signed CPL and PKL", FRAME_RATE_HINT, REFUSED_CHECK],
+        &["signed CPL and PKL", &frame_rate_hint, REFUSED_CHECK],
     );
     assert!(
-        position(&printed, "signed CPL and PKL") < position(&printed, FRAME_RATE_HINT),
+        position(&printed, "signed CPL and PKL") < position(&printed, &frame_rate_hint),
         "every refusal prints before the first hint: {printed}"
     );
 }

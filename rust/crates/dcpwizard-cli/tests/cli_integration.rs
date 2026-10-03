@@ -1242,10 +1242,11 @@ fn check_hints_a_frame_rate_not_every_projector_plays() {
     create_with(&dir, &video, &["--check", "--frame-rate", "25"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("The DCP is 25 fps"))
-        .stdout(predicate::str::contains(
-            "24 fps is the rate to fall back to",
-        ));
+        .stdout(predicate::str::contains(format!(
+            "{}.",
+            dcpdoctor_core::server_compatibility::frame_rate_not_widely_played(25, false)
+                .expect("25 fps is not widely played")
+        )));
 }
 
 #[test]
