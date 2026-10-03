@@ -4769,6 +4769,8 @@ fn run() {
                     audio_language: parsed.naming.audio_language.clone(),
                     loudness_target: loudness_target.clone(),
                     subtitle: subtitle.as_deref().map(PathBuf::from),
+                    subtitle_font: subtitle_font.as_deref().map(PathBuf::from),
+                    subtitle_valign: subtitle_valign.clone(),
                     ccap: ccap.as_deref().map(PathBuf::from),
                     burn_subtitle: burn_subtitle.as_deref().map(PathBuf::from),
                     burn_subtitle_font: burn_subtitle_font.as_deref().map(PathBuf::from),
@@ -6474,13 +6476,18 @@ fn run() {
         }
 
         Commands::CheckDrive { target } => {
-            match dcpwizard_core::disk::check_drive(&PathBuf::from(&target)) {
+            let target_path = PathBuf::from(&target);
+            match dcpwizard_core::disk::check_drive(&target_path) {
                 Ok(info) => {
                     tracing::info!(
                         "{target}: fs={} label={}",
                         info.fstype.as_deref().unwrap_or("unknown"),
                         info.label.as_deref().unwrap_or("(none)")
                     );
+                    let partition = dcpwizard_core::disk::partition_info(&target_path);
+                    for warning in dcpwizard_core::disk::drive_warnings(&info, partition.as_ref()) {
+                        tracing::warn!("{warning}");
+                    }
                     0
                 }
                 Err(e) => {

@@ -5,6 +5,58 @@ use std::path::{Path, PathBuf};
 
 const COPY_BUFFER_BYTES: usize = 1 << 20;
 
+// a cinema server reads the drive as a user other than the one who copied it
+const COPIED_DIRECTORY_MODE: u32 = 0o755;
+const COPIED_FILE_MODE: u32 = 0o644;
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn create_readable_directories(root: &Path, relative_directory: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(root)?;
+    set_mode(root, COPIED_DIRECTORY_MODE)?;
+    let mut directory = root.to_path_buf();
+    for component in relative_directory.components() {
+        directory.push(component);
+        std::fs::create_dir_all(&directory)?;
+        set_mode(&directory, COPIED_DIRECTORY_MODE)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn warn_unless_cinema_server_filesystem(target_dir: &Path) {
+    let Ok(output) = std::process::Command::new("findmnt")
+        .args(["--noheadings", "--output", "FSTYPE", "--target"])
+        .arg(target_dir)
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let fstype = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if crate::disk::is_cinema_server_filesystem(&fstype) {
+        return;
+    }
+    tracing::warn!(
+        "{} is on {fstype}. Cinema servers reliably read only ext2 and ext3.",
+        target_dir.display()
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn warn_unless_cinema_server_filesystem(_target_dir: &Path) {}
+
 /// Evict a file's pages from the page cache so a following read hits the device.
 /// Without this the read-back below just returns the bytes we cached on write and
 /// verifies nothing about what actually landed on the drive.
@@ -33,10 +85,11 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
             .unwrap_or_else(|| std::ffi::OsStr::new("DCP")),
     );
 
-    if let Err(e) = std::fs::create_dir_all(&dest) {
+    if let Err(e) = create_readable_directories(&dest, Path::new("")) {
         tracing::error!("Failed to create target directory: {e}");
         return -1;
     }
+    warn_unless_cinema_server_filesystem(target_dir);
 
     let files = collect_files(dcp_dir);
     let total = files.len();
@@ -62,10 +115,13 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
         let rel = src_path.strip_prefix(dcp_dir).unwrap_or(src_path);
         let dst_path = dest.join(rel);
 
-        if let Some(parent) = dst_path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
+        if let Some(relative_directory) = rel.parent()
+            && let Err(e) = create_readable_directories(&dest, relative_directory)
         {
-            tracing::error!("Failed to create directory {}: {e}", parent.display());
+            tracing::error!(
+                "Failed to create directory {}: {e}",
+                dest.join(relative_directory).display()
+            );
             return -1;
         }
 
@@ -140,6 +196,7 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 fn copy_hashing(src_path: &Path, dst_path: &Path) -> std::io::Result<String> {
     let mut source = File::open(src_path)?;
     let mut sink = File::create(dst_path)?;
+    set_mode(dst_path, COPIED_FILE_MODE)?;
     let mut hasher = sha1::Sha1::new();
     let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     loop {
@@ -180,6 +237,34 @@ mod tests {
             std::fs::read(dst.join("sub/picture.mxf")).unwrap(),
             vec![7u8; 4096]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copied_files_and_folders_are_readable_by_everyone_under_a_private_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        const PRIVATE_UMASK: libc::mode_t = 0o077;
+        const PERMISSION_BITS: u32 = 0o777;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("MyDCP");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("ASSETMAP.xml"), b"a").unwrap();
+        std::fs::write(src.join("sub/picture.mxf"), b"p").unwrap();
+        let target = dir.path().join("drive");
+
+        let previous_umask = unsafe { libc::umask(PRIVATE_UMASK) };
+        let status = copy_to_drive(&src, &target);
+        unsafe { libc::umask(previous_umask) };
+        assert_eq!(status, 0);
+
+        let mode =
+            |path: PathBuf| std::fs::metadata(path).unwrap().permissions().mode() & PERMISSION_BITS;
+        let dst = target.join("MyDCP");
+        assert_eq!(mode(dst.clone()), COPIED_DIRECTORY_MODE);
+        assert_eq!(mode(dst.join("sub")), COPIED_DIRECTORY_MODE);
+        assert_eq!(mode(dst.join("ASSETMAP.xml")), COPIED_FILE_MODE);
+        assert_eq!(mode(dst.join("sub/picture.mxf")), COPIED_FILE_MODE);
     }
 
     #[test]

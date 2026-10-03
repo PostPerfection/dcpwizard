@@ -440,6 +440,17 @@ pub struct JobConfig {
     tail_items: Vec<dcpwizard_core::library::AttachedItem>,
 }
 
+// the output folder name hint reads the package folder from the plan
+fn apply_package_name_to_job_and_plan(
+    job: &mut JobConfig,
+    plan: &mut dcpwizard_core::preflight::CreatePlan,
+    picture_raster: Option<(u32, u32)>,
+) -> Result<(), String> {
+    apply_package_name_to_job(job, picture_raster)?;
+    plan.output = job.output_dir.clone();
+    Ok(())
+}
+
 // the panel sends the folder the package goes in, not the package folder
 fn apply_package_name_to_job(
     job: &mut JobConfig,
@@ -1029,8 +1040,12 @@ pub async fn submit_job(
         tail_items,
     };
 
-    let (plan, planned_picture) = checked_job_plan(&job)?;
-    apply_package_name_to_job(&mut job, planned_picture.map(|picture| picture.raster))?;
+    let (mut plan, planned_picture) = checked_job_plan(&job)?;
+    apply_package_name_to_job_and_plan(
+        &mut job,
+        &mut plan,
+        planned_picture.map(|picture| picture.raster),
+    )?;
     let submitted_title = job.title.clone();
     let submitted_output_dir = job.output_dir.to_string_lossy().into_owned();
 
@@ -1144,6 +1159,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         audio_language: job.naming.audio_language.clone(),
         loudness_target: job.loudness_target.clone(),
         subtitle: job.subtitle.as_ref().map(PathBuf::from),
+        subtitle_font: None,
+        subtitle_valign: None,
         ccap: job.ccap.as_ref().map(PathBuf::from),
         burn_subtitle: job.burn_subtitle.as_ref().map(PathBuf::from),
         burn_subtitle_font: job.burn_subtitle_font.as_ref().map(PathBuf::from),
@@ -3369,6 +3386,18 @@ mod tests {
         apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
         assert_eq!(job.title, "My Film");
         assert_eq!(job.output_dir, PathBuf::from("/out/deliveries/My Film"));
+    }
+
+    #[test]
+    fn the_plan_the_hints_read_is_written_into_the_package_folder() {
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            output_dir: PathBuf::from("/out/deliveries"),
+            ..test_job()
+        };
+        let mut plan = job_plan(&job);
+        apply_package_name_to_job_and_plan(&mut job, &mut plan, Some((1998, 1080))).unwrap();
+        assert_eq!(plan.output, PathBuf::from("/out/deliveries/My Film"));
     }
 
     #[test]

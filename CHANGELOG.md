@@ -4,6 +4,11 @@
 
 ### Changed
 - **A picture frame under 16384 bytes is raised to that size**: a black or flat frame compressed to a few hundred bytes, and a Dolby DSS200 server crashes on a frame that small. Every encode now adds 0 or 1 to each 12-bit sample of such a frame and compresses it again, the way DCP-o-matic pads its small frames. A black 2K frame goes from 557 bytes to about 27 kB and a black 4K frame from 1232 bytes to about 180 kB. Picture that is already JPEG 2000 is wrapped as it is.
+- **`format-drive` formats the way ISDCF recommends**: `mkfs.ext2` and `mkfs.ext3` ran with their defaults, which give 256 byte inodes, and now get `-I 128 -b 4096 -m 0`: 128 byte inodes, 4096 byte blocks and no reserved blocks, the layout DCP-o-matic writes.
+- **`check-drive` warns about a drive a cinema server may not read**: a filesystem other than ext2 or ext3, a partition table that is not MBR, and an MBR partition whose type is not 0x83. The partition table and type come from `lsblk`, so an image file gets the filesystem warning only.
+- **`copy` writes files a server can read**: copied files took their permissions from the umask of the machine doing the copy, and are now set to 644 and every folder to 755. `copy` also warns when the destination is on a filesystem other than ext2 or ext3.
+- **Five more hints before a build**: a Flat picture at 25 fps, which a GDC SX-2001 will not play, a reel under 5 seconds, which a Doremi server can stop on, an output folder name with characters other than letters, digits, `.`, `_` and `-`, a `--subtitle-font` that is not TrueType, and a top-aligned text subtitle, which servers place by its baseline. The top-aligned hint follows `--subtitle-valign`. The GUI judges the package folder name, where its hints read the parent folder before.
+- **`verify` warns about the same server problems in a finished DCP**: dcpdoctor is now at 5ea90f6, past its 1.4.0 release, and adds `picture_frame_too_small`, `reel_short_for_doremi`, `projector_flat_at_25_support`, `projector_4k_high_frame_rate_support`, `subtitle_top_aligned`, `subtitle_font_not_true_type` and `unportable_filename`. The hints above call the same rules, dcpdoctor's `server_compatibility` module.
 
 ## [1.5.0] - 2026-10-02
 

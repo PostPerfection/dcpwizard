@@ -7,15 +7,24 @@
 //! The rules that hold whatever the package is are postkit's. What is left here
 //! is what a DCP has of its own.
 
-use std::path::Path;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
+use dcpdoctor_core::server_compatibility;
 use postkit::hints::{
     AudioLevel, CueRule, Hint, HintCue, MOST_CUE_LINES, SubtitleCues, audio_language_hint,
     audio_level_hint, first_offence, subtitle_hints,
 };
+use postkit::subtitle_formats::{StyledCue, VAlign};
 
 use crate::preflight::{CreatePlan, PictureKind};
 use crate::{ContentType, Standard};
+
+// the value --subtitle-valign takes for top
+const TOP_VALIGN_OVERRIDE: &str = "top";
+// a TrueType signature is the first four bytes
+const FONT_SIGNATURE_BYTES: u64 = 4;
 
 /// A sound track packaged with fewer channels than this can trouble a projector.
 const FEWEST_PACKAGED_CHANNELS: u32 = 6;
@@ -70,6 +79,7 @@ pub struct HintFacts {
     pub container: Option<(u32, u32)>,
     /// The size the picture itself lands at inside the encode raster.
     pub content: Option<(u32, u32)>,
+    pub stored_raster: Option<(u32, u32)>,
     /// Channels the sound track is packaged with, after any map, upmix and the
     /// wrap's own padding.
     pub packaged_channels: Option<u32>,
@@ -83,6 +93,10 @@ pub struct HintFacts {
     /// Subtitles the audience reads on screen, packaged or burnt in.
     pub subtitles: Vec<SubtitleCues>,
     pub captions: Vec<SubtitleCues>,
+    pub top_aligned_subtitles: Vec<SubtitleCues>,
+    pub reel_frames: Vec<u64>,
+    pub output_folder_name: Option<String>,
+    pub packaged_subtitle_font: Option<PathBuf>,
 }
 
 /// Every hint the job raises, probing the source for the numbers it needs.
@@ -99,6 +113,10 @@ fn hints_from(facts: &HintFacts) -> Vec<Hint> {
     hints.extend(video_bit_rate_hint(facts));
     hints.extend(frame_rate_hint(facts));
     hints.extend(four_k_stereo_hint(facts));
+    hints.extend(flat_at_25_fps_hint(facts));
+    hints.extend(short_reel_hint(facts));
+    hints.extend(output_folder_name_hint(facts));
+    hints.extend(subtitle_font_hint(facts));
     hints.extend(source_rate_hint(facts));
     hints.extend(pull_up_hint(facts));
     hints.extend(audio_level_hint(&facts.audio));
@@ -109,6 +127,7 @@ fn hints_from(facts: &HintFacts) -> Vec<Hint> {
     hints.extend(marker_hints(facts));
     hints.extend(subtitle_hints(&facts.subtitles, f64::from(facts.fps)));
     hints.extend(caption_hints(facts));
+    hints.extend(top_aligned_subtitle_hint(facts));
     hints
 }
 
@@ -229,6 +248,47 @@ fn four_k_stereo_hint(facts: &HintFacts) -> Option<Hint> {
     })
 }
 
+// the shared rules leave off the full stop the other hints end with
+fn server_compatibility_hint(message: String) -> Hint {
+    Hint {
+        text: format!("{message}."),
+    }
+}
+
+fn flat_at_25_fps_hint(facts: &HintFacts) -> Option<Hint> {
+    let (width, height) = facts.stored_raster?;
+    server_compatibility::flat_at_25_fps(width, height, facts.fps).map(server_compatibility_hint)
+}
+
+fn short_reel_hint(facts: &HintFacts) -> Option<Hint> {
+    facts
+        .reel_frames
+        .iter()
+        .enumerate()
+        .find_map(|(index, frames)| {
+            server_compatibility::short_reel(index + 1, *frames as f64 / f64::from(facts.fps))
+        })
+        .map(server_compatibility_hint)
+}
+
+fn output_folder_name_hint(facts: &HintFacts) -> Option<Hint> {
+    let name = facts.output_folder_name.as_deref()?;
+    server_compatibility::unportable_dcp_folder_name(name).map(server_compatibility_hint)
+}
+
+// a font that cannot be read is the build's error to report
+fn subtitle_font_hint(facts: &HintFacts) -> Option<Hint> {
+    let path = facts.packaged_subtitle_font.as_deref()?;
+    let mut signature = Vec::new();
+    File::open(path)
+        .ok()?
+        .take(FONT_SIGNATURE_BYTES)
+        .read_to_end(&mut signature)
+        .ok()?;
+    server_compatibility::font_not_true_type(&short_name(path), &signature)
+        .map(server_compatibility_hint)
+}
+
 fn source_rate_hint(facts: &HintFacts) -> Option<Hint> {
     let source_fps = facts.source_fps.filter(|fps| *fps > 0.0)?;
     let dcp_fps = f64::from(facts.fps);
@@ -318,6 +378,20 @@ fn caption_hints(facts: &HintFacts) -> Vec<Hint> {
         .collect()
 }
 
+// the files carry only their top-aligned cues
+const TOP_ALIGNED_SUBTITLE: CueRule = CueRule {
+    offends: |_| true,
+    say: |_, at| format!("{}.", server_compatibility::top_aligned_subtitle(at)),
+};
+
+fn top_aligned_subtitle_hint(facts: &HintFacts) -> Option<Hint> {
+    first_offence(
+        &facts.top_aligned_subtitles,
+        f64::from(facts.fps),
+        &TOP_ALIGNED_SUBTITLE,
+    )
+}
+
 /// The ratio nearest `aspect` among the shapes content is described by.
 fn nearest_ratio(aspect: f64) -> f64 {
     NAMED_RATIOS
@@ -370,6 +444,7 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
         video_bit_rate_mbps: plan.video_bit_rate_mbps,
         container: plan.geometry.container,
         content: planned.map(|picture| picture.content),
+        stored_raster: planned.map(|picture| picture.raster),
         packaged_channels: packaged_channels(plan),
         upmix: plan.upmix,
         has_audio: plan.audio.is_some() || source.is_some_and(|info| info.has_audio),
@@ -379,9 +454,53 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
         subtitles: read_cue_files(
             [plan.subtitle.as_deref(), plan.burn_subtitle.as_deref()],
             plan.fps,
+            |_| true,
         ),
-        captions: read_cue_files([plan.ccap.as_deref(), None], plan.fps),
+        captions: read_cue_files([plan.ccap.as_deref(), None], plan.fps, |_| true),
+        // a burnt-in subtitle is drawn here rather than by the server
+        top_aligned_subtitles: read_cue_files(
+            [plan.subtitle.as_deref(), None],
+            plan.fps,
+            top_aligned_cue_filter(plan.subtitle_valign.as_deref()),
+        ),
+        reel_frames: planned_reel_frames(plan),
+        output_folder_name: plan
+            .output
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
+        packaged_subtitle_font: plan.subtitle_font.clone(),
     }
+}
+
+// the packager's alignment override replaces every cue's own alignment
+fn top_aligned_cue_filter(valign_override: Option<&str>) -> fn(&StyledCue) -> bool {
+    match valign_override {
+        None => is_top_aligned_text,
+        Some(TOP_VALIGN_OVERRIDE) => is_text,
+        Some(_) => |_| false,
+    }
+}
+
+fn is_text(cue: &StyledCue) -> bool {
+    cue.image.is_none()
+}
+
+fn is_top_aligned_text(cue: &StyledCue) -> bool {
+    is_text(cue) && cue.valign == Some(VAlign::Top)
+}
+
+fn planned_reel_frames(plan: &CreatePlan) -> Vec<u64> {
+    let Some(total_frames) = crate::preflight::planned_picture_frames(plan) else {
+        return Vec::new();
+    };
+    let ranges = if plan.reel_split_frames.is_empty() {
+        crate::reel::plan_reel_ranges(total_frames, plan.fps, plan.reel_length_minutes)
+    } else {
+        // a split the packager refuses is reported by the build
+        crate::reel::plan_reel_ranges_explicit(total_frames, plan.fps, &plan.reel_split_frames)
+            .unwrap_or_default()
+    };
+    ranges.iter().map(crate::reel::ReelRange::frames).collect()
 }
 
 /// How many channels the sound track lands with: what the map or the upmix
@@ -415,7 +534,11 @@ fn placed_marker_labels(plan: &CreatePlan) -> Vec<String> {
 
 /// Read every cue file the audience sees. A file that does not parse is the
 /// preflight's refusal to report, so it is skipped here.
-fn read_cue_files(paths: [Option<&Path>; 2], fps: u32) -> Vec<SubtitleCues> {
+fn read_cue_files(
+    paths: [Option<&Path>; 2],
+    fps: u32,
+    keep: fn(&StyledCue) -> bool,
+) -> Vec<SubtitleCues> {
     paths
         .into_iter()
         .flatten()
@@ -425,6 +548,7 @@ fn read_cue_files(paths: [Option<&Path>; 2], fps: u32) -> Vec<SubtitleCues> {
                 file: short_name(path),
                 cues: cues
                     .into_iter()
+                    .filter(keep)
                     .map(|cue| HintCue {
                         start_ms: cue.start_ms,
                         end_ms: cue.end_ms,
@@ -802,5 +926,213 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(hints_from(&job), vec![]);
+    }
+
+    fn raises(facts: &HintFacts, message: Option<String>) -> bool {
+        let text = format!("{}.", message.expect("the shared rule fires"));
+        texts(facts).contains(&text)
+    }
+
+    fn raises_top_aligned_at(texts: &[String], cue_time: &str) -> bool {
+        let text = format!("{}.", server_compatibility::top_aligned_subtitle(cue_time));
+        texts.contains(&text)
+    }
+
+    #[test]
+    fn a_flat_raster_at_25_fps_is_hinted_and_at_24_fps_or_scope_is_not() {
+        let flat_25 = HintFacts {
+            fps: 25,
+            stored_raster: Some((1998, 1080)),
+            ..facts()
+        };
+        let flat_message = server_compatibility::flat_at_25_fps(1998, 1080, 25);
+        assert!(
+            raises(&flat_25, flat_message.clone()),
+            "{:?}",
+            texts(&flat_25)
+        );
+
+        let flat_24 = HintFacts {
+            fps: 24,
+            ..flat_25.clone()
+        };
+        assert_eq!(hints_from(&flat_24), vec![]);
+
+        let scope_25 = HintFacts {
+            stored_raster: Some((2048, 858)),
+            ..flat_25.clone()
+        };
+        assert!(!raises(&scope_25, flat_message));
+    }
+
+    #[test]
+    fn the_first_reel_under_5_seconds_is_named_and_a_5_second_reel_is_not() {
+        let short = HintFacts {
+            reel_frames: vec![u64::from(FPS) * 600, u64::from(FPS) * 4, 1],
+            ..facts()
+        };
+        assert!(
+            raises(&short, server_compatibility::short_reel(2, 4.0)),
+            "{:?}",
+            texts(&short)
+        );
+
+        let five_seconds = HintFacts {
+            reel_frames: vec![u64::from(FPS) * 5],
+            ..facts()
+        };
+        assert_eq!(hints_from(&five_seconds), vec![]);
+    }
+
+    #[test]
+    fn a_folder_name_with_a_space_is_hinted_and_an_isdcf_style_name_is_not() {
+        let spaced = HintFacts {
+            output_folder_name: Some("My Film".to_string()),
+            ..facts()
+        };
+        assert!(
+            raises(
+                &spaced,
+                server_compatibility::unportable_dcp_folder_name("My Film")
+            ),
+            "{:?}",
+            texts(&spaced)
+        );
+
+        let plain = HintFacts {
+            output_folder_name: Some("MyFilm_FTR-1_F_EN-XX_51_2K_20260930_SMPTE_OV.v2".to_string()),
+            ..facts()
+        };
+        assert_eq!(hints_from(&plain), vec![]);
+    }
+
+    #[test]
+    fn a_top_aligned_subtitle_is_hinted_with_its_time() {
+        let top = HintFacts {
+            top_aligned_subtitles: vec![SubtitleCues {
+                file: "subs.ass".to_string(),
+                cues: vec![cue(4_000, 5_000, &["corner"])],
+            }],
+            ..facts()
+        };
+        assert!(
+            raises_top_aligned_at(&texts(&top), "00:00:04.000"),
+            "{:?}",
+            texts(&top)
+        );
+        assert_eq!(hints_from(&facts()), vec![]);
+    }
+
+    fn with_subtitle_font(file_name: &str, data: &[u8]) -> (tempfile::TempDir, HintFacts) {
+        let dir = tempfile::tempdir().unwrap();
+        let font = dir.path().join(file_name);
+        std::fs::write(&font, data).unwrap();
+        let facts = HintFacts {
+            packaged_subtitle_font: Some(font),
+            ..facts()
+        };
+        (dir, facts)
+    }
+
+    #[test]
+    fn an_open_type_subtitle_font_is_hinted_by_name() {
+        const OPEN_TYPE_DATA: &[u8] = b"OTTO\x00\x0a";
+        let (_dir, open_type) = with_subtitle_font("subs.otf", OPEN_TYPE_DATA);
+        assert!(
+            raises(
+                &open_type,
+                server_compatibility::font_not_true_type("subs.otf", OPEN_TYPE_DATA)
+            ),
+            "{:?}",
+            texts(&open_type)
+        );
+    }
+
+    #[test]
+    fn a_true_type_or_unreadable_subtitle_font_is_not_hinted() {
+        let (_dir, true_type) = with_subtitle_font("subs.ttf", &[0x00, 0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(hints_from(&true_type), vec![]);
+
+        let missing = HintFacts {
+            packaged_subtitle_font: Some(PathBuf::from("/no/such/font.otf")),
+            ..facts()
+        };
+        assert_eq!(hints_from(&missing), vec![]);
+    }
+
+    const BOTTOM_THEN_TOP_ASS: &str = "\
+[Script Info]
+Title: test
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, Bold, Italic, Underline, Alignment
+Style: Default,Arial,40,&H00FFFFFF,0,0,0,2
+Style: Top,Arial,40,&H00FFFFFF,0,0,0,8
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:05.00,0:00:07.00,Default,,0,0,0,,bottom
+Dialogue: 0,0:00:08.00,0:00:10.00,Top,,0,0,0,,top
+";
+
+    fn packaged_ass_hint_texts(valign_override: Option<&str>) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let subtitle = dir.path().join("subs.ass");
+        std::fs::write(&subtitle, BOTTOM_THEN_TOP_ASS).unwrap();
+        let plan = CreatePlan {
+            subtitle: Some(subtitle),
+            subtitle_valign: valign_override.map(str::to_string),
+            ..Default::default()
+        };
+        texts(&probe_hint_facts(&plan))
+    }
+
+    #[test]
+    fn without_an_alignment_override_the_first_top_aligned_cue_is_hinted() {
+        let texts = packaged_ass_hint_texts(None);
+        assert!(raises_top_aligned_at(&texts, "00:00:08.000"), "{texts:?}");
+    }
+
+    #[test]
+    fn a_top_alignment_override_hints_the_first_cue() {
+        let texts = packaged_ass_hint_texts(Some("top"));
+        assert!(raises_top_aligned_at(&texts, "00:00:05.000"), "{texts:?}");
+    }
+
+    #[test]
+    fn a_bottom_or_centre_alignment_override_hints_nothing() {
+        for valign_override in ["bottom", "center"] {
+            let texts = packaged_ass_hint_texts(Some(valign_override));
+            for cue_time in ["00:00:05.000", "00:00:08.000"] {
+                assert!(
+                    !raises_top_aligned_at(&texts, cue_time),
+                    "{valign_override}: {texts:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_packaged_subtitle_font_is_carried_into_the_facts() {
+        let font = PathBuf::from("/fonts/Subtitles.otf");
+        let plan = CreatePlan {
+            subtitle_font: Some(font.clone()),
+            ..Default::default()
+        };
+        assert_eq!(probe_hint_facts(&plan).packaged_subtitle_font, Some(font));
+    }
+
+    #[test]
+    fn a_still_held_for_3_seconds_plans_one_3_second_reel() {
+        let plan = CreatePlan {
+            picture_kind: PictureKind::Still,
+            still_frames: u64::from(FPS) * 3,
+            fps: FPS,
+            ..Default::default()
+        };
+        assert_eq!(
+            probe_hint_facts(&plan).reel_frames,
+            vec![u64::from(FPS) * 3]
+        );
     }
 }

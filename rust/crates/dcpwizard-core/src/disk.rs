@@ -14,11 +14,27 @@ const SB_FEATURE_COMPAT_OFFSET: u64 = 0x45c;
 const SB_FEATURE_INCOMPAT_OFFSET: u64 = 0x460;
 const SB_FEATURE_RO_COMPAT_OFFSET: u64 = 0x464;
 const SB_LABEL_OFFSET: u64 = 0x478;
+#[cfg(test)]
+const SUPERBLOCK_RESERVED_BLOCKS_COUNT_OFFSET: u64 = 0x408;
+#[cfg(test)]
+const SUPERBLOCK_LOG_BLOCK_SIZE_OFFSET: u64 = 0x418;
+#[cfg(test)]
+const SUPERBLOCK_INODE_SIZE_OFFSET: u64 = 0x458;
 const EXT_MAGIC: u16 = 0xEF53;
 const FEATURE_COMPAT_HAS_JOURNAL: u32 = 0x0004;
 // features ext3 understands; anything beyond these on a journalled fs means ext4
 const EXT3_INCOMPAT_SUPP: u32 = 0x0002 | 0x0004 | 0x0010; // filetype | recover | meta_bg
 const EXT3_RO_COMPAT_SUPP: u32 = 0x0001 | 0x0002; // sparse_super | large_file
+
+// the ISDCF drive recommendation
+const INODE_SIZE_BYTES: u32 = 128;
+const BLOCK_SIZE_BYTES: u32 = 4096;
+const RESERVED_BLOCKS_PERCENT: u32 = 0;
+
+const CINEMA_SERVER_FILESYSTEMS: [&str; 2] = ["ext2", "ext3"];
+// lsblk's name for an MBR partition table
+const MBR_PARTITION_TABLE: &str = "dos";
+const LINUX_PARTITION_TYPE: &str = "0x83";
 
 /// Filesystem the disk writer can create.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +67,16 @@ impl ExtFs {
 pub struct DriveInfo {
     pub fstype: Option<String>,
     pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartitionInfo {
+    pub table: Option<String>,
+    pub partition_type: Option<String>,
+}
+
+pub fn is_cinema_server_filesystem(fstype: &str) -> bool {
+    CINEMA_SERVER_FILESYSTEMS.contains(&fstype)
 }
 
 /// Return the mount source devices from `/proc/mounts` (first field per line).
@@ -129,6 +155,12 @@ pub fn format_drive(
     if image {
         cmd.arg("-F");
     }
+    cmd.arg("-I")
+        .arg(INODE_SIZE_BYTES.to_string())
+        .arg("-b")
+        .arg(BLOCK_SIZE_BYTES.to_string())
+        .arg("-m")
+        .arg(RESERVED_BLOCKS_PERCENT.to_string());
     if let Some(l) = label {
         cmd.arg("-L").arg(l);
     }
@@ -182,6 +214,60 @@ fn blkid_info(target: &Path) -> Option<DriveInfo> {
         }
     }
     Some(DriveInfo { fstype, label })
+}
+
+pub fn partition_info(target: &Path) -> Option<PartitionInfo> {
+    // raw output keeps an empty column as an empty field
+    let output = std::process::Command::new("lsblk")
+        .args([
+            "--nodeps",
+            "--raw",
+            "--noheadings",
+            "--output",
+            "PTTYPE,PARTTYPE",
+        ])
+        .arg(target)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (table, partition_type) = text.lines().next()?.split_once(' ')?;
+    let non_empty = |field: &str| (!field.is_empty()).then(|| field.to_string());
+    Some(PartitionInfo {
+        table: non_empty(table),
+        partition_type: non_empty(partition_type),
+    })
+}
+
+pub fn drive_warnings(drive: &DriveInfo, partition: Option<&PartitionInfo>) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Some(fstype) = drive
+        .fstype
+        .as_deref()
+        .filter(|fstype| !is_cinema_server_filesystem(fstype))
+    {
+        warnings.push(format!(
+            "The filesystem is {fstype}. Cinema servers reliably read only ext2 and ext3."
+        ));
+    }
+    let table = partition.and_then(|partition| partition.table.as_deref());
+    if let Some(table) = table.filter(|table| *table != MBR_PARTITION_TABLE) {
+        warnings.push(format!(
+            "The partition table is {table}. Cinema servers expect an MBR partition table."
+        ));
+    }
+    let partition_type = partition.and_then(|partition| partition.partition_type.as_deref());
+    if table == Some(MBR_PARTITION_TABLE)
+        && let Some(partition_type) =
+            partition_type.filter(|partition_type| *partition_type != LINUX_PARTITION_TYPE)
+    {
+        warnings.push(format!(
+            "The partition type is {partition_type}. Cinema servers expect type {LINUX_PARTITION_TYPE} (Linux)."
+        ));
+    }
+    warnings
 }
 
 /// Parse the ext2/3/4 superblock directly.
@@ -301,6 +387,60 @@ mod tests {
         assert_eq!(info.fstype, None);
     }
 
+    // ext's block size field is a shift of this
+    const SMALLEST_BLOCK_SIZE_BYTES: u32 = 1024;
+
+    fn ext2() -> DriveInfo {
+        DriveInfo {
+            fstype: Some("ext2".to_string()),
+            label: None,
+        }
+    }
+
+    fn partition(table: &str, partition_type: &str) -> PartitionInfo {
+        PartitionInfo {
+            table: Some(table.to_string()),
+            partition_type: Some(partition_type.to_string()),
+        }
+    }
+
+    #[test]
+    fn ext2_on_an_mbr_linux_partition_raises_no_warning() {
+        assert_eq!(
+            drive_warnings(&ext2(), Some(&partition("dos", "0x83"))),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_filesystem_other_than_ext2_or_ext3_is_warned_about() {
+        let exfat = DriveInfo {
+            fstype: Some("exfat".to_string()),
+            label: None,
+        };
+        assert_eq!(
+            drive_warnings(&exfat, None),
+            vec!["The filesystem is exfat. Cinema servers reliably read only ext2 and ext3."]
+        );
+    }
+
+    #[test]
+    fn a_gpt_partition_table_is_warned_about() {
+        let gpt = partition("gpt", "0fc63daf-8483-4772-8e79-3d69d8477de4");
+        assert_eq!(
+            drive_warnings(&ext2(), Some(&gpt)),
+            vec!["The partition table is gpt. Cinema servers expect an MBR partition table."]
+        );
+    }
+
+    #[test]
+    fn an_mbr_partition_of_a_type_other_than_linux_is_warned_about() {
+        assert_eq!(
+            drive_warnings(&ext2(), Some(&partition("dos", "0x7"))),
+            vec!["The partition type is 0x7. Cinema servers expect type 0x83 (Linux)."]
+        );
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn format_and_check_roundtrip_on_image() {
@@ -318,6 +458,26 @@ mod tests {
         let info = superblock_info(&img).unwrap();
         assert_eq!(info.fstype.as_deref(), Some("ext2"));
         assert_eq!(info.label.as_deref(), Some("DCP_DELIVERY"));
+
+        let image = std::fs::read(&img).unwrap();
+        let field = |offset: u64, length: usize| {
+            let start = offset as usize;
+            let mut bytes = [0u8; 4];
+            bytes[..length].copy_from_slice(&image[start..start + length]);
+            u32::from_le_bytes(bytes)
+        };
+        assert_eq!(
+            field(SUPERBLOCK_INODE_SIZE_OFFSET, size_of::<u16>()),
+            INODE_SIZE_BYTES
+        );
+        assert_eq!(
+            SMALLEST_BLOCK_SIZE_BYTES << field(SUPERBLOCK_LOG_BLOCK_SIZE_OFFSET, size_of::<u32>()),
+            BLOCK_SIZE_BYTES
+        );
+        assert_eq!(
+            field(SUPERBLOCK_RESERVED_BLOCKS_COUNT_OFFSET, size_of::<u32>()),
+            0
+        );
 
         // ext3 gets a journal and must be detected as such
         format_drive(&img, ExtFs::Ext3, Some("DCP2"), true, true).unwrap();

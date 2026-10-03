@@ -559,11 +559,19 @@ fn create_rejects_a_key_that_does_not_match_the_certificate() {
 // ── create raster fitting ───────────────────────────────────────────────────
 
 /// A few frames of colour bars at `width`x`height`, 24 fps, as an mp4.
+const TEST_VIDEO_SECONDS: f64 = 0.25;
+// a shorter reel raises the short reel hint
+const HINT_FREE_VIDEO_SECONDS: f64 = 5.0;
+
 fn write_test_video(path: &std::path::Path, width: u32, height: u32) {
+    write_test_video_lasting(path, width, height, TEST_VIDEO_SECONDS);
+}
+
+fn write_test_video_lasting(path: &std::path::Path, width: u32, height: u32, seconds: f64) {
     let status = std::process::Command::new("ffmpeg")
         .args(["-y", "-f", "lavfi", "-i"])
         .arg(format!(
-            "testsrc=size={width}x{height}:rate=24:duration=0.25"
+            "testsrc=size={width}x{height}:rate=24:duration={seconds}"
         ))
         .args(["-pix_fmt", "yuv420p"])
         .arg(path)
@@ -1244,7 +1252,7 @@ fn check_hints_a_frame_rate_not_every_projector_plays() {
 fn a_clean_check_passes_with_no_hint_and_writes_nothing() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("flat.mp4");
-    write_test_video(&video, 1998, 1080);
+    write_test_video_lasting(&video, 1998, 1080, HINT_FREE_VIDEO_SECONDS);
     let out = dir.path().join("out");
 
     create_with(&dir, &video, &["--check", "--content-type", "SHR"])
