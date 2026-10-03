@@ -28,8 +28,8 @@ const FONT_SIGNATURE_BYTES: u64 = 4;
 
 /// A sound track packaged with fewer channels than this can trouble a projector.
 const FEWEST_PACKAGED_CHANNELS: u32 = 6;
-/// The channel counts a distributor expects a DCP sound track to carry.
-const EXPECTED_PACKAGED_CHANNELS: [u32; 2] = [8, 16];
+/// The widest count --audio-channels takes.
+const MOST_PACKAGED_CHANNELS: u32 = 16;
 
 /// The two container ratios every projector masks to.
 const FLAT_RATIO: f64 = 1.85;
@@ -139,20 +139,15 @@ fn sound_channel_hints(facts: &HintFacts) -> Vec<Hint> {
                 "The sound track is packaged with {channels} channels. Fewer than \
                  {FEWEST_PACKAGED_CHANNELS} can trouble a projector, and the channels the \
                  content does not fill cost only silence. Pass --audio-channels \
-                 {FEWEST_PACKAGED_CHANNELS} (or {}) to fill the rest with silence.",
-                EXPECTED_PACKAGED_CHANNELS[1]
+                 {FEWEST_PACKAGED_CHANNELS} (or {MOST_PACKAGED_CHANNELS}) to fill the rest \
+                 with silence."
             ),
         });
     }
-    if !EXPECTED_PACKAGED_CHANNELS.contains(&channels) {
-        hints.push(Hint {
-            text: format!(
-                "The sound track is packaged with {channels} channels, not \
-                 {} or {}. Some distributors raise a QC error on any other count.",
-                EXPECTED_PACKAGED_CHANNELS[0], EXPECTED_PACKAGED_CHANNELS[1]
-            ),
-        });
-    }
+    hints.extend(
+        server_compatibility::unexpected_sound_channel_count(channels)
+            .map(server_compatibility_hint),
+    );
     hints
 }
 
@@ -608,14 +603,28 @@ mod tests {
             "{:?}",
             texts(&stereo)
         );
-        assert!(mentions(&stereo, "not 8 or 16"), "{:?}", texts(&stereo));
+        assert!(
+            raises(
+                &stereo,
+                server_compatibility::unexpected_sound_channel_count(2)
+            ),
+            "{:?}",
+            texts(&stereo)
+        );
 
         let six = HintFacts {
             packaged_channels: Some(6),
             ..facts()
         };
         assert!(!mentions(&six, "Fewer than 6"), "{:?}", texts(&six));
-        assert!(mentions(&six, "not 8 or 16"), "{:?}", texts(&six));
+        assert!(
+            raises(
+                &six,
+                server_compatibility::unexpected_sound_channel_count(6)
+            ),
+            "{:?}",
+            texts(&six)
+        );
 
         let sixteen = HintFacts {
             packaged_channels: Some(16),
