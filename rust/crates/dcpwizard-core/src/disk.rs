@@ -14,12 +14,6 @@ const SB_FEATURE_COMPAT_OFFSET: u64 = 0x45c;
 const SB_FEATURE_INCOMPAT_OFFSET: u64 = 0x460;
 const SB_FEATURE_RO_COMPAT_OFFSET: u64 = 0x464;
 const SB_LABEL_OFFSET: u64 = 0x478;
-#[cfg(test)]
-const SUPERBLOCK_RESERVED_BLOCKS_COUNT_OFFSET: u64 = 0x408;
-#[cfg(test)]
-const SUPERBLOCK_LOG_BLOCK_SIZE_OFFSET: u64 = 0x418;
-#[cfg(test)]
-const SUPERBLOCK_INODE_SIZE_OFFSET: u64 = 0x458;
 const EXT_MAGIC: u16 = 0xEF53;
 const FEATURE_COMPAT_HAS_JOURNAL: u32 = 0x0004;
 // features ext3 understands; anything beyond these on a journalled fs means ext4
@@ -387,9 +381,6 @@ mod tests {
         assert_eq!(info.fstype, None);
     }
 
-    // ext's block size field is a shift of this
-    const SMALLEST_BLOCK_SIZE_BYTES: u32 = 1024;
-
     fn ext2() -> DriveInfo {
         DriveInfo {
             fstype: Some("ext2".to_string()),
@@ -444,6 +435,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn format_and_check_roundtrip_on_image() {
+        const SUPERBLOCK_RESERVED_BLOCKS_COUNT_OFFSET: u64 = 0x408;
+        const SUPERBLOCK_LOG_BLOCK_SIZE_OFFSET: u64 = 0x418;
+        const SUPERBLOCK_INODE_SIZE_OFFSET: u64 = 0x458;
+        // ext's block size field is a shift of this
+        const SMALLEST_BLOCK_SIZE_BYTES: u32 = 1024;
+
         which("mkfs.ext2").expect("mkfs.ext2 on PATH");
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("disk.img");
