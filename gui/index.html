@@ -662,6 +662,54 @@
                   </div>
                   <p class="field-hint">Subtitle appearance styles the imported subtitle track. Closed captions keep the default appearance.</p>
                   <div class="prop-field">
+                    <label for="prop-subtitle-halign">Subtitle horizontal alignment</label>
+                    <select id="prop-subtitle-halign">
+                      <option value="">As the subtitle file says</option>
+                      <option value="left">Left</option>
+                      <option value="center">Centre</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-valign">Subtitle vertical alignment</label>
+                    <select id="prop-subtitle-valign">
+                      <option value="">As the subtitle file says</option>
+                      <option value="top">Top</option>
+                      <option value="center">Centre</option>
+                      <option value="bottom">Bottom</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-vposition">Subtitle position (% from the aligned edge)</label>
+                    <input id="prop-subtitle-vposition" type="number" step="0.1" placeholder="8">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-zposition">Subtitle 3D depth</label>
+                    <input id="prop-subtitle-zposition" type="number" step="0.1">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-rtl">Subtitle right-to-left reordering</label>
+                    <select id="prop-subtitle-rtl">
+                      <option value="auto" selected>Auto</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-wrap">Subtitle line wrap (characters)</label>
+                    <input id="prop-subtitle-wrap" type="number" min="1" step="1">
+                  </div>
+                  <div class="prop-field">
+                    <label for="prop-subtitle-font">Subtitle font (TTF/OTF, blank for a system font)</label>
+                    <div class="input-with-btn">
+                      <input id="prop-subtitle-font" type="text" placeholder="System font" readonly>
+                      <button id="prop-browse-subtitle-font" class="btn-sm">…</button>
+                    </div>
+                  </div>
+                  <div class="prop-field">
+                    <label><input type="checkbox" id="prop-subtitle-no-subset"> Embed the whole subtitle font</label>
+                  </div>
+                  <div class="prop-field">
                     <label for="prop-burn-subtitle">Burn subtitles into the picture</label>
                     <div class="input-with-btn">
                       <input id="prop-burn-subtitle" type="text" placeholder="SRT, ASS, PAC, MKS, FCPXML or Interop XML…" readonly>

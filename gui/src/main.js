@@ -991,6 +991,17 @@ document.getElementById("prop-browse-burn-subtitle-font")?.addEventListener("cli
   if (path) document.getElementById("prop-burn-subtitle-font").value = path;
 });
 
+document.getElementById("prop-browse-subtitle-font")?.addEventListener("click", async () => {
+  const path = await open({
+    directory: false, multiple: false,
+    filters: [
+      { name: 'Fonts', extensions: ['ttf','otf'] },
+      { name: 'All', extensions: ['*'] }
+    ]
+  });
+  if (path) document.getElementById("prop-subtitle-font").value = path;
+});
+
 document.getElementById("prop-browse-ccap")?.addEventListener("click", async () => {
   const path = await open({
     directory: false, multiple: false,
@@ -1383,6 +1394,14 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       subtitleEffectColour: document.getElementById("prop-subtitle-effect-colour")?.value || null,
       subtitleFadeUp: document.getElementById("prop-subtitle-fade-up")?.value || null,
       subtitleFadeDown: document.getElementById("prop-subtitle-fade-down")?.value || null,
+      subtitleHalign: document.getElementById("prop-subtitle-halign")?.value || null,
+      subtitleValign: document.getElementById("prop-subtitle-valign")?.value || null,
+      subtitleVposition: document.getElementById("prop-subtitle-vposition")?.value || null,
+      subtitleZposition: document.getElementById("prop-subtitle-zposition")?.value || null,
+      subtitleRtl: document.getElementById("prop-subtitle-rtl")?.value || null,
+      subtitleWrap: document.getElementById("prop-subtitle-wrap")?.value || null,
+      subtitleFont: document.getElementById("prop-subtitle-font")?.value || null,
+      subtitleNoSubset: document.getElementById("prop-subtitle-no-subset")?.checked || false,
       burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
       burnSubtitleFont: document.getElementById("prop-burn-subtitle-font")?.value || null,
       burnFontSize: document.getElementById("prop-burn-font-size")?.value || null,

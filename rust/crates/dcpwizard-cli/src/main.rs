@@ -323,8 +323,15 @@ struct CreateSubtitleOpts {
     #[arg(long)]
     subtitle_zposition: Option<f64>,
     /// RTL subtitle reordering: auto, on, or off (default auto)
-    #[arg(long, default_value = "auto", value_parser = ["auto", "on", "off"])]
-    subtitle_rtl: String,
+    #[arg(
+        long,
+        default_value = "auto",
+        value_parser = clap::builder::TypedValueParser::try_map(
+            clap::builder::PossibleValuesParser::new(["auto", "on", "off"]),
+            |value| value.parse::<dcpwizard_core::subtitle::RtlMode>()
+        )
+    )]
+    subtitle_rtl: dcpwizard_core::subtitle::RtlMode,
     /// Auto-wrap subtitle lines longer than this many characters
     #[arg(long)]
     subtitle_wrap: Option<usize>,
@@ -4916,17 +4923,12 @@ fn run() {
             // so the hints run beside the encode and print before packaging
             let hints_pass = std::thread::spawn(move || dcpwizard_core::hints::gather_hints(&plan));
 
-            let subtitle_rtl_mode = match subtitle_rtl.as_str() {
-                "on" => dcpwizard_core::subtitle::RtlMode::On,
-                "off" => dcpwizard_core::subtitle::RtlMode::Off,
-                _ => dcpwizard_core::subtitle::RtlMode::Auto,
-            };
             let subtitle_opts = dcpwizard_core::subtitle::SubtitleOptions {
                 halign: subtitle_halign,
                 valign: subtitle_valign,
                 vposition: subtitle_vposition,
                 zposition: subtitle_zposition,
-                rtl: subtitle_rtl_mode,
+                rtl: subtitle_rtl,
                 wrap_cols: subtitle_wrap,
                 font_path: subtitle_font.map(PathBuf::from),
                 no_subset: subtitle_no_subset,

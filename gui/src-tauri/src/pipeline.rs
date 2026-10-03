@@ -372,6 +372,16 @@ pub struct JobConfig {
     // how the burnt-in text and the packaged track look
     burn_style: postkit::subtitle_raster::BurnStyleOverrides,
     subtitle_appearance: dcpwizard_core::subtitle::TimedTextAppearance,
+    subtitle_halign: Option<String>,
+    subtitle_valign: Option<String>,
+    subtitle_vposition: Option<f64>,
+    subtitle_zposition: Option<f64>,
+    #[serde(default)]
+    subtitle_rtl: dcpwizard_core::subtitle::RtlMode,
+    subtitle_wrap: Option<usize>,
+    subtitle_font: Option<String>,
+    #[serde(default)]
+    subtitle_no_subset: bool,
     ccap: Option<String>,
     ccap_language: String,
     // loudness normalize spec (leqm=<db> or lufs=<value>) applied to the audio
@@ -639,6 +649,14 @@ pub async fn submit_job(
     subtitle_effect_colour: Option<String>,
     subtitle_fade_up: Option<String>,
     subtitle_fade_down: Option<String>,
+    subtitle_halign: Option<String>,
+    subtitle_valign: Option<String>,
+    subtitle_vposition: Option<String>,
+    subtitle_zposition: Option<String>,
+    subtitle_rtl: Option<String>,
+    subtitle_wrap: Option<String>,
+    subtitle_font: Option<String>,
+    subtitle_no_subset: Option<bool>,
     burn_subtitle: Option<String>,
     burn_subtitle_font: Option<String>,
     burn_font_size: Option<String>,
@@ -871,6 +889,13 @@ pub async fn submit_job(
         parsed_field("--subtitle-fade-up", &subtitle_fade_up)?,
         parsed_field("--subtitle-fade-down", &subtitle_fade_down)?,
     )?;
+    let subtitle_vposition = parsed_field("--subtitle-vposition", &subtitle_vposition)?;
+    let subtitle_zposition = parsed_field("--subtitle-zposition", &subtitle_zposition)?;
+    let subtitle_wrap = parsed_field("--subtitle-wrap", &subtitle_wrap)?;
+    let subtitle_rtl = filled(&subtitle_rtl)
+        .map(str::parse::<dcpwizard_core::subtitle::RtlMode>)
+        .transpose()?
+        .unwrap_or_default();
     let burn_style = postkit::subtitle_raster::BurnStyleOverrides {
         font_size_percent: parsed_field("--burn-font-size", &burn_font_size)?,
         colour: parsed_colour("--burn-colour", &burn_colour)?,
@@ -1003,6 +1028,14 @@ pub async fn submit_job(
         burn_subtitle_font,
         burn_style,
         subtitle_appearance,
+        subtitle_halign: subtitle_halign.filter(|s| !s.is_empty()),
+        subtitle_valign: subtitle_valign.filter(|s| !s.is_empty()),
+        subtitle_vposition,
+        subtitle_zposition,
+        subtitle_rtl,
+        subtitle_wrap,
+        subtitle_font: subtitle_font.filter(|s| !s.is_empty()),
+        subtitle_no_subset: subtitle_no_subset.unwrap_or(false),
         ccap,
         ccap_language: ccap_language.unwrap_or_else(|| DEFAULT_LANGUAGE.into()),
         loudness_target: loudness_target.filter(|s| !s.is_empty()),
@@ -1159,8 +1192,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         audio_language: job.naming.audio_language.clone(),
         loudness_target: job.loudness_target.clone(),
         subtitle: job.subtitle.as_ref().map(PathBuf::from),
-        subtitle_font: None,
-        subtitle_valign: None,
+        subtitle_font: job.subtitle_font.as_ref().map(PathBuf::from),
+        subtitle_valign: job.subtitle_valign.clone(),
         ccap: job.ccap.as_ref().map(PathBuf::from),
         burn_subtitle: job.burn_subtitle.as_ref().map(PathBuf::from),
         burn_subtitle_font: job.burn_subtitle_font.as_ref().map(PathBuf::from),
@@ -2289,8 +2322,15 @@ fn build_dcp_config(
         subtitle_path: job.subtitle.as_ref().map(PathBuf::from),
         subtitle_language: job.subtitle_language.clone(),
         subtitle_opts: dcpwizard_core::subtitle::SubtitleOptions {
+            halign: job.subtitle_halign.clone(),
+            valign: job.subtitle_valign.clone(),
+            vposition: job.subtitle_vposition,
+            zposition: job.subtitle_zposition,
+            rtl: job.subtitle_rtl,
+            wrap_cols: job.subtitle_wrap,
+            font_path: job.subtitle_font.as_ref().map(PathBuf::from),
+            no_subset: job.subtitle_no_subset,
             appearance: job.subtitle_appearance.clone(),
-            ..Default::default()
         },
         ccap_path: job.ccap.as_ref().map(PathBuf::from),
         ccap_language: job.ccap_language.clone(),
@@ -3208,6 +3248,14 @@ mod tests {
             burn_subtitle_font: None,
             burn_style: postkit::subtitle_raster::BurnStyleOverrides::default(),
             subtitle_appearance: dcpwizard_core::subtitle::TimedTextAppearance::default(),
+            subtitle_halign: None,
+            subtitle_valign: None,
+            subtitle_vposition: None,
+            subtitle_zposition: None,
+            subtitle_rtl: dcpwizard_core::subtitle::RtlMode::Auto,
+            subtitle_wrap: None,
+            subtitle_font: None,
+            subtitle_no_subset: false,
             ccap: None,
             ccap_language: "en".into(),
             loudness_target: None,
@@ -3242,6 +3290,55 @@ mod tests {
             head_items: Vec::new(),
             tail_items: Vec::new(),
         }
+    }
+
+    fn placed_subtitle_job() -> JobConfig {
+        JobConfig {
+            subtitle: Some("/in/subs.srt".into()),
+            subtitle_halign: Some("left".into()),
+            subtitle_valign: Some("top".into()),
+            subtitle_vposition: Some(12.5),
+            subtitle_zposition: Some(-3.0),
+            subtitle_rtl: dcpwizard_core::subtitle::RtlMode::On,
+            subtitle_wrap: Some(40),
+            subtitle_font: Some("/fonts/Subtitles.ttf".into()),
+            subtitle_no_subset: true,
+            ..test_job()
+        }
+    }
+
+    #[test]
+    fn each_subtitle_placement_setting_reaches_the_packaged_track() {
+        let options = build_dcp_config(
+            &placed_subtitle_job(),
+            PathBuf::from("/out/j2k"),
+            None,
+            None,
+            None,
+            Vec::new(),
+        )
+        .subtitle_opts;
+        assert_eq!(options.halign.as_deref(), Some("left"));
+        assert_eq!(options.valign.as_deref(), Some("top"));
+        assert_eq!(options.vposition, Some(12.5));
+        assert_eq!(options.zposition, Some(-3.0));
+        assert_eq!(options.rtl, dcpwizard_core::subtitle::RtlMode::On);
+        assert_eq!(options.wrap_cols, Some(40));
+        assert_eq!(
+            options.font_path,
+            Some(PathBuf::from("/fonts/Subtitles.ttf"))
+        );
+        assert!(options.no_subset);
+    }
+
+    #[test]
+    fn the_plan_the_hints_read_carries_the_subtitle_font_and_alignment() {
+        let plan = job_plan(&placed_subtitle_job());
+        assert_eq!(
+            plan.subtitle_font,
+            Some(PathBuf::from("/fonts/Subtitles.ttf"))
+        );
+        assert_eq!(plan.subtitle_valign.as_deref(), Some("top"));
     }
 
     #[test]
