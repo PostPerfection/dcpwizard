@@ -165,6 +165,28 @@ test('a version 1 project file, saved before the composition metadata fields, op
   }
 });
 
+test('a version 1 project file, saved before the subtitle placement fields, opens with them at the panel defaults', () => {
+  const text = readFileSync(new URL('./fixtures/Film-version-1.dcpwizard', import.meta.url), 'utf8');
+  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const defaultsPanel = emptyPanel((id, property) => (property === 'checked' ? false : `${id} default`));
+  const reopened = editedPanel();
+
+  restoreFormState(form, serialized(defaultsPanel, null), reopened);
+
+  for (const id of [
+    'prop-subtitle-halign',
+    'prop-subtitle-valign',
+    'prop-subtitle-vposition',
+    'prop-subtitle-zposition',
+    'prop-subtitle-rtl',
+    'prop-subtitle-wrap',
+    'prop-subtitle-font',
+  ]) {
+    assert.equal(reopened.controls.get(id).value, `${id} default`, id);
+  }
+  assert.equal(reopened.controls.get('prop-subtitle-no-subset').checked, false);
+});
+
 function selectOffering(label, values, value) {
   return { value, labels: [{ textContent: ` ${label} ` }], options: values.map((optionValue) => ({ value: optionValue })) };
 }

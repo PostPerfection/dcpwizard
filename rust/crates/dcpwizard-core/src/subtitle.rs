@@ -46,6 +46,21 @@ pub enum RtlMode {
     Off,
 }
 
+impl std::str::FromStr for RtlMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "auto" => Ok(RtlMode::Auto),
+            "on" => Ok(RtlMode::On),
+            "off" => Ok(RtlMode::Off),
+            other => Err(format!(
+                "--subtitle-rtl: {other} is not one of auto, on or off"
+            )),
+        }
+    }
+}
+
 /// Placement / rendering controls for subtitle conversion, applied to every
 /// non-SMPTE-XML input (SRT and the styled formats). All fields default to the
 /// previous centred-bottom behaviour so a plain `--subtitle x.srt` is unchanged.
@@ -1599,6 +1614,14 @@ mod tests {
         let effect = TimedTextAppearance::from_flags(None, None, Some("glow"), None, None, None)
             .unwrap_err();
         assert!(effect.contains("--subtitle-effect"), "got: {effect}");
+    }
+
+    #[test]
+    fn each_rtl_flag_value_reads_as_its_mode_and_another_is_refused() {
+        assert_eq!("auto".parse(), Ok(RtlMode::Auto));
+        assert_eq!("on".parse(), Ok(RtlMode::On));
+        assert_eq!("off".parse(), Ok(RtlMode::Off));
+        assert!("sometimes".parse::<RtlMode>().is_err());
     }
 
     #[test]
