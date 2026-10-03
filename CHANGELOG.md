@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- **A picture frame under 16384 bytes is raised to that size**: a black or flat frame compressed to a few hundred bytes, and a Dolby DSS200 server crashes on a frame that small. Every encode now adds 0 or 1 to each 12-bit sample of such a frame and compresses it again, the way DCP-o-matic pads its small frames. A black 2K frame goes from 557 bytes to about 27 kB and a black 4K frame from 1232 bytes to about 180 kB. Picture that is already JPEG 2000 is wrapped as it is.
+
 ## [1.5.0] - 2026-10-02
 
 ### Changed
