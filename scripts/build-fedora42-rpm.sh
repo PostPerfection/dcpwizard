@@ -17,19 +17,20 @@ if [[ ! -f "$GROK_SOURCE/extern/grok-gpu-plugin/CMakeLists.txt" ]]; then
     exit 1
 fi
 
-IMAGE=postperfection-ubuntu24-build
-UBUNTU_IMAGE=docker.io/library/ubuntu:24.04
-CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/ubuntu24"
+IMAGE=postperfection-fedora42-build
+FEDORA_IMAGE=registry.fedoraproject.org/fedora:42
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/fedora42"
 GROK_BUILD="$CACHE_ROOT/grok-build-sm$CUDA_ARCH"
 GROK_INSTALL="$CACHE_ROOT/grok-install-sm$CUDA_ARCH"
 CARGO_CACHE="$CACHE_ROOT/cargo"
 PNPM_STORE="$CACHE_ROOT/pnpm-store"
 WORK="$CACHE_ROOT/work-dcpwizard"
-OUTPUT_DIRECTORY="$ROOT/gui/src-tauri/target/release/bundle/deb"
+OUTPUT_DIRECTORY="$ROOT/gui/src-tauri/target/release/bundle/rpm"
+RPM_RELEASE="1.sm$CUDA_ARCH.fc42"
 
 mkdir -p "$GROK_BUILD" "$GROK_INSTALL" "$CARGO_CACHE" "$PNPM_STORE" "$WORK" "$OUTPUT_DIRECTORY"
 
-podman build --tag "$IMAGE" --file "$ROOT/scripts/ubuntu-deb.Containerfile" "$ROOT/scripts"
+podman build --tag "$IMAGE" --file "$ROOT/scripts/fedora-rpm.Containerfile" "$ROOT/scripts"
 
 # :z would relabel every file in the grok and wizard trees for selinux
 run_in_image() {
@@ -71,6 +72,7 @@ run_in_image \
     -v "$CARGO_CACHE:/cache/cargo" \
     -v "$PNPM_STORE:/cache/pnpm-store" \
     -e CARGO_HOME=/cache/cargo \
+    -e RPM_RELEASE="$RPM_RELEASE" \
     "$IMAGE" bash -euo pipefail <<'EOF'
 for candidate in /grok-install/lib64 /grok-install/lib; do
     if [[ -f "$candidate/libgrokj2k.so.1" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
@@ -100,17 +102,13 @@ if [[ "$CUBIN_ARCH" != "sm_$CUDA_ARCH" ]]; then
     exit 1
 fi
 
+FFMPEG_MPV_FILES="$(scripts/ffmpeg-mpv-bundle-config.sh "$FFMPEG_MPV_DIR" Linux)"
+
 cd gui
 pnpm install --frozen-lockfile --store-dir /cache/pnpm-store
-# --config replaces arrays instead of appending
-DEB_CONFIG="$(../scripts/ffmpeg-mpv-bundle-config.sh "$FFMPEG_MPV_DIR" Linux | jq -c '{bundle: {linux: {deb: {
-    depends: (.bundle.linux.deb.depends + ["libtiff6", "libcurl4t64"]),
-    files: (.bundle.linux.deb.files + {
-        "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
-        "/usr/lib/dcpwizard/libgrokj2k_plugin.so": "libgrokj2k_plugin.so"
-    })
-}}}}')"
-pnpm tauri build --bundles deb --config "$DEB_CONFIG"
+# the plugin is private, the committed config leaves it out
+PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"release":"'"$RPM_RELEASE"'","files":{"/usr/lib/dcpwizard/libgrokj2k.so.1":"libgrokj2k.so.1","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
+pnpm tauri build --bundles rpm --config "$FFMPEG_MPV_FILES" --config "$PLUGIN_FILES"
 EOF
 
 read_tauri_config() {
@@ -118,18 +116,18 @@ read_tauri_config() {
 }
 PRODUCT_NAME="$(read_tauri_config .productName)"
 VERSION="$(read_tauri_config .version)"
-BUILT_DEB="$WORK/gui/src-tauri/target/release/bundle/deb/${PRODUCT_NAME}_${VERSION}_amd64.deb"
-DEB_NAME="${PRODUCT_NAME// /-}_${VERSION}-sm${CUDA_ARCH}_amd64.deb"
-cp "$BUILT_DEB" "$OUTPUT_DIRECTORY/$DEB_NAME"
-echo "wrote $OUTPUT_DIRECTORY/$DEB_NAME"
+BUILT_RPM="$WORK/gui/src-tauri/target/release/bundle/rpm/$PRODUCT_NAME-$VERSION-$RPM_RELEASE.x86_64.rpm"
+RPM_NAME="${PRODUCT_NAME// /-}-$VERSION-$RPM_RELEASE.x86_64.rpm"
+cp "$BUILT_RPM" "$OUTPUT_DIRECTORY/$RPM_NAME"
+echo "wrote $OUTPUT_DIRECTORY/$RPM_NAME"
 
 podman run --rm -i --security-opt label=disable \
-    -v "$OUTPUT_DIRECTORY/$DEB_NAME:/debs/$DEB_NAME:ro" \
-    -e DEB_NAME="$DEB_NAME" \
-    -e DEBIAN_FRONTEND=noninteractive \
-    "$UBUNTU_IMAGE" bash -euo pipefail <<'EOF'
-apt-get update
-apt-get install -y --no-install-recommends "/debs/$DEB_NAME"
+    -v "$OUTPUT_DIRECTORY/$RPM_NAME:/rpms/$RPM_NAME:ro" \
+    -e RPM_NAME="$RPM_NAME" \
+    "$FEDORA_IMAGE" bash -euo pipefail <<'EOF'
+# ffmpeg comes from RPM Fusion
+dnf install -y "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm"
+dnf install -y binutils "/rpms/$RPM_NAME"
 command -v ffmpeg
 dcpwizard --version
 
@@ -144,6 +142,12 @@ if ldd /usr/lib/dcpwizard/libgrokj2k_plugin.so | grep "not found"; then
     exit 1
 fi
 
+if ! readelf -d /usr/bin/dcpwizard | grep -F 'RUNPATH' | grep -qF '$ORIGIN/../lib/dcpwizard'; then
+    readelf -d /usr/bin/dcpwizard
+    echo "dcpwizard has no runpath to /usr/lib/dcpwizard" >&2
+    exit 1
+fi
+
 GRK_PLUGIN_PATH=/usr/lib/dcpwizard dcpwizard --version
 EOF
-echo "deb installs on ubuntu:24.04"
+echo "rpm installs on fedora:42"
