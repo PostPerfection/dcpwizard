@@ -545,7 +545,7 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     # cover if it were the webview's prompt
     window.press(PROJECT_CHORD)
     wait_for_view(session, PROJECT_VIEW)
-    window.click("#recent-header")
+    window.click("#btn-recent-projects")
     window.click(".recent-retitle")
     wait_until(
         "the retitle dialog never opened",
