@@ -94,6 +94,16 @@ user-facing surface is here.
   code-complete but untested against a real file, since libaaf's public test
   corpus has video tracks but no video clips. AAF pan and gain automation are
   surfaced in the timeline's skipped list but not applied, deliberate scope.
+- HDR DCI colour conversion on the GPU. The plugin's only colour kernel
+  (`src/kernels/preprocess.h` in grok-gpu-plugin) is Rec.709 RGB to X'Y'Z' at
+  gamma 2.6, so an `--hdr-dci` run converts on the CPU in PK/src/colour.rs
+  (`HdrDcdmTransform`: PQ or HLG decode, BT.2020 or P3 to XYZ, the BT.2390 knee
+  into the DCI HDR volume, the P3 clip at 299.6 cd/m², PQ encode) and hands the
+  batch 12-bit planes. Measured 2026-10-03 on the 6900HX and 3060, first 8 s of
+  The Toms at 4K: about 17 fps with HDR on against 32 fps with it off, the
+  conversion taking a third of the CPU time. Needs a new plugin kernel and a way
+  for postkit to pass it the source type and peak luminance. Parked: few screens
+  play a DCI HDR package. Plugin + PK.
 
 ### Batch E (easyDCP parity, surveyed 2026-08-16)
 
