@@ -1774,10 +1774,12 @@ document.getElementById("post-build-reveal")?.addEventListener("click", () => {
 // === Verify ===
 document.getElementById("verify-browse")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
-  if (dir) {
-    document.getElementById("verify-path").textContent = dir;
-    document.getElementById("verify-run").disabled = false;
-  }
+  if (!dir) return;
+  document.getElementById("verify-path").textContent = dir;
+  document.getElementById("verify-run").disabled = false;
+  const resultsBox = document.getElementById("verify-results");
+  resultsBox.textContent = "";
+  resultsBox.classList.remove("visible");
 });
 
 async function runVerification() {
