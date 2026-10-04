@@ -136,6 +136,7 @@
                 </div>
                 <div id="recent-list" class="recent-list"></div>
               </section>
+              <div class="asset-library-column">
               <section class="panel assets-panel">
                 <div class="panel-header">
                   <h2>Assets</h2>
@@ -153,9 +154,9 @@
                 </div>
               </section>
 
-              <section class="panel library-panel">
-                <div class="panel-header">
-                  <h2>Ident Library</h2>
+              <section id="library-panel" class="panel library-panel collapsed">
+                <div id="library-header" class="panel-header library-header" title="Show or hide the ident library">
+                  <h2>Ident Library <span id="library-joined-count"></span></h2>
                   <div class="panel-actions">
                     <select id="library-kind" title="What the next import is filed under">
                       <option value="head-ident">Head ident</option>
@@ -166,6 +167,7 @@
                     <input id="library-hold" type="number" min="0.1" step="0.5" class="library-hold" placeholder="Hold s" title="How long a still image is held, in seconds. A video carries its own length.">
                     <button id="library-import" class="btn-sm">+ Import</button>
                   </div>
+                  <button id="library-toggle" class="library-toggle" aria-expanded="false">▶</button>
                 </div>
                 <div id="library-list" class="asset-list library-list"></div>
                 <div class="library-joins">
@@ -179,6 +181,7 @@
                   </div>
                 </div>
               </section>
+              </div>
 
               <section class="panel compositions-panel">
                 <div class="panel-header">

@@ -2642,6 +2642,24 @@ const LIBRARY_KIND_LABELS = {
   "anti-piracy": "Anti-piracy",
 };
 
+const LIBRARY_COLLAPSED_KEY = "dcpwizard-ident-library-collapsed";
+
+function applyLibraryCollapsed() {
+  const collapsed = localStorage.getItem(LIBRARY_COLLAPSED_KEY) !== "false";
+  document.getElementById("library-panel").classList.toggle("collapsed", collapsed);
+  const toggle = document.getElementById("library-toggle");
+  toggle.textContent = collapsed ? "▶" : "▼";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+}
+
+document.getElementById("library-header").addEventListener("click", (event) => {
+  if (event.target.closest(".panel-actions")) return;
+  const collapsed = document.getElementById("library-panel").classList.contains("collapsed");
+  localStorage.setItem(LIBRARY_COLLAPSED_KEY, String(!collapsed));
+  applyLibraryCollapsed();
+});
+applyLibraryCollapsed();
+
 async function refreshLibrary() {
   try {
     libraryItems = await invoke("library_list");
@@ -2695,6 +2713,8 @@ function renderLibrary() {
 }
 
 function renderJoinedItems() {
+  const joinedCount = joinedItems.head.length + joinedItems.tail.length;
+  document.getElementById("library-joined-count").textContent = joinedCount ? `(${joinedCount} joined)` : "";
   for (const placement of ["head", "tail"]) {
     const box = document.getElementById(`library-${placement}-items`);
     if (!box) continue;
