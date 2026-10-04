@@ -1790,8 +1790,7 @@ async function runVerification() {
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Verifying...";
 
-  const args = ["verify", dir];
-  if (document.getElementById("verify-strict")?.checked) args.push("--strict");
+  const args = ["verify", dir, "--strict"];
   if (!document.getElementById("verify-mxf")?.checked) args.push("--no-picture-check");
   if (!document.getElementById("verify-hashes")?.checked) args.push("--no-hash-check");
 
@@ -1801,7 +1800,7 @@ async function runVerification() {
     resultsBox.textContent = "✓ DCP verification PASSED\n\n" + result.stdout;
     setStatus("Verification passed");
   } else {
-    resultsBox.textContent = "✗ Verification failed\n\n" + (result.stderr || result.stdout);
+    resultsBox.textContent = "✗ Verification failed\n\n" + result.stdout + result.stderr;
     setStatus("Verification failed");
   }
 }
