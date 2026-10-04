@@ -19,6 +19,7 @@ import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { initAssetStripResize } from "./asset-strip-resize.js";
+import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
 import { prefilledRecipientKey } from "./recipient-identity.js";
@@ -2642,24 +2643,6 @@ const LIBRARY_KIND_LABELS = {
   "anti-piracy": "Anti-piracy",
 };
 
-const LIBRARY_COLLAPSED_KEY = "dcpwizard-ident-library-collapsed";
-
-function applyLibraryCollapsed() {
-  const collapsed = localStorage.getItem(LIBRARY_COLLAPSED_KEY) !== "false";
-  document.getElementById("library-panel").classList.toggle("collapsed", collapsed);
-  const toggle = document.getElementById("library-toggle");
-  toggle.textContent = collapsed ? "▶" : "▼";
-  toggle.setAttribute("aria-expanded", String(!collapsed));
-}
-
-document.getElementById("library-header").addEventListener("click", (event) => {
-  if (event.target.closest(".panel-actions")) return;
-  const collapsed = document.getElementById("library-panel").classList.contains("collapsed");
-  localStorage.setItem(LIBRARY_COLLAPSED_KEY, String(!collapsed));
-  applyLibraryCollapsed();
-});
-applyLibraryCollapsed();
-
 async function refreshLibrary() {
   try {
     libraryItems = await invoke("library_list");
@@ -2691,7 +2674,7 @@ function renderLibrary() {
     `).join("");
     list.querySelectorAll(".asset-item").forEach(el => {
       el.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", `library:${el.dataset.libraryName}`);
+        e.dataTransfer.setData("text/plain", libraryPayload(el.dataset.libraryName));
       });
     });
     list.querySelectorAll("[data-library-remove]").forEach(el => {
@@ -2713,8 +2696,6 @@ function renderLibrary() {
 }
 
 function renderJoinedItems() {
-  const joinedCount = joinedItems.head.length + joinedItems.tail.length;
-  document.getElementById("library-joined-count").textContent = joinedCount ? `(${joinedCount} joined)` : "";
   for (const placement of ["head", "tail"]) {
     const box = document.getElementById(`library-${placement}-items`);
     if (!box) continue;
@@ -2737,7 +2718,7 @@ function renderJoinedItems() {
     });
     box.querySelectorAll(".library-chip").forEach(chip => {
       chip.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", `joined:${chip.dataset.placement}:${chip.dataset.index}`);
+        e.dataTransfer.setData("text/plain", joinedPayload(chip.dataset.placement, chip.dataset.index));
       });
       // dropping onto a chip puts the dragged item in front of it, which is how
       // a run is reordered
@@ -2745,30 +2726,14 @@ function renderJoinedItems() {
       chip.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropIntoJoin(e.dataTransfer.getData("text/plain"), placement, parseInt(chip.dataset.index));
+        dropAndRedraw(e.dataTransfer.getData("text/plain"), placement, parseInt(chip.dataset.index));
       });
     });
   }
 }
 
-// Move or add whatever was dragged into `placement` at `at`, or at its end when
-// `at` is null.
-function dropIntoJoin(payload, placement, at) {
-  const target = joinedItems[placement];
-  let name = null;
-  if (payload.startsWith("library:")) {
-    name = payload.slice("library:".length);
-  } else if (payload.startsWith("joined:")) {
-    const [, from, index] = payload.split(":");
-    const removed = joinedItems[from].splice(parseInt(index), 1);
-    if (removed.length === 0) return;
-    name = removed[0];
-    // taking it out of this same run shifts everything after it back one
-    if (from === placement && at !== null && at > parseInt(index)) at -= 1;
-  }
-  if (!name) return;
-  if (at === null || at > target.length) target.push(name);
-  else target.splice(at, 0, name);
+function dropAndRedraw(payload, placement, at) {
+  dropIntoJoin(joinedItems, payload, placement, at);
   renderJoinedItems();
 }
 
@@ -2781,7 +2746,7 @@ document.querySelectorAll(".library-join-items").forEach(box => {
   box.addEventListener("drop", (e) => {
     e.preventDefault();
     box.classList.remove("drop-target");
-    dropIntoJoin(e.dataTransfer.getData("text/plain"), box.dataset.placement, null);
+    dropAndRedraw(e.dataTransfer.getData("text/plain"), box.dataset.placement, null);
   });
 });
 
