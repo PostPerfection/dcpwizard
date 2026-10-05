@@ -204,6 +204,14 @@ sudo reboot
 
 The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_1.4.0-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
 
+**GPU encoding on Arch Linux.** A pacman package with the CUDA plugin is built inside an `archlinux:base-devel` container with podman, the same way as the deb:
+
+```bash
+./scripts/build-arch-package.sh /path/to/grok/source 86
+```
+
+The package is written under `gui/src-tauri/target/release/bundle/arch`, for example `DCP-Wizard-1.6.0-1-sm86-x86_64.pkg.tar.zst`, and the script ends by installing it in a plain `archlinux:base` container. Build caches stay in `~/.cache/postperfection/arch`. Install it with `sudo pacman -U` and remove it with `sudo pacman -R dcp-wizard`. It depends on `nvidia-utils`, so the target machine needs only an NVIDIA kernel module package and a Grok licence entered under Settings.
+
 **GPU encoding on macOS.** A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
 
 ```bash
