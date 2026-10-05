@@ -43,6 +43,7 @@
         main { max-width: 740px; margin: 0 auto; padding: 48px 24px 80px; }
         h1 { color: var(--heading); font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
         h2 { color: var(--heading); font-size: 1.35rem; font-weight: 650; margin: 2.4rem 0 0.7rem; }
+        h3 { color: var(--heading); font-size: 0.95rem; font-weight: 600; margin: 1.2rem 0 0.3rem; }
         p { margin: 0.7rem 0; }
         a { color: var(--accent); }
         ol.contents { margin: 1.2rem 0 0; padding-left: 1.2rem; }
@@ -83,7 +84,7 @@
 </nav>
 <main>
     <h1>Manual</h1>
-    <p>Five jobs. Certificates live in Settings, and the KDM page uses that chain. The same commands are below for a terminal.</p>
+    <p>Five jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
     <ol class="contents">
         <li><a href="#build">Build a DCP</a></li>
         <li><a href="#encrypt">Encrypt it</a></li>
@@ -93,12 +94,16 @@
     </ol>
 
     <h2 id="build">Build a DCP</h2>
-    <p>Pick the master, set the title, and build. The package is a folder named after the title inside the output directory. Sound comes from the video. Add a separate WAV when the mix is its own file.</p>
-<pre>dcpwizard create --title "My Film" --video movie.mov --output ./dcp</pre>
+    <h3>In the app</h3>
+    <p>On Project, drop the master on Assets, or press + Video and drop it on the Picture track. If the mix is its own file, press + Audio and drop it on Sound. In Properties, set Title, and under Output set Folder. Press Build DCP. The package is a new folder inside that one, named after the title. Sound comes from the video unless you added a WAV.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp</pre>
 
     <h2 id="encrypt">Encrypt it</h2>
-    <p>In Settings, Certificates, choose Create signing chain and pick a folder. That writes the leaf, the intermediate, the root, and their keys, and the app remembers the paths.</p>
-    <p>Tick Encrypt in Properties and choose a keys file that sits outside the package. The build signs with the whole chain. A finished clear package stays clear. The keys file is the plaintext content keys. Keep it.</p>
+    <h3>In the app</h3>
+    <p>Open Settings. Under Certificates, press Create signing chain…, type the organization, and pick a folder. The app fills in the signing certificate, its key, the intermediate, and the root, and saves them.</p>
+    <p>Back on Project, under Properties, Options, tick Encrypt and choose a Key Output File that is not inside the package. Press Build DCP. Keep that keys file. A package that was already built in the clear stays clear.</p>
+    <h3>From a terminal</h3>
 <pre>dcpwizard certificate chain --organization "Studio" --output ~/dcp-certs
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
   --encrypt --key-out ~/keys/my-film.json \
@@ -108,8 +113,10 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
   --signer-chain ~/dcp-certs/root.pem</pre>
 
     <h2 id="kdm">Make a KDM</h2>
-    <p>Open Encryption &amp; KDM. Pick the encrypted DCP. The composition id and title fill in. Pick the screen's certificate, the keys file from the build, the dates, and where to write the KDM. The signature comes from Settings.</p>
-    <p>Tick DKDM for this machine when the recipient is you. That uses the recipient certificate from Settings, so you can reissue it later.</p>
+    <h3>In the app</h3>
+    <p>Open Encryption &amp; KDM. Under Make a KDM, pick the encrypted DCP. CPL ID and Content Title fill in. Pick the screen's Recipient Certificate, the Keys File from the build, Valid From, Valid To, and an output folder. Press Make KDM. The signature is the chain in Settings.</p>
+    <p>Tick DKDM for this machine when the KDM is for you. The recipient is then the certificate in Settings, so you can reissue it later.</p>
+    <h3>From a terminal</h3>
 <pre>dcpwizard kdm \
   --cpl-id &lt;cpl-uuid&gt; \
   --content-title "My Film" \
@@ -123,7 +130,9 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
   -o screen.kdm.xml</pre>
 
     <h2 id="dkdm">Re-wrap a DKDM</h2>
-    <p>On the same page, From a DKDM takes the DKDM, the private key it was issued to, and the new screen certificate. Leave the dates empty to keep the DKDM's window. Tick Unwrap with this machine's key when the DKDM was made for you.</p>
+    <h3>In the app</h3>
+    <p>On the same screen, under From a DKDM, pick the DKDM and the new screen certificate. If the DKDM was made for this machine, tick Unwrap with this machine's key. Leave Valid From and Valid To empty to keep the DKDM's window. Press Make KDM.</p>
+    <h3>From a terminal</h3>
 <pre>dcpwizard kdm-rewrap \
   --dkdm my.dkdm.xml \
   --dkdm-key ~/dcp-certs/recipient.key \
@@ -135,10 +144,18 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
   -o screen.kdm.xml</pre>
 
     <h2 id="cert">Export the recipient certificate</h2>
-    <p>This is the certificate other software uses to make a KDM for this machine. Create recipient certificate in Settings writes one, signed by the intermediate from the chain. If DCP-o-matic is already installed, Import from DCP-o-matic copies its decryption certificate and private key instead.</p>
-    <p>Export certificate writes a public copy. Send that file. The private key stays here, and the button will not write a file that also holds a key.</p>
-    <p>The QC tool uses the certificate to aim a KDM at this copy of DCP Wizard. To open one of your encrypted DCPs over there, give it a KDM aimed at the QC tool, or give it the keys file from the build.</p>
-<pre>dcpwizard preferences import-dcpomatic</pre>
+    <h3>In the app</h3>
+    <p>In Settings, Certificates, press Create recipient certificate… and pick a folder. That needs the signing chain from earlier. If DCP-o-matic is already on this machine, press Import from DCP-o-matic… instead. That copies its decryption certificate and private key.</p>
+    <p>Press Export certificate… and send that file to the QC software. It is the public certificate. The private key stays here, and the button will not write a file that also holds a key.</p>
+    <p>The QC tool uses it to aim a KDM at this copy of DCP Wizard. To open one of your encrypted DCPs over there, give it a KDM aimed at the QC tool, or the keys file from the build.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard certificate generate -t leaf \
+  --cn "Studio" --organization "Studio" \
+  --issuer-cert ~/dcp-certs/intermediate.pem \
+  --issuer-key ~/dcp-certs/intermediate.key \
+  --output-cert ~/dcp-certs/recipient.pem \
+  --output-key ~/dcp-certs/recipient.key
+dcpwizard preferences import-dcpomatic</pre>
 </main>
 <footer>
     <p><a href="index.html">DCP Wizard</a></p>
