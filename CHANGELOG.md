@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [1.7.0] - 2026-10-05
+
+### Added
+- **The GUI makes KDMs**: a new *Encryption & KDM* screen does what `dcpwizard kdm` and `dcpwizard kdm-rewrap` do. Under *Make a KDM*, picking the encrypted DCP fills in the CPL ID and content title, then the screen's recipient certificate, the keys file from the build, *Valid From*, *Valid To* and an output folder complete the job. *DKDM for this machine* aims the KDM at the recipient certificate in Settings, so it can be reissued later. Under *From a DKDM*, pick the DKDM and the new screen certificate, tick *Unwrap with this machine's key* for a DKDM made for this copy, and leave the dates empty to keep the DKDM's window. *Formulation*, *Disable picture forensic marking* and *Audio forensic marking* pass `--formulation`, `--disable-forensic-marking-picture` and `--disable-forensic-marking-audio`. The signature is the chain in Settings > Certificates, which gains the intermediate certificate, intermediate key and root certificate paths (`signingIntermediate`, `signingIntermediateKey`, `signingRoot`) and *Create signing chain…*.
+
 ## [1.6.0] - 2026-10-04
 
 ### Changed
