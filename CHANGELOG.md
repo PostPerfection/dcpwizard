@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Scrolling no longer floods the preview surface**: every scroll, window resize and layout change sent the preview's position to the native video area, even with the preview panel hidden, so a long scroll in Properties with no preview on screen re-applied an invisible 1 by 1 area hundreds of times. A tester's app froze twice doing that. The page now sends nothing while the panel is hidden and, with it showing, only when the position or size changed. Opening and closing the panel still report once each.
+
 ## [1.7.0] - 2026-10-05
 
 ### Added
