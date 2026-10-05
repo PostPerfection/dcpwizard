@@ -94,6 +94,10 @@ user-facing surface is here.
   code-complete but untested against a real file, since libaaf's public test
   corpus has video tracks but no video clips. AAF pan and gain automation are
   surfaced in the timeline's skipped list but not applied, deliberate scope.
+- imfwizard's settings field, `set_gpu` round trip and `Encode threads:` log line have
+  tests but no desktop run. dcpwizard's field was looked at in a headless render only.
+- postkit's `grokj2k-sys` git tag stays at v20.4.3 (bindgen reads the installed header),
+  and the settings page's Resolution preference is read by nothing.
 
 ### Batch E (easyDCP parity, surveyed 2026-08-16)
 
@@ -143,8 +147,7 @@ thread copies the whole 4K frame once and reads it twice per frame. On spain-doc
 (EPYC, 4x4090) ffmpeg alone delivered 15 fps with the graph and 52 without; on the
 6900HX laptop with the 3060 it delivers 70 fps with the graph and the GPU is the bound at
 30 fps, so nothing below is a win there. It matters only where the card outruns the
-decode, which the EPYC box does and the 5070 tester's machine does not (see the entry
-above). Measure ffmpeg alone
+decode, which the EPYC box does and the 5070 tester's machine does not. Measure ffmpeg alone
 with the exact graph into `cat` before starting any of it.
 
 - CPU path splits before the pad: the detectors judge the source, and the pad runs only
