@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DCP Wizard manual</title>
+    <meta name="description" content="Build a DCP, encrypt it, make a KDM, re-wrap a DKDM, and export the recipient certificate.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0D0D0D;
+            --card: #1E1E1E;
+            --border: #2A2A2A;
+            --accent: #A78BFA;
+            --text: #A1A1AA;
+            --heading: #FFFFFF;
+            --muted: #71717A;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+        }
+        nav {
+            border-bottom: 1px solid var(--border);
+            background: rgba(13, 13, 13, 0.9);
+        }
+        .nav-inner {
+            max-width: 740px;
+            margin: 0 auto;
+            padding: 18px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .nav-inner a { color: var(--heading); text-decoration: none; font-weight: 650; }
+        .nav-inner a.quiet { color: var(--text); font-weight: 500; font-size: 0.9rem; }
+        main { max-width: 740px; margin: 0 auto; padding: 48px 24px 80px; }
+        h1 { color: var(--heading); font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+        h2 { color: var(--heading); font-size: 1.35rem; font-weight: 650; margin: 2.4rem 0 0.7rem; }
+        p { margin: 0.7rem 0; }
+        a { color: var(--accent); }
+        ol.contents { margin: 1.2rem 0 0; padding-left: 1.2rem; }
+        ol.contents li { margin: 0.25rem 0; }
+        pre {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            overflow-x: auto;
+            margin: 0.9rem 0;
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 0.82rem;
+            line-height: 1.55;
+            color: #E4E4E7;
+        }
+        code {
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 0.88em;
+            color: #E4E4E7;
+        }
+        footer {
+            border-top: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 0.85rem;
+            text-align: center;
+            padding: 28px 24px 40px;
+        }
+        footer a { color: var(--accent); text-decoration: none; }
+    </style>
+</head>
+<body>
+<nav>
+    <div class="nav-inner">
+        <a href="index.html">DCP Wizard</a>
+        <a class="quiet" href="index.html">Back</a>
+    </div>
+</nav>
+<main>
+    <h1>Manual</h1>
+    <p>Five jobs. Certificates live in Settings, and the KDM page uses that chain. The same commands are below for a terminal.</p>
+    <ol class="contents">
+        <li><a href="#build">Build a DCP</a></li>
+        <li><a href="#encrypt">Encrypt it</a></li>
+        <li><a href="#kdm">Make a KDM</a></li>
+        <li><a href="#dkdm">Re-wrap a DKDM</a></li>
+        <li><a href="#cert">Export the recipient certificate</a></li>
+    </ol>
+
+    <h2 id="build">Build a DCP</h2>
+    <p>Pick the master, set the title, and build. The package is a folder named after the title inside the output directory. Sound comes from the video. Add a separate WAV when the mix is its own file.</p>
+<pre>dcpwizard create --title "My Film" --video movie.mov --output ./dcp</pre>
+
+    <h2 id="encrypt">Encrypt it</h2>
+    <p>In Settings, Certificates, choose Create signing chain and pick a folder. That writes the leaf, the intermediate, the root, and their keys, and the app remembers the paths.</p>
+    <p>Tick Encrypt in Properties and choose a keys file that sits outside the package. The build signs with the whole chain. A finished clear package stays clear. The keys file is the plaintext content keys. Keep it.</p>
+<pre>dcpwizard certificate chain --organization "Studio" --output ~/dcp-certs
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
+  --encrypt --key-out ~/keys/my-film.json \
+  --signer-cert ~/dcp-certs/signer.pem \
+  --signer-key ~/dcp-certs/signer.key \
+  --signer-chain ~/dcp-certs/intermediate.pem \
+  --signer-chain ~/dcp-certs/root.pem</pre>
+
+    <h2 id="kdm">Make a KDM</h2>
+    <p>Open Encryption &amp; KDM. Pick the encrypted DCP. The composition id and title fill in. Pick the screen's certificate, the keys file from the build, the dates, and where to write the KDM. The signature comes from Settings.</p>
+    <p>Tick DKDM for this machine when the recipient is you. That uses the recipient certificate from Settings, so you can reissue it later.</p>
+<pre>dcpwizard kdm \
+  --cpl-id &lt;cpl-uuid&gt; \
+  --content-title "My Film" \
+  --cert screen.pem \
+  --signer-cert ~/dcp-certs/signer.pem \
+  --signer-key ~/dcp-certs/signer.key \
+  --signer-chain ~/dcp-certs/intermediate.pem \
+  --signer-chain ~/dcp-certs/root.pem \
+  --keys ~/keys/my-film.json \
+  --valid-from now --valid-to "2 weeks" \
+  -o screen.kdm.xml</pre>
+
+    <h2 id="dkdm">Re-wrap a DKDM</h2>
+    <p>On the same page, From a DKDM takes the DKDM, the private key it was issued to, and the new screen certificate. Leave the dates empty to keep the DKDM's window. Tick Unwrap with this machine's key when the DKDM was made for you.</p>
+<pre>dcpwizard kdm-rewrap \
+  --dkdm my.dkdm.xml \
+  --dkdm-key ~/dcp-certs/recipient.key \
+  --cert screen.pem \
+  --signer-cert ~/dcp-certs/signer.pem \
+  --signer-key ~/dcp-certs/signer.key \
+  --signer-chain ~/dcp-certs/intermediate.pem \
+  --signer-chain ~/dcp-certs/root.pem \
+  -o screen.kdm.xml</pre>
+
+    <h2 id="cert">Export the recipient certificate</h2>
+    <p>This is the certificate other software uses to make a KDM for this machine. Create recipient certificate in Settings writes one, signed by the intermediate from the chain. If DCP-o-matic is already installed, Import from DCP-o-matic copies its decryption certificate and private key instead.</p>
+    <p>Export certificate writes a public copy. Send that file. The private key stays here, and the button will not write a file that also holds a key.</p>
+    <p>The QC tool uses the certificate to aim a KDM at this copy of DCP Wizard. To open one of your encrypted DCPs over there, give it a KDM aimed at the QC tool, or give it the keys file from the build.</p>
+<pre>dcpwizard preferences import-dcpomatic</pre>
+</main>
+<footer>
+    <p><a href="index.html">DCP Wizard</a></p>
+</footer>
+</body>
+</html>

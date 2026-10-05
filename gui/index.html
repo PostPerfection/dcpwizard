@@ -850,28 +850,11 @@
 
         <!-- SECURITY VIEW -->
         <div class="view" id="view-security">
+          <p class="field-hint" id="kdm-signer-line">No signing certificate in Settings yet.</p>
+          <p class="field-hint">Encrypt while you build: tick Encrypt in Properties and keep the keys file outside the package. The signing chain comes from Settings.</p>
           <div class="split-panels">
             <section class="panel">
-              <h2>Encrypt DCP</h2>
-              <div class="prop-field">
-                <label>DCP Directory</label>
-                <div class="input-with-btn">
-                  <input id="crypt-dcp" type="text" placeholder="Select DCP…" readonly>
-                  <button id="crypt-browse-dcp" class="btn-sm">…</button>
-                </div>
-              </div>
-              <div class="prop-field">
-                <label>Recipient Certificate</label>
-                <div class="input-with-btn">
-                  <input id="crypt-cert" type="text" placeholder="Select cert…" readonly>
-                  <button id="crypt-browse-cert" class="btn-sm">…</button>
-                </div>
-              </div>
-              <button id="run-encrypt" class="btn-primary" disabled>Encrypt</button>
-              <div id="encrypt-results" class="results-box"></div>
-            </section>
-            <section class="panel">
-              <h2>Generate KDM</h2>
+              <h2>Make a KDM</h2>
               <div class="prop-field">
                 <label>Encrypted DCP</label>
                 <div class="input-with-btn">
@@ -879,39 +862,32 @@
                   <button id="kdm-browse-dcp" class="btn-sm">…</button>
                 </div>
               </div>
+              <div class="prop-field" id="kdm-cpl-pick-field" hidden>
+                <label for="kdm-cpl-pick">Composition</label>
+                <select id="kdm-cpl-pick"></select>
+              </div>
               <div class="prop-field">
                 <label>CPL ID</label>
-                <input id="kdm-cpl-id" type="text" placeholder="UUID of CPL to issue KDM for">
+                <input id="kdm-cpl-id" type="text" placeholder="Filled from the DCP">
               </div>
               <div class="prop-field">
                 <label>Content Title</label>
-                <input id="kdm-content-title" type="text" placeholder="Content title for KDM">
+                <input id="kdm-content-title" type="text" placeholder="Filled from the DCP">
+              </div>
+              <div class="prop-field">
+                <label><input type="checkbox" id="kdm-for-this-machine"> DKDM for this machine</label>
               </div>
               <div class="prop-field">
                 <label>Recipient Certificate</label>
                 <div class="input-with-btn">
-                  <input id="kdm-cert" type="text" placeholder="Select cert…" readonly>
+                  <input id="kdm-cert" type="text" placeholder="Screen or facility certificate…" readonly>
                   <button id="kdm-browse-cert" class="btn-sm">…</button>
                 </div>
               </div>
               <div class="prop-field">
-                <label>Signer Certificate</label>
+                <label>Keys File</label>
                 <div class="input-with-btn">
-                  <input id="kdm-signer-cert" type="text" placeholder="Select signer cert…" readonly>
-                  <button id="kdm-browse-signer-cert" class="btn-sm">…</button>
-                </div>
-              </div>
-              <div class="prop-field">
-                <label>Signer Key</label>
-                <div class="input-with-btn">
-                  <input id="kdm-signer-key" type="text" placeholder="Select signer key…" readonly>
-                  <button id="kdm-browse-signer-key" class="btn-sm">…</button>
-                </div>
-              </div>
-              <div class="prop-field">
-                <label>Keys File (KEYS.json)</label>
-                <div class="input-with-btn">
-                  <input id="kdm-keys" type="text" placeholder="Select DCP keys file…" readonly>
+                  <input id="kdm-keys" type="text" placeholder="The keys file from the build…" readonly>
                   <button id="kdm-browse-keys" class="btn-sm">…</button>
                 </div>
               </div>
@@ -922,10 +898,6 @@
               <div class="prop-field">
                 <label>Valid To</label>
                 <input type="datetime-local" id="kdm-to">
-              </div>
-              <div class="prop-field">
-                <label>Validity Template</label>
-                <input id="kdm-template" type="text" placeholder="Optional, a name from kdm-template">
               </div>
               <div class="prop-field">
                 <label>Formulation</label>
@@ -959,8 +931,78 @@
                   <button id="kdm-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="run-kdm" class="btn-primary" disabled>Generate KDM</button>
+              <button id="run-kdm" class="btn-primary" disabled>Make KDM</button>
               <div id="kdm-results" class="results-box"></div>
+            </section>
+            <section class="panel">
+              <h2>From a DKDM</h2>
+              <p class="field-hint">A DKDM is a KDM made out to you. This issues a new one to a screen, and keeps the original window if you leave the dates empty.</p>
+              <div class="prop-field">
+                <label>DKDM</label>
+                <div class="input-with-btn">
+                  <input id="dkdm-file" type="text" placeholder="Select DKDM…" readonly>
+                  <button id="dkdm-browse" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label><input type="checkbox" id="dkdm-use-own-key"> Unwrap with this machine's key</label>
+              </div>
+              <div class="prop-field">
+                <label>DKDM Private Key</label>
+                <div class="input-with-btn">
+                  <input id="dkdm-key" type="text" placeholder="Private key the DKDM was issued to…" readonly>
+                  <button id="dkdm-browse-key" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>New Recipient Certificate</label>
+                <div class="input-with-btn">
+                  <input id="dkdm-cert" type="text" placeholder="Screen certificate…" readonly>
+                  <button id="dkdm-browse-cert" class="btn-sm">…</button>
+                </div>
+              </div>
+              <div class="prop-field">
+                <label>Valid From</label>
+                <input type="datetime-local" id="dkdm-from">
+              </div>
+              <div class="prop-field">
+                <label>Valid To</label>
+                <input type="datetime-local" id="dkdm-to">
+              </div>
+              <div class="prop-field">
+                <label>Formulation</label>
+                <select id="dkdm-formulation">
+                  <option value="" selected>Derive from the device list</option>
+                  <option value="modified-transitional-1">modified-transitional-1</option>
+                  <option value="multiple-modified-transitional-1">multiple-modified-transitional-1</option>
+                  <option value="dci-any">dci-any</option>
+                  <option value="dci-specific">dci-specific</option>
+                </select>
+              </div>
+              <div class="prop-field">
+                <label><input type="checkbox" id="dkdm-no-forensic-picture"> Disable picture forensic marking</label>
+              </div>
+              <div class="prop-field">
+                <label for="dkdm-audio-marking">Audio forensic marking</label>
+                <select id="dkdm-audio-marking">
+                  <option value="on" selected>On for every channel</option>
+                  <option value="off">Off for every channel</option>
+                  <option value="above">Off above a channel</option>
+                </select>
+              </div>
+              <div class="prop-field">
+                <label for="dkdm-audio-marking-channel">Marking stops above this channel</label>
+                <input id="dkdm-audio-marking-channel" type="number" min="0" placeholder="12">
+              </div>
+              <div class="prop-field">
+                <label>Output</label>
+                <div class="input-with-btn">
+                  <input id="dkdm-output" type="text" placeholder="Select output…" readonly>
+                  <button id="dkdm-browse-output" class="btn-sm">…</button>
+                </div>
+              </div>
+              <button id="run-rewrap" class="btn-primary" disabled>Make KDM</button>
+              <div id="rewrap-results" class="results-box"></div>
             </section>
           </div>
         </div>
@@ -1440,19 +1482,44 @@
               </fieldset>
               <fieldset>
                 <legend>Certificates</legend>
+                <p class="field-hint">The signing chain signs encrypted DCPs and KDMs. The recipient certificate is this machine: export it so other software can make a KDM for you.</p>
                 <div class="prop-field">
                   <label for="set-signing-cert">Signing Certificate</label>
                   <div class="input-with-btn">
-                    <input type="text" id="set-signing-cert" placeholder="/path/to/cert.pem">
+                    <input type="text" id="set-signing-cert" placeholder="/path/to/signer.pem">
                     <button type="button" id="set-browse-signing-cert" class="btn-sm">…</button>
                   </div>
                 </div>
                 <div class="prop-field">
                   <label for="set-signing-key">Signing Key</label>
                   <div class="input-with-btn">
-                    <input type="text" id="set-signing-key" placeholder="/path/to/key.pem">
+                    <input type="text" id="set-signing-key" placeholder="/path/to/signer.key">
                     <button type="button" id="set-browse-signing-key" class="btn-sm">…</button>
                   </div>
+                </div>
+                <div class="prop-field">
+                  <label for="set-signing-intermediate">Intermediate Certificate</label>
+                  <div class="input-with-btn">
+                    <input type="text" id="set-signing-intermediate" placeholder="/path/to/intermediate.pem">
+                    <button type="button" id="set-browse-signing-intermediate" class="btn-sm">…</button>
+                  </div>
+                </div>
+                <div class="prop-field">
+                  <label for="set-signing-intermediate-key">Intermediate Key</label>
+                  <div class="input-with-btn">
+                    <input type="text" id="set-signing-intermediate-key" placeholder="/path/to/intermediate.key">
+                    <button type="button" id="set-browse-signing-intermediate-key" class="btn-sm">…</button>
+                  </div>
+                </div>
+                <div class="prop-field">
+                  <label for="set-signing-root">Root Certificate</label>
+                  <div class="input-with-btn">
+                    <input type="text" id="set-signing-root" placeholder="/path/to/root.pem">
+                    <button type="button" id="set-browse-signing-root" class="btn-sm">…</button>
+                  </div>
+                </div>
+                <div class="prop-field">
+                  <button type="button" id="set-create-signing-chain" class="btn-sm">Create signing chain…</button>
                 </div>
                 <div class="prop-field">
                   <label for="set-recipient-cert">Recipient Certificate</label>
@@ -1469,6 +1536,9 @@
                     <input type="text" id="set-recipient-key" placeholder="/path/to/recipient.key">
                     <button type="button" id="set-browse-recipient-key" class="btn-sm">…</button>
                   </div>
+                </div>
+                <div class="prop-field">
+                  <button type="button" id="set-create-recipient" class="btn-sm">Create recipient certificate…</button>
                 </div>
               </fieldset>
               <fieldset>

@@ -23,6 +23,17 @@ import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js"
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
 import { prefilledRecipientKey } from "./recipient-identity.js";
+import {
+  chainPaths,
+  describeSigner,
+  kdmRequest,
+  recipientCertificateCommand,
+  recipientCreationRefusals,
+  recipientPaths,
+  rewrapRequest,
+  signingChainCommand,
+  signingChainFrom,
+} from "./kdm-form.js";
 initAssetStripResize("dcpwizard");
 
 // === Browse wrapper (remembers last directory) ===
@@ -151,7 +162,8 @@ const PREF_DEFAULTS = {
   encrypt: false, stereo3d: false, validate: true,
   creator: "", facility: "", bandwidth: DEFAULT_BANDWIDTH_MBPS, gpu: false,
   gpuLicense: "", gpuRegistrationUrl: "", encodeThreads: AUTOMATIC_ENCODE_THREADS,
-  signingCert: "", signingKey: "", recipientCert: "", recipientKey: "", outputDir: "", isdcfNaming: false,
+  signingCert: "", signingKey: "", signingIntermediate: "", signingIntermediateKey: "", signingRoot: "",
+  recipientCert: "", recipientKey: "", outputDir: "", isdcfNaming: false,
   channels: "5.1", showHintsBeforeBuild: true, detectPictureFindings: false,
 };
 
@@ -210,9 +222,22 @@ async function initializePreferences() {
 const CERTIFICATE_SETTING_FIELDS = [
   { field: "signingCert", input: "set-signing-cert", browse: "set-browse-signing-cert" },
   { field: "signingKey", input: "set-signing-key", browse: "set-browse-signing-key" },
+  { field: "signingIntermediate", input: "set-signing-intermediate", browse: "set-browse-signing-intermediate" },
+  { field: "signingIntermediateKey", input: "set-signing-intermediate-key", browse: "set-browse-signing-intermediate-key" },
+  { field: "signingRoot", input: "set-signing-root", browse: "set-browse-signing-root" },
   { field: "recipientCert", input: "set-recipient-cert", browse: "set-browse-recipient-cert" },
   { field: "recipientKey", input: "set-recipient-key", browse: "set-browse-recipient-key" },
 ];
+
+function certificateFieldsFromForm() {
+  return Object.fromEntries(
+    CERTIFICATE_SETTING_FIELDS.map(({ field, input }) => [field, document.getElementById(input)?.value || ""]),
+  );
+}
+
+async function saveCertificateFields() {
+  return savePrefs({ ...getPrefs(), ...certificateFieldsFromForm() });
+}
 
 for (const { input, browse } of CERTIFICATE_SETTING_FIELDS) {
   document.getElementById(browse)?.addEventListener("click", async () => {
@@ -256,6 +281,74 @@ document.getElementById("set-import-dcpomatic")?.addEventListener("click", async
   }
 });
 
+async function runCertificateCommand(args) {
+  const result = await Command.sidecar("dcpwizard", args).execute();
+  if (result.code !== 0) {
+    throw new Error((result.stderr || result.stdout || "the certificate command failed").trim());
+  }
+}
+
+document.getElementById("set-create-signing-chain")?.addEventListener("click", async () => {
+  const organization = await askForText({
+    title: "Signing chain",
+    label: "Organization name on the certificates",
+    value: document.getElementById("set-creator")?.value || "",
+  });
+  if (!organization) return;
+  const directory = await open({ directory: true });
+  if (!directory) return;
+  try {
+    await runCertificateCommand(signingChainCommand(organization, directory));
+  } catch (error) {
+    setStatus(`Could not create the signing chain: ${error}`);
+    return;
+  }
+  const paths = chainPaths(directory);
+  for (const [field, path] of Object.entries(paths)) {
+    const input = CERTIFICATE_SETTING_FIELDS.find((entry) => entry.field === field)?.input;
+    const element = document.getElementById(input);
+    if (element) element.value = path;
+  }
+  if (!await saveCertificateFields()) return;
+  refreshSignerLine();
+  setStatus(`Created a signing chain in ${directory}`);
+});
+
+document.getElementById("set-create-recipient")?.addEventListener("click", async () => {
+  const current = certificateFieldsFromForm();
+  const refusals = recipientCreationRefusals(current);
+  if (refusals.length) {
+    setStatus(refusals[0]);
+    return;
+  }
+  const name = await askForText({
+    title: "Recipient certificate",
+    label: "Name for this machine",
+    value: document.getElementById("set-creator")?.value || "DCP Wizard",
+  });
+  if (!name) return;
+  const directory = await open({ directory: true });
+  if (!directory) return;
+  const command = recipientCertificateCommand({
+    name,
+    organization: document.getElementById("set-creator")?.value || name,
+    intermediateCert: current.signingIntermediate,
+    intermediateKey: current.signingIntermediateKey,
+    directory,
+  });
+  try {
+    await runCertificateCommand(command.args);
+  } catch (error) {
+    setStatus(`Could not create the recipient certificate: ${error}`);
+    return;
+  }
+  const paths = recipientPaths(directory);
+  document.getElementById("set-recipient-cert").value = paths.recipientCert;
+  document.getElementById("set-recipient-key").value = paths.recipientKey;
+  if (!await saveCertificateFields()) return;
+  setStatus(`Created a recipient certificate in ${directory}`);
+});
+
 // Load prefs into settings form
 function loadSettings() {
   const prefs = getPrefs();
@@ -284,6 +377,7 @@ function loadSettings() {
   if (detectPictureFindings) detectPictureFindings.checked = prefs.detectPictureFindings;
   const gpu = document.getElementById("set-gpu");
   if (gpu) gpu.checked = prefs.gpu;
+  refreshSignerLine();
 }
 
 // grok routes every compress and decompress in the process
@@ -368,6 +462,7 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     prefs.encodeThreads,
   )) return;
   if (!await savePrefs(prefs)) return;
+  refreshSignerLine();
   refreshIsdcfPreview();
   setStatus("Settings saved");
 });
@@ -1384,7 +1479,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       keyOut: keyOut || null,
       signingCert: document.getElementById("set-signing-cert")?.value || null,
       signingKey: document.getElementById("set-signing-key")?.value || null,
-      signingChain: [],
+      signingChain: signingChainFrom(getPrefs()),
       rightEye: document.getElementById("prop-right-eye")?.value || null,
       atmos: document.getElementById("prop-atmos")?.value || null,
       subtitle: reel.subtitle?.path || null,
@@ -1807,49 +1902,135 @@ async function runVerification() {
 
 document.getElementById("verify-run")?.addEventListener("click", runVerification);
 
-// === Security: Encrypt ===
-document.getElementById("crypt-browse-dcp")?.addEventListener("click", async () => {
-  const dir = await open({ directory: true });
-  if (dir) {
-    document.getElementById("crypt-dcp").value = dir;
-    checkEncryptReady();
-  }
-});
-document.getElementById("crypt-browse-cert")?.addEventListener("click", async () => {
-  const file = await open({ directory: false });
-  if (file) {
-    document.getElementById("crypt-cert").value = file;
-    checkEncryptReady();
-  }
-});
-
-function checkEncryptReady() {
-  const btn = document.getElementById("run-encrypt");
-  if (btn) btn.disabled = !(document.getElementById("crypt-dcp")?.value && document.getElementById("crypt-cert")?.value);
+// === Encryption & KDM ===
+function fieldValue(id) {
+  return document.getElementById(id)?.value || "";
 }
 
-document.getElementById("run-encrypt")?.addEventListener("click", async () => {
-  const resultsBox = document.getElementById("encrypt-results");
-  resultsBox.classList.add("visible");
-  resultsBox.textContent = "To create an encrypted DCP: in the Properties panel, enable Encrypt and set a Key Output File (it holds the plaintext content keys, keep it secret and outside the DCP), then build. Feed that keys file to the KDM panel's Keys File field.\nStandalone encryption of an existing DCP is not currently supported.";
-});
+function signerFields() {
+  const prefs = getPrefs();
+  return {
+    signerCert: prefs.signingCert,
+    signerKey: prefs.signingKey,
+    signerIntermediate: prefs.signingIntermediate,
+    signerRoot: prefs.signingRoot,
+    offsetMinutes: -new Date().getTimezoneOffset(),
+  };
+}
 
-// === Security: KDM ===
+function refreshSignerLine() {
+  const line = document.getElementById("kdm-signer-line");
+  if (line) line.textContent = describeSigner(getPrefs());
+  checkKdmReady();
+  checkRewrapReady();
+}
+
+function kdmFields() {
+  const prefs = getPrefs();
+  return {
+    ...signerFields(),
+    cplId: fieldValue("kdm-cpl-id").trim(),
+    contentTitle: fieldValue("kdm-content-title").trim(),
+    forThisMachine: document.getElementById("kdm-for-this-machine")?.checked || false,
+    recipientCert: fieldValue("kdm-cert"),
+    recipientFromSettings: prefs.recipientCert,
+    keys: fieldValue("kdm-keys"),
+    validFrom: fieldValue("kdm-from"),
+    validTo: fieldValue("kdm-to"),
+    formulation: fieldValue("kdm-formulation"),
+    noForensicPicture: document.getElementById("kdm-no-forensic-picture")?.checked || false,
+    audioMarking: fieldValue("kdm-audio-marking") || "on",
+    audioMarkingChannel: fieldValue("kdm-audio-marking-channel"),
+    output: fieldValue("kdm-output"),
+  };
+}
+
+function rewrapFields() {
+  return {
+    ...signerFields(),
+    dkdm: fieldValue("dkdm-file"),
+    dkdmKey: fieldValue("dkdm-key"),
+    recipientCert: fieldValue("dkdm-cert"),
+    validFrom: fieldValue("dkdm-from"),
+    validTo: fieldValue("dkdm-to"),
+    formulation: fieldValue("dkdm-formulation"),
+    noForensicPicture: document.getElementById("dkdm-no-forensic-picture")?.checked || false,
+    audioMarking: fieldValue("dkdm-audio-marking") || "on",
+    audioMarkingChannel: fieldValue("dkdm-audio-marking-channel"),
+    output: fieldValue("dkdm-output"),
+  };
+}
+
+function checkKdmReady() {
+  const btn = document.getElementById("run-kdm");
+  if (btn) btn.disabled = kdmRequest(kdmFields()).refusals.length > 0;
+}
+
+function checkRewrapReady() {
+  const btn = document.getElementById("run-rewrap");
+  if (btn) btn.disabled = rewrapRequest(rewrapFields()).refusals.length > 0;
+}
+
+function applyCplIdentity(identity) {
+  document.getElementById("kdm-cpl-id").value = identity.id;
+  document.getElementById("kdm-content-title").value = identity.title;
+  checkKdmReady();
+}
+
+function showCplChoices(identities) {
+  const field = document.getElementById("kdm-cpl-pick-field");
+  const select = document.getElementById("kdm-cpl-pick");
+  if (!field || !select) return;
+  select.innerHTML = "";
+  if (identities.length < 2) {
+    field.hidden = true;
+    return;
+  }
+  for (const identity of identities) {
+    const option = document.createElement("option");
+    option.value = identity.id;
+    option.textContent = identity.title || identity.id;
+    option.dataset.title = identity.title;
+    select.appendChild(option);
+  }
+  field.hidden = false;
+}
+
+function useOwnKey(checkboxId, inputId, browseId, preference) {
+  const checkbox = document.getElementById(checkboxId);
+  const input = document.getElementById(inputId);
+  const browse = document.getElementById(browseId);
+  if (!checkbox || !input) return;
+  const own = checkbox.checked;
+  input.readOnly = true;
+  if (browse) browse.disabled = own;
+  if (own) input.value = preference || "";
+}
+
 document.getElementById("kdm-browse-dcp")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
-  if (dir) { document.getElementById("kdm-dcp").value = dir; checkKdmReady(); }
+  if (!dir) return;
+  document.getElementById("kdm-dcp").value = dir;
+  try {
+    const identities = await invoke("cpl_identities", { dcpDir: dir });
+    showCplChoices(identities);
+    applyCplIdentity(identities[0]);
+  } catch (error) {
+    showCplChoices([]);
+    setStatus(`Could not read a composition from that package: ${error}`);
+    checkKdmReady();
+  }
 });
+
+document.getElementById("kdm-cpl-pick")?.addEventListener("change", (event) => {
+  const option = event.target.selectedOptions[0];
+  if (!option) return;
+  applyCplIdentity({ id: option.value, title: option.dataset.title || "" });
+});
+
 document.getElementById("kdm-browse-cert")?.addEventListener("click", async () => {
   const file = await open({ directory: false });
   if (file) { document.getElementById("kdm-cert").value = file; checkKdmReady(); }
-});
-document.getElementById("kdm-browse-signer-cert")?.addEventListener("click", async () => {
-  const file = await open({ directory: false });
-  if (file) { document.getElementById("kdm-signer-cert").value = file; checkKdmReady(); }
-});
-document.getElementById("kdm-browse-signer-key")?.addEventListener("click", async () => {
-  const file = await open({ directory: false });
-  if (file) { document.getElementById("kdm-signer-key").value = file; checkKdmReady(); }
 });
 document.getElementById("kdm-browse-keys")?.addEventListener("click", async () => {
   const file = await open({ directory: false });
@@ -1857,59 +2038,76 @@ document.getElementById("kdm-browse-keys")?.addEventListener("click", async () =
 });
 document.getElementById("kdm-browse-output")?.addEventListener("click", async () => {
   const dir = await open({ directory: true });
-  if (dir) { document.getElementById("kdm-output").value = dir + "/kdm.xml"; checkKdmReady(); }
+  if (!dir) return;
+  const name = document.getElementById("kdm-for-this-machine")?.checked ? "dkdm.xml" : "kdm.xml";
+  document.getElementById("kdm-output").value = `${dir}/${name}`;
+  checkKdmReady();
 });
-document.getElementById("kdm-cpl-id")?.addEventListener("input", () => checkKdmReady());
-document.getElementById("kdm-content-title")?.addEventListener("input", () => checkKdmReady());
 
-function checkKdmReady() {
-  const btn = document.getElementById("run-kdm");
-  if (btn) btn.disabled = !(
-    document.getElementById("kdm-cpl-id")?.value &&
-    document.getElementById("kdm-cert")?.value &&
-    document.getElementById("kdm-signer-cert")?.value &&
-    document.getElementById("kdm-signer-key")?.value &&
-    document.getElementById("kdm-content-title")?.value &&
-    document.getElementById("kdm-output")?.value
-  );
+for (const id of ["kdm-cpl-id", "kdm-content-title", "kdm-from", "kdm-to", "kdm-formulation", "kdm-audio-marking", "kdm-audio-marking-channel"]) {
+  document.getElementById(id)?.addEventListener("input", checkKdmReady);
+  document.getElementById(id)?.addEventListener("change", checkKdmReady);
 }
+document.getElementById("kdm-no-forensic-picture")?.addEventListener("change", checkKdmReady);
+document.getElementById("kdm-for-this-machine")?.addEventListener("change", () => {
+  useOwnKey("kdm-for-this-machine", "kdm-cert", "kdm-browse-cert", getPrefs().recipientCert);
+  checkKdmReady();
+});
 
 document.getElementById("run-kdm")?.addEventListener("click", async () => {
-  const cplId = document.getElementById("kdm-cpl-id").value;
-  const contentTitle = document.getElementById("kdm-content-title").value;
-  const cert = document.getElementById("kdm-cert").value;
-  const signerCert = document.getElementById("kdm-signer-cert").value;
-  const signerKey = document.getElementById("kdm-signer-key").value;
-  const keys = document.getElementById("kdm-keys").value;
-  const output = document.getElementById("kdm-output").value;
-  const from = document.getElementById("kdm-from").value;
-  const to = document.getElementById("kdm-to").value;
-  const template = document.getElementById("kdm-template")?.value.trim();
-  const formulation = document.getElementById("kdm-formulation")?.value || "";
-  const noForensicPicture = document.getElementById("kdm-no-forensic-picture")?.checked || false;
-  const audioMarking = document.getElementById("kdm-audio-marking")?.value || "on";
-  const audioMarkingChannel = document.getElementById("kdm-audio-marking-channel")?.value;
+  const request = kdmRequest(kdmFields());
   const resultsBox = document.getElementById("kdm-results");
   resultsBox.classList.add("visible");
-  resultsBox.textContent = "Generating KDM...";
-  const args = ["kdm", "--cpl-id", cplId, "--content-title", contentTitle, "--cert", cert,
-    "--signer-cert", signerCert, "--signer-key", signerKey, "-o", output];
-  if (keys) args.push("--keys", keys);
-  if (template) args.push("--template", template);
-  if (from) args.push("-f", from);
-  if (to) args.push("-t", to);
-  if (formulation) args.push("--formulation", formulation);
-  if (noForensicPicture) args.push("--disable-forensic-marking-picture");
-  // bare disables every channel, a value disables the channels above it
-  if (audioMarking === "off") args.push("--disable-forensic-marking-audio");
-  if (audioMarking === "above" && audioMarkingChannel) {
-    args.push("--disable-forensic-marking-audio", audioMarkingChannel);
+  if (request.refusals.length) {
+    resultsBox.textContent = request.refusals.join("\n");
+    return;
   }
-  const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
+  resultsBox.textContent = "Making KDM…";
+  const result = await Command.sidecar("dcpwizard", request.args).execute();
   resultsBox.textContent = result.code === 0
-    ? "✓ KDM generated\n\n" + result.stdout
-    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+    ? "KDM written\n\n" + result.stdout
+    : "Failed\n\n" + (result.stderr || result.stdout);
+});
+
+document.getElementById("dkdm-browse")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("dkdm-file").value = file; checkRewrapReady(); }
+});
+document.getElementById("dkdm-browse-key")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("dkdm-key").value = file; checkRewrapReady(); }
+});
+document.getElementById("dkdm-browse-cert")?.addEventListener("click", async () => {
+  const file = await open({ directory: false });
+  if (file) { document.getElementById("dkdm-cert").value = file; checkRewrapReady(); }
+});
+document.getElementById("dkdm-browse-output")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (dir) { document.getElementById("dkdm-output").value = `${dir}/kdm.xml`; checkRewrapReady(); }
+});
+for (const id of ["dkdm-from", "dkdm-to", "dkdm-formulation", "dkdm-audio-marking", "dkdm-audio-marking-channel"]) {
+  document.getElementById(id)?.addEventListener("input", checkRewrapReady);
+  document.getElementById(id)?.addEventListener("change", checkRewrapReady);
+}
+document.getElementById("dkdm-no-forensic-picture")?.addEventListener("change", checkRewrapReady);
+document.getElementById("dkdm-use-own-key")?.addEventListener("change", () => {
+  useOwnKey("dkdm-use-own-key", "dkdm-key", "dkdm-browse-key", getPrefs().recipientKey);
+  checkRewrapReady();
+});
+
+document.getElementById("run-rewrap")?.addEventListener("click", async () => {
+  const request = rewrapRequest(rewrapFields());
+  const resultsBox = document.getElementById("rewrap-results");
+  resultsBox.classList.add("visible");
+  if (request.refusals.length) {
+    resultsBox.textContent = request.refusals.join("\n");
+    return;
+  }
+  resultsBox.textContent = "Making KDM…";
+  const result = await Command.sidecar("dcpwizard", request.args).execute();
+  resultsBox.textContent = result.code === 0
+    ? "KDM written\n\n" + result.stdout
+    : "Failed\n\n" + (result.stderr || result.stdout);
 });
 
 // === Version File (Supplemental DCP) ===

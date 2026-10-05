@@ -27,6 +27,11 @@ mod preferences;
 mod timeline;
 
 #[tauri::command]
+fn cpl_identities(dcp_dir: String) -> Result<Vec<dcpwizard_core::info::CplIdentity>, String> {
+    dcpwizard_core::info::cpl_identities(std::path::Path::new(&dcp_dir))
+}
+
+#[tauri::command]
 fn component_versions(
     preview_player: tauri::State<'_, guikit::preview::PreviewPlayer>,
 ) -> Vec<postkit::component_versions::ComponentVersion> {
@@ -86,6 +91,7 @@ pub fn run() {
             preferences::export_recipient_certificate,
             preferences::find_dcpomatic_config,
             preferences::import_dcpomatic_identity,
+            cpl_identities,
             pipeline::submit_job,
             pipeline::cancel_job,
             pipeline::pause_job,
