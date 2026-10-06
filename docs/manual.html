@@ -232,13 +232,13 @@ dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre
 
     <h2 id="timeline">See the reels on the Timeline</h2>
     <h3>In the app</h3>
-    <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. The Picture and Sound tracks show one block per reel of the package's first CPL, with the reel's length. Click the ruler or a track to move the preview to that point. A project you are building does not show here, only an opened package.</p>
+    <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. The Picture and Sound tracks show one block per reel of the package's first CPL, with the reel's length. Click the ruler or a track to move the preview to that point. With no package open it shows the project's own reels, picture, sound and subtitle, each as long as its video.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard info "./dcp/Two Reels"</pre>
 
     <h2 id="encode">Encode to JPEG 2000</h2>
     <h3>In the app</h3>
-    <p>Open Tools. Under Encode to JPEG 2000, pick the image sequence folder as Input, pick an Output Directory, set Bandwidth (Mbps) and press Encode. The codestreams go in a j2k folder inside the output. Resolution and Frame Rate do not reach the encoder: each frame keeps its own size, and the bitrate is budgeted at 24 fps.</p>
+    <p>Open Tools. Under Encode to JPEG 2000, pick the image sequence folder as Input, pick an Output Directory, set Bandwidth (Mbps) and press Encode. The codestreams go in a j2k folder inside the output. Resolution fits each frame into the 2K or 4K full container, and Frame Rate is the rate the bitrate is budgeted at.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard encode -i ./frames -o ./encoded --bandwidth 230</pre>
 
@@ -262,13 +262,13 @@ dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre
 
     <h2 id="report">Make a QC report</h2>
     <h3>In the app</h3>
-    <p>Under QC Report, pick the DCP Directory and press Generate Report. The report is written into the DCP folder as report.html, report.txt or report.pdf, and the file is HTML whichever Output Format you pick. Move it out before delivery, since Validate warns about a file the ASSETMAP does not list.</p>
+    <p>Under QC Report, pick the DCP Directory and press Generate Report. The report is an HTML page written beside the package as its folder name plus .qc.html, never inside it, so the package stays clean for delivery.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard report --dcp "./dcp/My Film" -o report.html</pre>
 
     <h2 id="srt">Convert SRT to SMPTE subtitles</h2>
     <h3>In the app</h3>
-    <p>A build converts an SRT on the Subtitle track by itself, so this is only for a standalone SMPTE subtitle XML. Under SRT → SMPTE Subtitle Conversion, the Convert button fails: Output File picks a folder where the command needs a file, and with Output File empty the command refuses to run. Run it from a terminal instead.</p>
+    <p>A build converts an SRT on the Subtitle track by itself, so this is only for a standalone SMPTE subtitle XML. Under SRT → SMPTE Subtitle Conversion, pick the SRT and an Output Folder and press Convert. The XML takes the SRT's name, and with no folder picked it goes beside the SRT.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard subtitle-convert -i subs.srt -o subs.xml -l en --fps 24 --vposition 8</pre>
 
@@ -280,19 +280,19 @@ dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre
 
     <h2 id="burnin">Burn in subtitles</h2>
     <h3>In the app</h3>
-    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. The Burn In button fails: the command needs an output file, and the view passes Output Directory or nothing. From a terminal it takes SRT or ASS, and refuses the SMPTE or Interop XML the picker offers.</p>
+    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. Burn In writes the video's name plus _burnin.mp4 into Output Directory, or beside the video. It takes SRT, ASS, and SMPTE or Interop XML, which it converts first. TTML fails.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard burnin -i movie.mov -s subs.srt -o review.mp4</pre>
 
     <h2 id="convert">Convert to a DCI container</h2>
     <h3>In the app</h3>
-    <p>Target Conversion scales, crops or letterboxes a video to one of the six DCI containers. The Convert button fails the same way as Burn In: the command needs an output file, and the view passes Output Directory or nothing. From a terminal the codec follows the output's name, so scope.mov comes out as H.264.</p>
+    <p>Target Conversion scales, crops or letterboxes a video to one of the six DCI containers. Convert writes the video's name plus the container, for example clip_2k-scope.mov, into Output Directory, or beside the video. From a terminal the codec follows the output's name, so scope.mov comes out as H.264.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard convert -i movie.mov -t 2k-scope -m letterbox -o scope.mov</pre>
 
     <h2 id="ingest">Re-ingest a package</h2>
     <h3>In the app</h3>
-    <p>Under Re-ingest Package, pick the Package Directory and press Rebuild ASSETMAP &amp; PKL. It writes a new ASSETMAP and PKL listing every asset file in the folder, deletes the old ones, and leaves the essence alone. When the folder still has its old PKL, the new ASSETMAP lists that deleted PKL and Validate fails with asset_not_found, so use it on a folder whose PKL is gone. The app writes an unsigned PKL, which Validate rejects on an encrypted package, so sign that one from a terminal.</p>
+    <p>Under Re-ingest Package, pick the Package Directory and press Rebuild ASSETMAP &amp; PKL. It writes a new ASSETMAP and PKL listing every asset file in the folder, deletes the old ones, and leaves the essence alone. With a signing chain in Settings the new PKL is signed, which an encrypted package needs to pass Validate.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard ingest-package ./pkg
 dcpwizard ingest-package ./pkg \
@@ -310,14 +310,15 @@ dcpwizard export --input ./dcp/Locked --keys ~/keys/locked.json -o locked.mp4</p
 
     <h2 id="vf">Make a Version File</h2>
     <h3>In the app</h3>
-    <p>Open Version File (Supplemental DCP) and pick the Original Version (OV) Directory and an Output Folder. Under Replacement Reels, set each Reel number and pick its Picture, a folder of J2K frames, or its Sound, a 24-bit WAV, press + Reel for the next one, and press Create Version File. The VF goes in a new folder named after Title, which defaults to the OV's title with _VF on the end. Nothing checks that a replacement runs as long as the reel it replaces. Validate reports a schema error at OriginalPackagingList in the VF's CPL.</p>
+    <p>Open Version File (Supplemental DCP) and pick the Original Version (OV) Directory and an Output Folder. Under Replacement Reels, set each Reel number and pick its Picture, a folder of J2K frames or an MXF through MXF…, or its Sound, a WAV, which a 16-bit file is widened to 24 bits for, press + Reel for the next one, and press Create Version File. The VF goes in a new folder named after Title, which defaults to the OV's title with _VF on the end. A replacement has to run exactly as long as the reel it replaces, or Create Version File refuses it. Validate the VF against its OV from a terminal, as below.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard create-vf --ov "./dcp/Two Reels" --output ./vf \
-  --replace-picture 2=./j2k-reel2 --replace-sound 2=reel2.wav</pre>
+  --replace-picture 2=./j2k-reel2 --replace-sound 2=reel2.wav
+dcpwizard verify "./vf/Two Reels_VF" --strict --ov "./dcp/Two Reels"</pre>
 
     <h2 id="settings">Change the settings</h2>
     <h3>In the app</h3>
-    <p>Open Settings, change what you need and press Save. Terminal commands read the same file, so Encode on the GPU, Encode threads, Grok License and Report black and frozen runs while encoding apply there too, and their flags override them. A build goes to Default Output Directory when Folder is empty, and ISDCF Facility Code fills the mastering facility in the CPL and the ISDCF name when the project leaves it blank. If grok cannot start the GPU plugin, Save unticks Encode on the GPU and the status bar says why. Reset puts every setting back to its default.</p>
+    <p>Open Settings, change what you need and press Save. Terminal commands read the same file, so Encode on the GPU, Encode threads, Grok License and Report black and frozen runs while encoding apply there too, and their flags override them. A build goes to Default Output Directory when Folder is empty, and ISDCF Facility Code fills the mastering facility in the CPL and the ISDCF name when the project leaves it blank. If grok cannot start the GPU plugin, Save unticks Encode on the GPU and the status bar says why. Standard, Resolution, Frame Rate and Bandwidth are what a new project starts with. Reset puts every setting back to its default.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard preferences show
 dcpwizard preferences set encode-threads 8</pre>
