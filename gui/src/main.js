@@ -10,6 +10,7 @@ import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
 import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
+import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls-panel.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject } from "./timeline.js";
@@ -3058,6 +3059,7 @@ preferencesLoaded.then(() => {
 refreshLibrary();
 updateStatusStats();
 initPreview();
+preferencesLoaded.then(() => initPlayerControlsPanel({ preferences: getPrefs(), save: (controls) => savePrefs({ ...getPrefs(), ...controls }) }));
 watchPreviewShown(path => { previewShownPath = path; updateToolbarState(); });
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
