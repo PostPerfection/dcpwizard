@@ -15,8 +15,8 @@ pub struct EditCue {
 /// Load any supported subtitle format into editable cues (styling flattened to
 /// plain text). A supplied SMPTE DCST XML is rejected: this edits source files,
 /// not finished timed-text tracks.
-pub fn load(path: &Path, fps: u32) -> Result<Vec<EditCue>, String> {
-    let cues = crate::subtitle::load_styled_cues(path, fps)?.cues;
+pub fn load(path: &Path) -> Result<Vec<EditCue>, String> {
+    let cues = crate::subtitle::load_styled_cues(path)?.cues;
     Ok(cues
         .iter()
         .map(|c| EditCue {

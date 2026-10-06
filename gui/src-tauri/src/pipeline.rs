@@ -1345,7 +1345,6 @@ pub async fn subtitle_file_for_preview(
     app: AppHandle,
     source_path: String,
     track: dcpwizard_core::subtitle_extract::PackagedTrack,
-    fps: u32,
 ) -> Result<String, String> {
     let work_dir = app
         .path()
@@ -1355,7 +1354,6 @@ pub async fn subtitle_file_for_preview(
     let playable = dcpwizard_core::subtitle_preview::playable_subtitle_file(
         &PathBuf::from(&source_path),
         track,
-        fps,
         &work_dir,
     )?;
     Ok(playable.to_string_lossy().into_owned())

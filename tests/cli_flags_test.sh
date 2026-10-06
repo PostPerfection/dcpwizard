@@ -129,7 +129,7 @@ smoke "create burn-subtitle" create --title x --video "$C" --output "$C" \
                             --burn-subtitle "$C" --burn-subtitle-font "$C"
 smoke "subtitle-edit list"  subtitle-edit -i "$C" --list
 smoke "subtitle-edit shift" subtitle-edit -i "$C" -o "$C" --shift-ms 500 --index 1 --text hi \
-                            --set-start-ms 0 --set-end-ms 1000 --fps 25
+                            --set-start-ms 0 --set-end-ms 1000
 # W5 audio + encode QoL. --start-at +0s returns immediately; dummy input fails
 # the J2K branch before any shutdown, so --shutdown-when-done never fires.
 smoke "create loudness+upmix" create --title x --video "$C" --output "$C" \

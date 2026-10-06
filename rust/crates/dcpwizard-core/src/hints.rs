@@ -425,14 +425,12 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
         marker_labels: placed_marker_labels(plan),
         subtitles: read_cue_files(
             [plan.subtitle.as_deref(), plan.burn_subtitle.as_deref()],
-            plan.fps,
             |_| true,
         ),
-        captions: read_cue_files([plan.ccap.as_deref(), None], plan.fps, |_| true),
+        captions: read_cue_files([plan.ccap.as_deref(), None], |_| true),
         // a burnt-in subtitle is drawn here rather than by the server
         top_aligned_subtitles: read_cue_files(
             [plan.subtitle.as_deref(), None],
-            plan.fps,
             top_aligned_cue_filter(plan.subtitle_valign.as_deref()),
         ),
         reel_frames: planned_reel_frames(plan),
@@ -506,16 +504,12 @@ fn placed_marker_labels(plan: &CreatePlan) -> Vec<String> {
 
 /// Read every cue file the audience sees. A file that does not parse is the
 /// preflight's refusal to report, so it is skipped here.
-fn read_cue_files(
-    paths: [Option<&Path>; 2],
-    fps: u32,
-    keep: fn(&StyledCue) -> bool,
-) -> Vec<SubtitleCues> {
+fn read_cue_files(paths: [Option<&Path>; 2], keep: fn(&StyledCue) -> bool) -> Vec<SubtitleCues> {
     paths
         .into_iter()
         .flatten()
         .filter_map(|path| {
-            let cues = crate::subtitle::load_styled_cues(path, fps).ok()?.cues;
+            let cues = crate::subtitle::load_styled_cues(path).ok()?.cues;
             Some(SubtitleCues {
                 file: short_name(path),
                 cues: cues

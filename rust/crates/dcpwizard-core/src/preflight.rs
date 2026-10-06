@@ -222,7 +222,7 @@ pub fn warn_dropped_override_tags_in_plan(plan: &CreatePlan) {
     .flatten()
     {
         // a file that does not parse is already a refusal
-        if let Ok(parsed) = crate::subtitle::load_styled_cues(path, plan.fps) {
+        if let Ok(parsed) = crate::subtitle::load_styled_cues(path) {
             crate::subtitle::warn_dropped_override_tags(&parsed.dropped_override_tags);
         }
     }
@@ -680,7 +680,7 @@ fn check_timed_text(plan: &CreatePlan) -> Result<(), String> {
         .flatten()
         .filter(|path| path.exists())
     {
-        crate::subtitle::check_timed_text_readable(path, plan.fps)?;
+        crate::subtitle::check_timed_text_readable(path)?;
     }
     Ok(())
 }

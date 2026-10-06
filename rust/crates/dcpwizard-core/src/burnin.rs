@@ -19,12 +19,7 @@ pub fn burnin(opts: &BurninOptions) -> Result<(), String> {
     };
     let work_dir = tempfile::tempdir()
         .map_err(|e| format!("cannot create a folder for the converted subtitles: {e}"))?;
-    let srt = playable_subtitle_file(
-        subtitle,
-        PackagedTrack::Subtitle,
-        input_frame_rate(&opts.input)?,
-        work_dir.path(),
-    )?;
+    let srt = playable_subtitle_file(subtitle, PackagedTrack::Subtitle, work_dir.path())?;
     let converted = BurninOptions {
         subtitle_file: Some(srt),
         ..opts.clone()
@@ -37,13 +32,6 @@ fn is_packaged_subtitle(subtitle: &Path) -> bool {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| PACKAGED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
-}
-
-fn input_frame_rate(input: &Path) -> Result<u32, String> {
-    crate::probe::probe_video(input)
-        .filter(|info| info.fps_den > 0)
-        .map(|info| (info.fps_num as f64 / info.fps_den as f64).round() as u32)
-        .ok_or_else(|| format!("cannot read the frame rate of {}", input.display()))
 }
 
 #[cfg(test)]

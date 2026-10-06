@@ -31,7 +31,6 @@ const CAPTION_PREVIEW_FILE: &str = "preview-closed-caption.srt";
 pub fn playable_subtitle_file(
     input: &Path,
     track: PackagedTrack,
-    fps: u32,
     work_dir: &Path,
 ) -> Result<PathBuf, String> {
     let extension = input
@@ -43,7 +42,7 @@ pub fn playable_subtitle_file(
         return Ok(input.to_path_buf());
     }
 
-    let cues = preview_cues(input, track, fps, &extension)?;
+    let cues = preview_cues(input, track, &extension)?;
     if cues.is_empty() {
         return Err(format!(
             "no cues the preview can show in {}",
@@ -61,16 +60,11 @@ pub fn playable_subtitle_file(
     Ok(output)
 }
 
-fn preview_cues(
-    input: &Path,
-    track: PackagedTrack,
-    fps: u32,
-    extension: &str,
-) -> Result<Vec<Cue>, String> {
+fn preview_cues(input: &Path, track: PackagedTrack, extension: &str) -> Result<Vec<Cue>, String> {
     if input.is_dir() || PACKAGED_EXTENSIONS.contains(&extension) {
         return extract_track_cues(input, track);
     }
-    let styled = crate::subtitle::load_styled_cues(input, fps)?.cues;
+    let styled = crate::subtitle::load_styled_cues(input)?.cues;
     Ok(styled
         .iter()
         .filter_map(|cue| {
@@ -91,8 +85,6 @@ fn preview_cues(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const FPS: u32 = 24;
 
     #[test]
     fn dcst_xml_becomes_srt_the_preview_can_show() {
@@ -116,7 +108,7 @@ mod tests {
         .unwrap();
         let work = dir.path().join("preview-subtitles");
 
-        let output = playable_subtitle_file(&xml, PackagedTrack::Subtitle, FPS, &work).unwrap();
+        let output = playable_subtitle_file(&xml, PackagedTrack::Subtitle, &work).unwrap();
 
         assert_eq!(output, work.join(SUBTITLE_PREVIEW_FILE));
         assert_eq!(
@@ -132,7 +124,7 @@ mod tests {
         std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:02,000\nhi\n").unwrap();
 
         let output =
-            playable_subtitle_file(&srt, PackagedTrack::Subtitle, FPS, &dir.path().join("work"))
+            playable_subtitle_file(&srt, PackagedTrack::Subtitle, &dir.path().join("work"))
                 .unwrap();
 
         assert_eq!(output, srt);
@@ -159,8 +151,7 @@ mod tests {
         .unwrap();
         let work = dir.path().join("preview-subtitles");
 
-        let output =
-            playable_subtitle_file(&xml, PackagedTrack::ClosedCaption, FPS, &work).unwrap();
+        let output = playable_subtitle_file(&xml, PackagedTrack::ClosedCaption, &work).unwrap();
 
         assert_eq!(output, work.join(CAPTION_PREVIEW_FILE));
         assert_eq!(
@@ -175,9 +166,8 @@ mod tests {
         let scc = dir.path().join("captions.scc");
         std::fs::write(&scc, "Scenarist_SCC V1.0\n").unwrap();
 
-        let error =
-            playable_subtitle_file(&scc, PackagedTrack::Subtitle, FPS, &dir.path().join("work"))
-                .expect_err("no reader");
+        let error = playable_subtitle_file(&scc, PackagedTrack::Subtitle, &dir.path().join("work"))
+            .expect_err("no reader");
 
         assert!(error.contains(".scc"), "got: {error}");
     }

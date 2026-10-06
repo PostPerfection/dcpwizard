@@ -1809,11 +1809,7 @@ async function showPreviewTrack(sourcePath, track, generation) {
   if (!sourcePath) return;
   let playable;
   try {
-    playable = await invoke("subtitle_file_for_preview", {
-      sourcePath,
-      track,
-      fps: parseInt(document.getElementById("prop-framerate")?.value) || DEFAULT_FRAMERATE,
-    });
+    playable = await invoke("subtitle_file_for_preview", { sourcePath, track });
   } catch (e) {
     console.error(`[preview] ${track} not shown:`, e);
     setStatus(`Preview ${track}: ${e}`);

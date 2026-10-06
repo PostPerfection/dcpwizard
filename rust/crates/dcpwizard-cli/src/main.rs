@@ -1701,9 +1701,6 @@ enum Commands {
         /// New end time (ms) for the --index cue (with --set-start-ms)
         #[arg(long)]
         set_end_ms: Option<u64>,
-        /// Timecode rate for frame-based inputs (interop/PAC), default 24
-        #[arg(long, default_value_t = 24)]
-        fps: u32,
     },
     /// Burn subtitles into a video file, for a review copy rather than a
     /// package: a DCP burn goes through `create --burn-subtitle`
@@ -6883,11 +6880,10 @@ fn run() {
             text,
             set_start_ms,
             set_end_ms,
-            fps,
         } => {
             use dcpwizard_core::subtitle_edit as se;
             let input_path = PathBuf::from(&input);
-            let mut cues = match se::load(&input_path, fps) {
+            let mut cues = match se::load(&input_path) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!("Failed to load subtitles: {e}");

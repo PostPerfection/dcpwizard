@@ -335,7 +335,7 @@ pub fn warn_dropped_override_tags(tags: &[String]) {
 
 /// Load any styled subtitle format into `StyledCue`s. Not for the SMPTE-DCST
 /// pass-through kind (that XML is wrapped unchanged, never parsed to cues here).
-pub fn load_styled_cues(path: &Path, fps: u32) -> Result<ParsedCueFile, String> {
+pub fn load_styled_cues(path: &Path) -> Result<ParsedCueFile, String> {
     let kind = detect_subtitle_kind(path)?;
     let mut dropped_override_tags = Vec::new();
     let cues = match kind {
@@ -366,8 +366,7 @@ pub fn load_styled_cues(path: &Path, fps: u32) -> Result<ParsedCueFile, String> 
             subtitle_formats::fcpxml::parse_fcpxml(&content).map_err(|e| e.to_string())?
         }
         SubtitleInputKind::InteropPng => {
-            subtitle_formats::interop::parse_interop_png(path, fps as f64)
-                .map_err(|e| e.to_string())?
+            subtitle_formats::interop::parse_interop_png(path).map_err(|e| e.to_string())?
         }
         SubtitleInputKind::SmpteDcstPassthrough => {
             return Err("SMPTE DCST XML is wrapped unchanged, not parsed to cues".into());
@@ -436,7 +435,7 @@ fn build_subtitle_burn(
         .apply(BurnStyle::default())
         .map_err(|e| format!("burn-in appearance: {e}"))?;
     // a frame-timed cue file is read against the DCP edit rate, which is whole
-    let parsed = load_styled_cues(input, fps.as_f64().round() as u32)?;
+    let parsed = load_styled_cues(input)?;
     let burn = postkit::subtitle_raster::SubtitleBurn::new(parsed.cues, font, style, fps.as_f64())
         .map_err(|e| format!("cannot burn {}: {e}", input.display()))?;
     Ok(BuiltSubtitleBurn {
@@ -448,11 +447,11 @@ fn build_subtitle_burn(
 /// Read a timed-text input the way the wrap will, so a file the packager cannot
 /// use is refused before the encode instead of after it. Supplied SMPTE DCST is
 /// wrapped unchanged, so detecting the kind is all the reading it gets.
-pub fn check_timed_text_readable(path: &Path, fps: u32) -> Result<(), String> {
+pub fn check_timed_text_readable(path: &Path) -> Result<(), String> {
     if detect_subtitle_kind(path)? == SubtitleInputKind::SmpteDcstPassthrough {
         return Ok(());
     }
-    load_styled_cues(path, fps).map(|_| ())
+    load_styled_cues(path).map(|_| ())
 }
 
 /// Refuse a `--burn-subtitle` the encode cannot honour, before anything is
@@ -495,7 +494,7 @@ pub fn prepare_subtitle_track(
     opts: &SubtitleOptions,
     out: &Path,
 ) -> Result<PreparedSubtitle, String> {
-    let parsed = load_styled_cues(input, fps)?;
+    let parsed = load_styled_cues(input)?;
     warn_dropped_override_tags(&parsed.dropped_override_tags);
     let mut cues = apply_source_trim(&parsed.cues, timing.trim, fps);
 
@@ -663,7 +662,7 @@ pub fn plan_reel_subtitles(
             "reel splitting cannot re-time a supplied SMPTE subtitle XML; supply SRT or a parsable format".into(),
         );
     }
-    let parsed = load_styled_cues(input, fps)?;
+    let parsed = load_styled_cues(input)?;
     warn_dropped_override_tags(&parsed.dropped_override_tags);
     let mut cues = apply_source_trim(&parsed.cues, trim, fps);
     if let Some(cols) = opts.wrap_cols.filter(|c| *c > 0) {
