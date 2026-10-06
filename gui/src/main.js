@@ -2345,6 +2345,7 @@ function daemonJobRows(stdout) {
       progress,
       message: "",
       cancel: () => Command.sidecar("dcpwizard", ["batch", "cancel", id]).execute(),
+      move: (beforeId) => Command.sidecar("dcpwizard", ["batch", "move", id, ...(beforeId === null ? [] : ["--before", beforeId])]).execute(),
     };
   });
 }

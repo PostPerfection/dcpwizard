@@ -46,6 +46,13 @@ for subcmd in $JS_SUBCMDS; do
     continue
   fi
   help_text=$("$BINARY" "$subcmd" --help 2>&1 || true)
+  # a nested subcommand such as batch move lists its own flags
+  NESTED_SUBCMDS=$(grep -oP "\[\"$subcmd\",\s*\"\K[a-z][-a-z]*" "$JS_FILE" | sort -u || true)
+  for nested in $NESTED_SUBCMDS; do
+    if "$BINARY" "$subcmd" "$nested" --help &>/dev/null; then
+      help_text+=$'\n'$("$BINARY" "$subcmd" "$nested" --help 2>&1)
+    fi
+  done
   FLAGS=$(grep -P "\[\"$subcmd\"" "$JS_FILE" \
     | grep -oP '"--[a-z][-a-z0-9]*"|"-[a-z]"' | tr -d '"' | sort -u || true)
   for flag in $FLAGS; do
@@ -81,6 +88,8 @@ smoke "kdm"             kdm --cpl-id "$UUID" --content-title x --cert "$C" \
                             -o "$C" -f now -t "2 weeks"
 smoke "batch list"      batch list
 smoke "batch cancel"    batch cancel 1
+smoke "batch move"      batch move 1
+smoke "batch move before" batch move 1 --before 2
 smoke "encode"          encode -i "$C" -o "$C" --bandwidth 250
 smoke "transcode"       transcode -i "$C" -o "$C"
 smoke "loudness"        loudness "$C"

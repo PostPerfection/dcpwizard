@@ -96,6 +96,7 @@ pub fn run() {
             cpl_identities,
             pipeline::submit_job,
             pipeline::cancel_job,
+            pipeline::move_job,
             pipeline::pause_job,
             pipeline::resume_job,
             pipeline::list_jobs,

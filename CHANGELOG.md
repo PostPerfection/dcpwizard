@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **Queued jobs can be reordered**: `batch move <id>` makes a queued daemon job run next, and `batch move <id> --before <id>` puts it just before another queued job. The Jobs panel's queued rows have Run next, Earlier and Later buttons that do the same for the GUI's own jobs and the daemon's. A running job never moves, and the new order is written to the jobs file, so it survives a restart.
 - **The job daemon runs on postkit's job queue**: the daemon's queue is now the same `postkit::job_queue::JobQueue` the GUI's Jobs panel runs, still with its own `jobs.jsonl`. Job ids are counters starting at 1 instead of UUIDs, and `batch cancel` takes that number. `batch list` prints `Queued` where it printed `Pending`, the progress as one word such as `42%`, and the type as `batch add -T` spells it, for example `create-dcp`. The REST `GET /jobs` rows and the daemon's `Status` reply carry `id`, `title`, `state`, `percent` and `message`, and `job_id` in the `POST /create` and `POST /verify` answers is a number. A `jobs.jsonl` written by an older daemon cannot be read: the first start skips each of its lines and reports how many it skipped. The Jobs panel's daemon rows now show a cancel button, which they never did because their states never matched the panel's lowercase ones, and the panel no longer hides the first daemon job as a header line.
 
 ### Fixed

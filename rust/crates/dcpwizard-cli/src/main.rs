@@ -2474,6 +2474,14 @@ enum BatchAction {
         /// Job ID to cancel
         id: u64,
     },
+    /// Move a queued job so it runs next, or before another queued job
+    Move {
+        /// Job ID to move
+        id: u64,
+        /// Queued job ID it runs before
+        #[arg(long)]
+        before: Option<u64>,
+    },
 }
 
 /// Where the time inside an encode went, as one line. postkit renders the four
@@ -7519,6 +7527,32 @@ fn run() {
                     }
                     _ => 1,
                 },
+                BatchAction::Move { id, before } => {
+                    match send_ipc_request(&IpcRequest::Move { id, before }) {
+                        Ok(IpcResponse::Moved(true)) => {
+                            match before {
+                                None => println!("Moved job {id} to the front of the queue"),
+                                Some(before) => println!("Moved job {id} before job {before}"),
+                            }
+                            0
+                        }
+                        Ok(IpcResponse::Moved(false)) => {
+                            println!(
+                                "Could not move job {id}: it and the job it goes before must both be queued"
+                            );
+                            1
+                        }
+                        Ok(IpcResponse::Error(e)) => {
+                            tracing::error!("{e}");
+                            1
+                        }
+                        Err(e) => {
+                            tracing::error!("{e}");
+                            1
+                        }
+                        _ => 1,
+                    }
+                }
             }
         }
 

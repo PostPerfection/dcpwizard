@@ -741,6 +741,8 @@ dcpwizard daemon
 dcpwizard batch list
 dcpwizard batch add -T create-dcp -p '{"title":"My Film","standard":"Smpte","resolution":"TwoK","content_type":"Feature","frame_rate_num":24,"frame_rate_den":1,"max_bitrate_mbps":250,"encrypt":false,"stereo_3d":false,"container_width":0,"container_height":0,"output_dir":"./dcp","j2k_dir":"./j2k","audio_path":"./audio.wav","audio_input_order":"Canonical51","subtitle_language":"en","reel_length_minutes":0}'
 dcpwizard batch cancel <job-id>
+dcpwizard batch move <job-id>  # run it next
+dcpwizard batch move <job-id> --before <job-id>
 
 # Shell completion
 dcpwizard completion bash >> ~/.bashrc

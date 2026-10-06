@@ -91,6 +91,7 @@ pub enum IpcRequest {
     Submit { job_type: JobType, params: String },
     Cancel { id: u64 },
     Status { id: u64 },
+    Move { id: u64, before: Option<u64> },
 }
 
 /// IPC response sent from daemon to CLI client.
@@ -100,6 +101,7 @@ pub enum IpcResponse {
     Submitted { id: u64 },
     Cancelled(bool),
     JobStatus(Option<JobInfo>),
+    Moved(bool),
     Error(String),
 }
 
@@ -112,6 +114,18 @@ fn submit(queue: &JobQueue, job_type: JobType, params: String) -> u64 {
     });
     tracing::info!("Submitted job {id}");
     id
+}
+
+fn answer(queue: &JobQueue, request: IpcRequest) -> IpcResponse {
+    match request {
+        IpcRequest::List => IpcResponse::Jobs(queue.snapshot()),
+        IpcRequest::Submit { job_type, params } => IpcResponse::Submitted {
+            id: submit(queue, job_type, params),
+        },
+        IpcRequest::Cancel { id } => IpcResponse::Cancelled(queue.cancel(id)),
+        IpcRequest::Status { id } => IpcResponse::JobStatus(queue.get(id)),
+        IpcRequest::Move { id, before } => IpcResponse::Moved(queue.move_before(id, before)),
+    }
 }
 
 /// Start the job queue processor in a background thread.
@@ -336,14 +350,7 @@ pub fn start_daemon_ipc(queue: Arc<JobQueue>, encode_threads: u32) -> i32 {
                             }
                         };
 
-                        let response = match request {
-                            IpcRequest::List => IpcResponse::Jobs(queue.snapshot()),
-                            IpcRequest::Submit { job_type, params } => IpcResponse::Submitted {
-                                id: submit(&queue, job_type, params),
-                            },
-                            IpcRequest::Cancel { id } => IpcResponse::Cancelled(queue.cancel(id)),
-                            IpcRequest::Status { id } => IpcResponse::JobStatus(queue.get(id)),
-                        };
+                        let response = answer(&queue, request);
 
                         let json = serde_json::to_string(&response).unwrap_or_default();
                         if writeln!(stream, "{json}").is_err() {
@@ -638,6 +645,52 @@ mod tests {
         finish_job(&queue, &job, Some(Ok(())));
 
         assert_eq!(state_of(&queue, id), JobState::Cancelled);
+    }
+
+    fn queue_with_three_jobs(dir: &Path) -> JobQueue {
+        let queue = JobQueue::new(dir.join("jobs.jsonl"));
+        for dcp in ["/dcp/one", "/dcp/two", "/dcp/three"] {
+            submit(&queue, JobType::VerifyDcp, dcp.into());
+        }
+        queue
+    }
+
+    fn listed_ids(queue: &JobQueue) -> Vec<u64> {
+        let IpcResponse::Jobs(jobs) = answer(queue, IpcRequest::List) else {
+            panic!("List did not answer with jobs");
+        };
+        jobs.iter().map(|job| job.id).collect()
+    }
+
+    fn moved(queue: &JobQueue, id: u64, before: Option<u64>) -> bool {
+        let IpcResponse::Moved(moved) = answer(queue, IpcRequest::Move { id, before }) else {
+            panic!("Move did not answer with Moved");
+        };
+        moved
+    }
+
+    #[test]
+    fn a_move_with_no_target_runs_the_job_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = queue_with_three_jobs(dir.path());
+        assert!(moved(&queue, 3, None));
+        assert_eq!(listed_ids(&queue), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn a_move_before_a_job_puts_it_just_ahead_of_that_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = queue_with_three_jobs(dir.path());
+        assert!(moved(&queue, 3, Some(2)));
+        assert_eq!(listed_ids(&queue), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn a_move_of_an_unknown_job_answers_false_and_keeps_the_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = queue_with_three_jobs(dir.path());
+        assert!(!moved(&queue, 9, None));
+        assert_eq!(listed_ids(&queue), vec![1, 2, 3]);
     }
 
     #[test]
