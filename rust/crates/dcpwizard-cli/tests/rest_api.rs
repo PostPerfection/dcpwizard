@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const API_KEY: &str = "correct-horse-battery-staple";
+const JOBS_FILE: &str = "jobs.jsonl";
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const JOB_TIMEOUT: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -67,7 +68,7 @@ impl Harness {
             command
                 .args(arguments)
                 .env("DCPWIZARD_DAEMON_ADDR", &daemon_address)
-                .env("DCPWIZARD_JOBS_FILE", directory.path().join("jobs.jsonl"))
+                .env("DCPWIZARD_JOBS_FILE", directory.path().join(JOBS_FILE))
                 .env("XDG_CONFIG_HOME", directory.path())
                 .env("XDG_DATA_HOME", directory.path());
             command.spawn().expect("spawn dcpwizard")
@@ -120,7 +121,7 @@ impl Harness {
 
     /// Poll `GET /jobs` until the job is Completed or Failed, then return its
     /// record.
-    fn wait_for_job(&self, id: &str) -> serde_json::Value {
+    fn wait_for_job(&self, id: u64) -> serde_json::Value {
         let deadline = Instant::now() + JOB_TIMEOUT;
         loop {
             let jobs = self.jobs();
@@ -145,6 +146,16 @@ impl Harness {
         let response = self.get("/jobs", "");
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
         serde_json::from_str(body_of(&response)).expect("a JSON job list")
+    }
+
+    fn recorded_params(&self, id: u64) -> String {
+        let text = std::fs::read_to_string(self.path(JOBS_FILE)).unwrap();
+        let record = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|record| record["config"]["id"] == id)
+            .unwrap_or_else(|| panic!("job {id} is not in the jobs file: {text}"));
+        record["config"]["params"].as_str().unwrap().to_string()
     }
 }
 
@@ -188,13 +199,12 @@ fn body_of(response: &str) -> &str {
         .unwrap_or("")
 }
 
-fn job_id_of(response: &str) -> String {
+fn job_id_of(response: &str) -> u64 {
     let parsed: serde_json::Value =
         serde_json::from_str(body_of(response)).unwrap_or_else(|e| panic!("{e}: {response}"));
     parsed["job_id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("no job_id in {response}"))
-        .to_string()
+        .as_u64()
+        .unwrap_or_else(|| panic!("no numeric job_id in {response}"))
 }
 
 /// 24 black 2K frames and a matching stereo WAV, the smallest package the create
@@ -325,13 +335,12 @@ fn a_config_over_eight_kibibytes_reaches_the_daemon_whole() {
     );
 
     let id = job_id_of(&response);
-    let job = harness
-        .jobs()
-        .into_iter()
-        .find(|job| job["id"] == id)
-        .expect("the submitted job");
+    assert!(
+        harness.jobs().iter().any(|job| job["id"] == id),
+        "GET /jobs does not list job {id}"
+    );
     assert_eq!(
-        job["params"].as_str().unwrap().len(),
+        harness.recorded_params(id).len(),
         body.len(),
         "the daemon must hold the whole config the client sent"
     );
@@ -348,7 +357,7 @@ fn a_posted_config_builds_a_dcp_the_verify_route_then_passes() {
     assert!(create.starts_with("HTTP/1.1 202"), "{create}");
     let create_id = job_id_of(&create);
 
-    let job = harness.wait_for_job(&create_id);
+    let job = harness.wait_for_job(create_id);
     assert_eq!(
         job["state"], "Completed",
         "the create job failed: {}",
@@ -363,7 +372,7 @@ fn a_posted_config_builds_a_dcp_the_verify_route_then_passes() {
 
     let verify = harness.post("/verify", package.to_str().unwrap());
     assert!(verify.starts_with("HTTP/1.1 202"), "{verify}");
-    let verify_job = harness.wait_for_job(&job_id_of(&verify));
+    let verify_job = harness.wait_for_job(job_id_of(&verify));
     assert_eq!(
         verify_job["state"], "Completed",
         "the verify job failed: {}",

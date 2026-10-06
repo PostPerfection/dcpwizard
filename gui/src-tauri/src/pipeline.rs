@@ -510,7 +510,7 @@ fn apply_package_name_to_job(
 
 // ─── Queue state (managed by Tauri) ────────────────────────────────────────
 
-impl postkit::gui_job_queue::GuiJob for JobConfig {
+impl postkit::job_queue::QueueJob for JobConfig {
     fn id(&self) -> u64 {
         self.id
     }
@@ -519,17 +519,20 @@ impl postkit::gui_job_queue::GuiJob for JobConfig {
         &self.title
     }
 
-    fn output_dir(&self) -> &Path {
-        &self.output_dir
+    fn output_dir(&self) -> Option<&Path> {
+        Some(&self.output_dir)
     }
 }
 
-pub type JobQueue = postkit::gui_job_queue::GuiJobQueue<JobConfig>;
+pub type JobQueue = postkit::job_queue::JobQueue<JobConfig>;
 
 /// Where the Jobs panel keeps its queue. `DCPWIZARD_JOBS_FILE` is the daemon's
 /// own jobs.jsonl and names a different file.
 pub fn jobs_path() -> PathBuf {
-    postkit::gui_job_queue::jobs_path("DCPWIZARD_GUI_JOBS_FILE", dcpwizard_core::store::data_dir())
+    postkit::job_queue::jobs_path(
+        "DCPWIZARD_GUI_JOBS_FILE",
+        dcpwizard_core::store::data_dir().join("gui-jobs.jsonl"),
+    )
 }
 
 /// What a panel field holds, or None when the user left it empty.
@@ -1522,7 +1525,7 @@ pub async fn resume_job(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn list_jobs(app: AppHandle) -> Vec<postkit::gui_job_queue::JobInfo> {
+pub async fn list_jobs(app: AppHandle) -> Vec<postkit::job_queue::JobInfo> {
     app.state::<JobQueue>().snapshot()
 }
 
@@ -1612,7 +1615,7 @@ async fn run_queue_worker(app: AppHandle) {
         let elapsed_secs = job_started.elapsed().as_secs_f64();
         match result {
             Ok(Ok(_)) => {
-                queue.finish(&job, postkit::gui_job_queue::StoredJobState::Done, "");
+                queue.finish(&job, postkit::job_queue::JobState::Completed, "");
                 emit_progress(
                     &app,
                     job.id,
@@ -1628,9 +1631,9 @@ async fn run_queue_worker(app: AppHandle) {
             Ok(Err(e)) => {
                 let cancelled = queue.is_cancelled();
                 let state = if cancelled {
-                    postkit::gui_job_queue::StoredJobState::Cancelled
+                    postkit::job_queue::JobState::Cancelled
                 } else {
-                    postkit::gui_job_queue::StoredJobState::Failed
+                    postkit::job_queue::JobState::Failed
                 };
                 queue.finish(&job, state, &e);
                 let stage = if cancelled { "cancelled" } else { "error" };
@@ -1640,7 +1643,7 @@ async fn run_queue_worker(app: AppHandle) {
             Err(e) => {
                 queue.finish(
                     &job,
-                    postkit::gui_job_queue::StoredJobState::Failed,
+                    postkit::job_queue::JobState::Failed,
                     &format!("Build panicked: {e}"),
                 );
                 emit_progress(
@@ -4722,7 +4725,7 @@ mod tests {
 
     #[test]
     fn a_queued_job_comes_back_from_the_jobs_file() {
-        use postkit::gui_job_queue::{load, record, StoredJobState};
+        use postkit::job_queue::{load, record, JobState};
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state").join("gui-jobs.jsonl");
@@ -4743,7 +4746,7 @@ mod tests {
             ..test_source()
         });
 
-        record(&path, StoredJobState::Queued, "", &queued);
+        record(&path, JobState::Queued, "", &queued);
 
         let queue = JobQueue::new(path.clone());
         assert_eq!(queue.load_jobs_file(), 0);
@@ -4757,6 +4760,6 @@ mod tests {
 
         let saved = load::<JobConfig>(&path);
         assert_eq!(saved.jobs.len(), 1);
-        assert_eq!(saved.jobs[0].state, StoredJobState::Queued);
+        assert_eq!(saved.jobs[0].state, JobState::Queued);
     }
 }

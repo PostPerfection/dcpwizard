@@ -1,28 +1,26 @@
-//! Job queue with a TCP/IPC daemon.
-//!
-//! Distinct from [`postkit::job_queue`], which is an in-memory queue with job
-//! dependencies but no daemon. This one adds cross-process IPC and job types
-//! bound to dcpwizard's own pipeline (create/verify/export/import DCP), so it
-//! stays local.
+//! The job daemon: a TCP IPC listener in front of a postkit job queue whose jobs
+//! run dcpwizard's own operations (create/verify/export/import DCP).
 
+use postkit::job_queue::{JobInfo, JobState, QueueJob};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-
-/// What a job that was still Running when the queue was loaded again is failed
-/// with. Nothing can pick a half-run job back up.
-pub const INTERRUPTED_MESSAGE: &str = "the daemon stopped while this job was running";
+use std::time::Duration;
 
 /// What a job is failed with when its worker thread ended without sending a
 /// result back.
 pub const WORKER_LOST_MESSAGE: &str = "the job thread stopped without reporting a result";
 
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const CANCELLED_MESSAGE: &str = "Cancelled";
+const COMPLETED_MESSAGE: &str = "Completed successfully";
+
 /// Job type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JobType {
     CreateDcp,
     VerifyDcp,
@@ -33,437 +31,162 @@ pub enum JobType {
     CopyToDrive,
 }
 
-/// Job state.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum JobState {
-    #[default]
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Cancelled,
+const ALL_JOB_TYPES: [JobType; 7] = [
+    JobType::CreateDcp,
+    JobType::VerifyDcp,
+    JobType::ExportDcp,
+    JobType::ImportVideo,
+    JobType::EncodeJ2k,
+    JobType::WrapMxf,
+    JobType::CopyToDrive,
+];
+
+impl JobType {
+    pub fn name(self) -> &'static str {
+        match self {
+            JobType::CreateDcp => "create-dcp",
+            JobType::VerifyDcp => "verify-dcp",
+            JobType::ExportDcp => "export-dcp",
+            JobType::ImportVideo => "import-video",
+            JobType::EncodeJ2k => "encode-j2k",
+            JobType::WrapMxf => "wrap-mxf",
+            JobType::CopyToDrive => "copy-to-drive",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<JobType> {
+        ALL_JOB_TYPES
+            .into_iter()
+            .find(|job_type| job_type.name() == name)
+    }
 }
 
-/// A queued job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Job {
-    pub id: String,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DaemonJob {
+    pub id: u64,
     pub job_type: JobType,
-    pub state: JobState,
-    pub progress_percent: u32,
-    pub message: String,
-    pub created_at: u64,
-    pub updated_at: u64,
     pub params: String,
 }
+
+impl QueueJob for DaemonJob {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn title(&self) -> &str {
+        self.job_type.name()
+    }
+
+    fn output_dir(&self) -> Option<&Path> {
+        None
+    }
+}
+
+pub type JobQueue = postkit::job_queue::JobQueue<DaemonJob>;
 
 /// IPC request sent from CLI client to daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum IpcRequest {
     List,
     Submit { job_type: JobType, params: String },
-    Cancel { id: String },
-    Status { id: String },
+    Cancel { id: u64 },
+    Status { id: u64 },
 }
 
 /// IPC response sent from daemon to CLI client.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum IpcResponse {
-    Jobs(Vec<Job>),
-    Submitted { id: String },
+    Jobs(Vec<JobInfo>),
+    Submitted { id: u64 },
     Cancelled(bool),
-    JobStatus(Option<Job>),
+    JobStatus(Option<JobInfo>),
     Error(String),
 }
 
-/// Thread-safe job queue, backed by a JSONL file so a crash or a reboot does not
-/// lose what is queued.
-#[derive(Clone)]
-pub struct JobQueue {
-    jobs: Arc<Mutex<HashMap<String, Job>>>,
-    running: Arc<Mutex<bool>>,
-    /// cooperative-cancel flag per running job; the job loop and the running
-    /// operation both watch it so a cancel stops in-flight work between stages.
-    cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-    /// one JSON line per job record, appended on submit and on every state
-    /// change. the last record for an id is the job.
-    jobs_file: Arc<PathBuf>,
-}
-
-impl Default for JobQueue {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl JobQueue {
-    pub fn new() -> Self {
-        Self::with_jobs_file(crate::store::jobs_path())
-    }
-
-    pub fn with_jobs_file(jobs_file: PathBuf) -> Self {
-        Self {
-            jobs: Arc::new(Mutex::new(HashMap::new())),
-            running: Arc::new(Mutex::new(false)),
-            cancel_flags: Arc::new(Mutex::new(HashMap::new())),
-            jobs_file: Arc::new(jobs_file),
-        }
-    }
-
-    /// Read the jobs file back into the queue and rewrite it with one line per
-    /// job. A job left Running is failed with [`INTERRUPTED_MESSAGE`]. Returns
-    /// how many lines could not be read.
-    pub fn load_jobs_file(&self) -> usize {
-        let path = self.jobs_file.as_path();
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
-            Err(e) => {
-                tracing::error!("could not read {}: {e}", path.display());
-                return 0;
-            }
-        };
-
-        let mut loaded: HashMap<String, Job> = HashMap::new();
-        let mut skipped = 0;
-        for (index, line) in text.lines().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str::<Job>(line) {
-                Ok(mut job) => {
-                    if job.state == JobState::Running {
-                        job.state = JobState::Failed;
-                        job.message = INTERRUPTED_MESSAGE.to_string();
-                    }
-                    loaded.insert(job.id.clone(), job);
-                }
-                Err(e) => {
-                    skipped += 1;
-                    tracing::error!(
-                        "{} line {}: not a job record: {e}",
-                        path.display(),
-                        index + 1
-                    );
-                }
-            }
-        }
-        tracing::info!("loaded {} jobs from {}", loaded.len(), path.display());
-        if skipped > 0 {
-            tracing::error!("skipped {skipped} unreadable lines in {}", path.display());
-        }
-
-        let mut compacted: Vec<&Job> = loaded.values().collect();
-        compacted.sort_by_key(|job| job.created_at);
-        write_jobs_file(path, &compacted);
-
-        if let Ok(mut jobs) = self.jobs.lock() {
-            *jobs = loaded;
-        }
-        skipped
-    }
-
-    fn record(&self, job: &Job) {
-        if let Err(e) = append_job_record(&self.jobs_file, job) {
-            tracing::error!(
-                "could not record job {} in {}: {e}",
-                job.id,
-                self.jobs_file.display()
-            );
-        }
-    }
-
-    /// Submit a new job to the queue.
-    pub fn submit(&self, job_type: JobType, params: &str) -> String {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = current_epoch_secs();
-
-        let job = Job {
-            id: id.clone(),
-            job_type,
-            state: JobState::Pending,
-            progress_percent: 0,
-            message: String::new(),
-            created_at: now,
-            updated_at: now,
-            params: params.to_string(),
-        };
-
-        if let Ok(mut jobs) = self.jobs.lock() {
-            jobs.insert(id.clone(), job.clone());
-        }
-        self.record(&job);
-
-        tracing::info!("Submitted job {id}");
-        id
-    }
-
-    /// Cancel a job by ID. A pending job never starts; a running job is asked to
-    /// stop via its cancel flag and the job loop finalises it as Cancelled.
-    pub fn cancel(&self, id: &str) -> bool {
-        let cancelled = {
-            let mut cancelled = None;
-            if let Ok(mut jobs) = self.jobs.lock()
-                && let Some(job) = jobs.get_mut(id)
-                && (job.state == JobState::Pending || job.state == JobState::Running)
-            {
-                job.state = JobState::Cancelled;
-                job.updated_at = current_epoch_secs();
-                cancelled = Some(job.clone());
-            }
-            cancelled
-        };
-
-        let Some(job) = cancelled else {
-            return false;
-        };
-        self.record(&job);
-        // signal a running operation to bail between stages
-        if let Ok(flags) = self.cancel_flags.lock()
-            && let Some(flag) = flags.get(id)
-        {
-            flag.store(true, Ordering::Relaxed);
-        }
-        tracing::info!("Cancelled job {id}");
-        true
-    }
-
-    /// Get a job by ID.
-    pub fn get(&self, id: &str) -> Option<Job> {
-        self.jobs.lock().ok()?.get(id).cloned()
-    }
-
-    /// List all jobs.
-    pub fn list(&self) -> Vec<Job> {
-        match self.jobs.lock() {
-            Ok(jobs) => {
-                let mut result: Vec<Job> = jobs.values().cloned().collect();
-                result.sort_by_key(|j| std::cmp::Reverse(j.created_at));
-                result
-            }
-            Err(_) => Vec::new(),
-        }
-    }
-
-    /// Update a job's state and progress.
-    pub fn update_job(&self, id: &str, state: JobState, progress: u32, message: &str) {
-        let updated = {
-            let mut updated = None;
-            if let Ok(mut jobs) = self.jobs.lock()
-                && let Some(job) = jobs.get_mut(id)
-            {
-                job.state = state;
-                job.progress_percent = progress;
-                job.message = message.to_string();
-                job.updated_at = current_epoch_secs();
-                updated = Some(job.clone());
-            }
-            updated
-        };
-        if let Some(job) = updated {
-            self.record(&job);
-        }
-    }
-
-    // a cancel that lands first is kept
-    fn update_job_in_state(
-        &self,
-        id: &str,
-        from: JobState,
-        state: JobState,
-        progress: u32,
-        message: &str,
-    ) -> bool {
-        let updated = {
-            let mut updated = None;
-            if let Ok(mut jobs) = self.jobs.lock()
-                && let Some(job) = jobs.get_mut(id)
-                && job.state == from
-            {
-                job.state = state;
-                job.progress_percent = progress;
-                job.message = message.to_string();
-                job.updated_at = current_epoch_secs();
-                updated = Some(job.clone());
-            }
-            updated
-        };
-        let Some(job) = updated else {
-            return false;
-        };
-        self.record(&job);
-        true
-    }
-}
-
-/// Append one job record as a JSON line, creating the file and its parent dir.
-fn append_job_record(path: &Path, job: &Job) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    }
-    let mut line = serde_json::to_string(job).map_err(|e| format!("serialize job: {e}"))?;
-    line.push('\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-    file.write_all(line.as_bytes())
-        .map_err(|e| format!("cannot append: {e}"))
-}
-
-/// Replace the file with one line per job.
-fn write_jobs_file(path: &Path, jobs: &[&Job]) {
-    let mut text = String::new();
-    for job in jobs {
-        match serde_json::to_string(job) {
-            Ok(line) => {
-                text.push_str(&line);
-                text.push('\n');
-            }
-            Err(e) => tracing::error!("could not serialize job {}: {e}", job.id),
-        }
-    }
-    if let Err(e) = std::fs::write(path, text) {
-        tracing::error!("could not rewrite {}: {e}", path.display());
-    }
+fn submit(queue: &JobQueue, job_type: JobType, params: String) -> u64 {
+    let id = queue.reserve_job_id();
+    queue.submit(DaemonJob {
+        id,
+        job_type,
+        params,
+    });
+    tracing::info!("Submitted job {id}");
+    id
 }
 
 /// Start the job queue processor in a background thread.
-pub fn start_job_queue(queue: &JobQueue, encode_threads: u32) {
-    if let Ok(mut running) = queue.running.lock() {
-        if *running {
-            tracing::warn!("Job queue is already running");
-            return;
-        }
-        *running = true;
-    }
-
-    let queue_clone = queue.clone();
+pub fn start_job_queue(queue: Arc<JobQueue>, encode_threads: u32) {
     std::thread::spawn(move || {
         tracing::info!("Job queue processor started");
         loop {
-            let is_running = queue_clone.running.lock().map(|r| *r).unwrap_or(false);
-            if !is_running {
-                break;
-            }
-
-            // Find next pending job
-            let next_job = {
-                let jobs = match queue_clone.jobs.lock() {
-                    Ok(j) => j,
-                    Err(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        continue;
-                    }
-                };
-                jobs.values()
-                    .filter(|j| j.state == JobState::Pending)
-                    .min_by_key(|j| j.created_at)
-                    .cloned()
+            let Some(job) = queue.take_next() else {
+                queue.clear_current();
+                std::thread::sleep(IDLE_POLL_INTERVAL);
+                continue;
             };
+            queue.start(&job);
+            tracing::info!("Processing job {} ({:?})", job.id, job.job_type);
 
-            if let Some(job) = next_job {
-                // run the job on its own thread so the loop can watch the cancel
-                // flag and finalise the job even if the operation is still running
-                let cancel = Arc::new(AtomicBool::new(false));
-                if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
-                    flags.insert(job.id.clone(), cancel.clone());
-                }
-                if !queue_clone.update_job_in_state(
-                    &job.id,
-                    JobState::Pending,
-                    JobState::Running,
-                    0,
-                    "Processing...",
-                ) {
-                    if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
-                        flags.remove(&job.id);
-                    }
-                    continue;
-                }
-                tracing::info!("Processing job {} ({:?})", job.id, job.job_type);
-                let control = JobControl {
-                    queue: queue_clone.clone(),
-                    job_id: job.id.clone(),
-                    cancel: cancel.clone(),
-                };
-                let (tx, rx) = mpsc::channel();
-                let worker_job = job.clone();
-                std::thread::spawn(move || {
-                    let outcome = process_job(&worker_job, &control, encode_threads);
-                    let _ = tx.send(outcome);
-                });
+            // run the job on its own thread so the loop can watch the cancel
+            // flag and finalise the job even if the operation is still running
+            let control = JobControl {
+                queue: queue.clone(),
+                cancel: Arc::new(AtomicBool::new(false)),
+            };
+            let job_cancel = control.cancel.clone();
+            let (sender, receiver) = mpsc::channel();
+            let worker_job = job.clone();
+            std::thread::spawn(move || {
+                let outcome = process_job(&worker_job, &control, encode_threads);
+                let _ = sender.send(outcome);
+            });
 
-                let outcome = loop {
-                    match rx.recv_timeout(std::time::Duration::from_millis(200)) {
-                        Ok(outcome) => break Some(outcome),
-                        Err(RecvTimeoutError::Timeout) => {
-                            if cancel.load(Ordering::Relaxed) {
-                                break None; // cancelled; detach the worker
-                            }
+            let outcome = loop {
+                match receiver.recv_timeout(CANCEL_POLL_INTERVAL) {
+                    Ok(outcome) => break Some(outcome),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if queue.is_cancelled() {
+                            // the queue's flag resets when the next job starts
+                            job_cancel.store(true, Ordering::Relaxed);
+                            break None;
                         }
-                        Err(RecvTimeoutError::Disconnected) => break None,
                     }
-                };
-
-                if let Ok(mut flags) = queue_clone.cancel_flags.lock() {
-                    flags.remove(&job.id);
+                    Err(RecvTimeoutError::Disconnected) => break None,
                 }
-
-                if cancel.load(Ordering::Relaxed) {
-                    queue_clone.update_job(&job.id, JobState::Cancelled, 0, "Cancelled");
-                } else {
-                    let (state, progress, message) = match outcome {
-                        Some(Ok(())) => (JobState::Completed, 100, "Completed successfully".into()),
-                        Some(Err(cause)) => {
-                            tracing::error!("job {} failed: {cause}", job.id);
-                            (JobState::Failed, 0, cause)
-                        }
-                        None => (JobState::Failed, 0, WORKER_LOST_MESSAGE.to_string()),
-                    };
-                    queue_clone.update_job_in_state(
-                        &job.id,
-                        JobState::Running,
-                        state,
-                        progress,
-                        &message,
-                    );
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
+            };
+            finish_job(&queue, &job, outcome);
         }
-        tracing::info!("Job queue processor stopped");
     });
 }
 
-/// Stop the job queue processor.
-pub fn stop_job_queue(queue: &JobQueue) {
-    if let Ok(mut running) = queue.running.lock() {
-        *running = false;
-    }
-    tracing::info!("Job queue stop requested");
+fn finish_job(queue: &JobQueue, job: &DaemonJob, outcome: Option<Result<(), String>>) {
+    let (state, message) = match outcome {
+        _ if queue.is_cancelled() => (JobState::Cancelled, CANCELLED_MESSAGE.to_string()),
+        Some(Ok(())) => (JobState::Completed, COMPLETED_MESSAGE.to_string()),
+        Some(Err(cause)) => {
+            tracing::error!("job {} failed: {cause}", job.id);
+            (JobState::Failed, cause)
+        }
+        None => (JobState::Failed, WORKER_LOST_MESSAGE.to_string()),
+    };
+    queue.finish(job, state, &message);
+    queue.clear_current();
 }
 
-/// Progress + cancel bridge handed to a running operation; forwards stage
-/// updates to the job's queue entry and exposes the cooperative cancel flag.
+/// Progress and cancel bridge handed to a running operation. Forwards stage
+/// updates to the queue and exposes the job's own cancel flag.
 struct JobControl {
-    queue: JobQueue,
-    job_id: String,
+    queue: Arc<JobQueue>,
     cancel: Arc<AtomicBool>,
 }
 
 impl crate::dcp::ProgressSink for JobControl {
     fn stage(&self, percent: u32, message: &str) {
-        self.queue.update_job_in_state(
-            &self.job_id,
-            JobState::Running,
-            JobState::Running,
-            percent,
-            message,
-        );
+        // a detached worker would overwrite the next job's progress
+        if self.cancelled() {
+            return;
+        }
+        self.queue.set_progress(f64::from(percent), message);
     }
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
@@ -485,7 +208,7 @@ fn from_exit_code(code: i32, operation: &str) -> Result<(), String> {
     ))
 }
 
-fn process_job(job: &Job, control: &JobControl, encode_threads: u32) -> Result<(), String> {
+fn process_job(job: &DaemonJob, control: &JobControl, encode_threads: u32) -> Result<(), String> {
     match job.job_type {
         JobType::CreateDcp => {
             let mut config = crate::dcp::DcpConfig {
@@ -554,13 +277,6 @@ fn process_job(job: &Job, control: &JobControl, encode_threads: u32) -> Result<(
     }
 }
 
-fn current_epoch_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 /// Get the daemon address.
 /// Uses TCP localhost on a fixed port for cross-platform compatibility.
 pub fn daemon_addr() -> String {
@@ -570,7 +286,7 @@ pub fn daemon_addr() -> String {
 /// Start the daemon IPC listener.
 /// Binds a TCP listener on localhost and processes client requests.
 /// This blocks the current thread.
-pub fn start_daemon_ipc(queue: &JobQueue, encode_threads: u32) -> i32 {
+pub fn start_daemon_ipc(queue: Arc<JobQueue>, encode_threads: u32) -> i32 {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -589,7 +305,7 @@ pub fn start_daemon_ipc(queue: &JobQueue, encode_threads: u32) -> i32 {
     queue.load_jobs_file();
 
     // Start the job processor thread
-    start_job_queue(queue, encode_threads);
+    start_job_queue(queue.clone(), encode_threads);
 
     for stream in listener.incoming() {
         match stream {
@@ -621,13 +337,12 @@ pub fn start_daemon_ipc(queue: &JobQueue, encode_threads: u32) -> i32 {
                         };
 
                         let response = match request {
-                            IpcRequest::List => IpcResponse::Jobs(queue.list()),
-                            IpcRequest::Submit { job_type, params } => {
-                                let id = queue.submit(job_type, &params);
-                                IpcResponse::Submitted { id }
-                            }
-                            IpcRequest::Cancel { id } => IpcResponse::Cancelled(queue.cancel(&id)),
-                            IpcRequest::Status { id } => IpcResponse::JobStatus(queue.get(&id)),
+                            IpcRequest::List => IpcResponse::Jobs(queue.snapshot()),
+                            IpcRequest::Submit { job_type, params } => IpcResponse::Submitted {
+                                id: submit(&queue, job_type, params),
+                            },
+                            IpcRequest::Cancel { id } => IpcResponse::Cancelled(queue.cancel(id)),
+                            IpcRequest::Status { id } => IpcResponse::JobStatus(queue.get(id)),
                         };
 
                         let json = serde_json::to_string(&response).unwrap_or_default();
@@ -684,22 +399,31 @@ pub fn is_daemon_running() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postkit::job_queue::INTERRUPTED_MESSAGE;
+    use std::path::PathBuf;
+
+    fn state_of(queue: &JobQueue, id: u64) -> JobState {
+        queue.get(id).expect("the submitted job").state
+    }
 
     #[test]
-    fn reload_keeps_pending_and_fails_running() {
+    fn reload_keeps_queued_and_fails_running() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state").join("jobs.jsonl");
 
-        let queue = JobQueue::with_jobs_file(path.clone());
-        let pending = queue.submit(JobType::VerifyDcp, "/dcp/one");
-        let running = queue.submit(JobType::VerifyDcp, "/dcp/two");
-        queue.update_job(&running, JobState::Running, 40, "Processing...");
+        let queue = JobQueue::new(path.clone());
+        let running = submit(&queue, JobType::VerifyDcp, "/dcp/one".into());
+        let queued = submit(&queue, JobType::VerifyDcp, "/dcp/two".into());
+        let started = queue.take_next().unwrap();
+        assert_eq!(started.id, running);
+        queue.start(&started);
+        queue.set_progress(40.0, "Processing...");
 
-        let reloaded = JobQueue::with_jobs_file(path.clone());
+        let reloaded = JobQueue::new(path.clone());
         assert_eq!(reloaded.load_jobs_file(), 0);
 
-        assert_eq!(reloaded.get(&pending).unwrap().state, JobState::Pending);
-        let interrupted = reloaded.get(&running).unwrap();
+        assert_eq!(state_of(&reloaded, queued), JobState::Queued);
+        let interrupted = reloaded.get(running).unwrap();
         assert_eq!(interrupted.state, JobState::Failed);
         assert_eq!(interrupted.message, INTERRUPTED_MESSAGE);
 
@@ -710,20 +434,12 @@ mod tests {
     /// How long the queue processor gets to pick up and finish one job.
     const FAILURE_POLL_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-    #[test]
-    fn a_failed_job_carries_the_runners_own_error_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing_dcp = dir.path().join("no_such_dcp");
-
-        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
-        let id = queue.submit(JobType::VerifyDcp, missing_dcp.to_str().unwrap());
-        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
-
+    fn wait_until_failed(queue: &JobQueue, id: u64) -> JobInfo {
         let deadline = std::time::Instant::now() + FAILURE_POLL_LIMIT;
-        let failed = loop {
-            let job = queue.get(&id).expect("the submitted job");
+        loop {
+            let job = queue.get(id).expect("the submitted job");
             if job.state == JobState::Failed {
-                break job;
+                return job;
             }
             assert!(
                 std::time::Instant::now() < deadline,
@@ -731,9 +447,23 @@ mod tests {
                 job.state
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
-        };
-        stop_job_queue(&queue);
+        }
+    }
 
+    #[test]
+    fn a_failed_job_carries_the_runners_own_error_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_dcp = dir.path().join("no_such_dcp");
+
+        let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
+        let id = submit(
+            &queue,
+            JobType::VerifyDcp,
+            missing_dcp.to_str().unwrap().into(),
+        );
+        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
+
+        let failed = wait_until_failed(&queue, id);
         assert!(
             failed.message.contains(missing_dcp.to_str().unwrap()),
             "message hid the cause: {}",
@@ -755,25 +485,11 @@ mod tests {
         };
         let params = serde_json::to_string(&config).unwrap();
 
-        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
-        let id = queue.submit(JobType::CreateDcp, &params);
-        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
+        let id = submit(&queue, JobType::CreateDcp, params);
+        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
 
-        let deadline = std::time::Instant::now() + FAILURE_POLL_LIMIT;
-        let failed = loop {
-            let job = queue.get(&id).expect("the submitted job");
-            if job.state == JobState::Failed {
-                break job;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "job stayed {:?} for {FAILURE_POLL_LIMIT:?}",
-                job.state
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        };
-        stop_job_queue(&queue);
-
+        let failed = wait_until_failed(&queue, id);
         assert!(
             failed.message.contains(missing_j2k.to_str().unwrap()),
             "message hid the cause: {}",
@@ -826,7 +542,7 @@ mod tests {
         .unwrap()
     }
 
-    fn wait_for_state(queue: &JobQueue, id: &str, wanted: JobState, limit: std::time::Duration) {
+    fn wait_for_state(queue: &JobQueue, id: u64, wanted: JobState, limit: std::time::Duration) {
         let deadline = std::time::Instant::now() + limit;
         loop {
             let job = queue.get(id).expect("the submitted job");
@@ -834,7 +550,7 @@ mod tests {
                 return;
             }
             assert!(
-                matches!(job.state, JobState::Pending | JobState::Running),
+                matches!(job.state, JobState::Queued | JobState::Running),
                 "job ended {:?} ({}) while waiting for {wanted:?}",
                 job.state,
                 job.message
@@ -860,16 +576,17 @@ mod tests {
     fn a_create_cancelled_while_it_runs_stays_cancelled_and_writes_no_package() {
         let dir = tempfile::tempdir().unwrap();
         let frames = blocking_codestream_directory(dir.path());
-        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
-        start_job_queue(&queue, crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
+        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
 
         let finished_output = dir.path().join("finished");
         let started = std::time::Instant::now();
-        let finished = queue.submit(
+        let finished = submit(
+            &queue,
             JobType::CreateDcp,
-            &create_params(&frames, &finished_output),
+            create_params(&frames, &finished_output),
         );
-        wait_for_state(&queue, &finished, JobState::Completed, CREATE_RUN_LIMIT);
+        wait_for_state(&queue, finished, JobState::Completed, CREATE_RUN_LIMIT);
         let uncancelled_run_time = started.elapsed();
         assert!(
             holds_assetmap(&finished_output.join("Cancel Test")),
@@ -877,20 +594,27 @@ mod tests {
         );
 
         let cancelled_output = dir.path().join("cancelled");
-        let cancelled = queue.submit(
+        let cancelled = submit(
+            &queue,
             JobType::CreateDcp,
-            &create_params(&frames, &cancelled_output),
+            create_params(&frames, &cancelled_output),
         );
-        wait_for_state(&queue, &cancelled, JobState::Running, FAILURE_POLL_LIMIT);
-        assert!(queue.cancel(&cancelled));
+        // starting the next job clears the queue's cancel flag under the detached worker
+        submit(
+            &queue,
+            JobType::CreateDcp,
+            create_params(&frames, &dir.path().join("following")),
+        );
+        wait_for_state(&queue, cancelled, JobState::Running, FAILURE_POLL_LIMIT);
+        assert!(queue.cancel(cancelled));
+        wait_for_state(&queue, cancelled, JobState::Cancelled, FAILURE_POLL_LIMIT);
 
         let watch_until = std::time::Instant::now() + uncancelled_run_time * CANCELLED_WATCH_FACTOR;
         while std::time::Instant::now() < watch_until {
-            let job = queue.get(&cancelled).expect("the submitted job");
+            let job = queue.get(cancelled).expect("the submitted job");
             assert_eq!(job.state, JobState::Cancelled, "{}", job.message);
             std::thread::sleep(STATE_POLL_INTERVAL);
         }
-        stop_job_queue(&queue);
         assert!(
             !holds_assetmap(&cancelled_output.join("Cancel Test")),
             "the cancelled create finished its package"
@@ -900,19 +624,20 @@ mod tests {
     #[test]
     fn a_stage_reported_after_a_cancel_leaves_the_job_cancelled() {
         let dir = tempfile::tempdir().unwrap();
-        let queue = JobQueue::with_jobs_file(dir.path().join("jobs.jsonl"));
-        let id = queue.submit(JobType::EncodeJ2k, "{}");
-        queue.update_job(&id, JobState::Running, 0, "Processing...");
+        let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
+        let id = submit(&queue, JobType::EncodeJ2k, "{}".into());
+        let job = queue.take_next().unwrap();
+        queue.start(&job);
         let control = JobControl {
             queue: queue.clone(),
-            job_id: id.clone(),
             cancel: Arc::new(AtomicBool::new(false)),
         };
 
-        assert!(queue.cancel(&id));
+        assert!(queue.cancel(id));
         crate::dcp::ProgressSink::stage(&control, 50, "24/48 frames");
+        finish_job(&queue, &job, Some(Ok(())));
 
-        assert_eq!(queue.get(&id).unwrap().state, JobState::Cancelled);
+        assert_eq!(state_of(&queue, id), JobState::Cancelled);
     }
 
     #[test]
@@ -920,15 +645,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.jsonl");
 
-        let queue = JobQueue::with_jobs_file(path.clone());
-        let id = queue.submit(JobType::VerifyDcp, "/dcp/one");
+        let queue = JobQueue::new(path.clone());
+        let id = submit(&queue, JobType::VerifyDcp, "/dcp/one".into());
         let mut text = std::fs::read_to_string(&path).unwrap();
         text.push_str("{not json}\n");
         std::fs::write(&path, text).unwrap();
 
-        let reloaded = JobQueue::with_jobs_file(path.clone());
+        let reloaded = JobQueue::new(path.clone());
         assert_eq!(reloaded.load_jobs_file(), 1);
-        assert_eq!(reloaded.list().len(), 1);
-        assert_eq!(reloaded.get(&id).unwrap().state, JobState::Pending);
+        assert_eq!(reloaded.snapshot().len(), 1);
+        assert_eq!(state_of(&reloaded, id), JobState::Queued);
     }
 }

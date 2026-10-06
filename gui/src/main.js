@@ -2330,8 +2330,8 @@ const DAEMON_JOB_SOURCE = "daemon";
 const DAEMON_ONLINE_STATUS = "Online";
 const DAEMON_OFFLINE_STATUS = "Offline";
 const DAEMON_ERROR_STATUS = "Error";
-// The daemon prints a header and a rule before its jobs.
-const DAEMON_JOB_LIST_HEADER_LINES = 2;
+// `batch list` prints one header line before its jobs.
+const DAEMON_JOB_LIST_HEADER_LINES = 1;
 
 function daemonJobRows(stdout) {
   const lines = stdout.trim().split("\n");

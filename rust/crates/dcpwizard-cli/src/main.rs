@@ -2472,7 +2472,7 @@ enum BatchAction {
     /// Cancel a job
     Cancel {
         /// Job ID to cancel
-        id: String,
+        id: u64,
     },
 }
 
@@ -6895,8 +6895,10 @@ fn run() {
         Commands::Daemon => {
             let addr = dcpwizard_core::job_queue::daemon_addr();
             println!("Starting dcpwizard daemon on {addr}...");
-            let queue = dcpwizard_core::job_queue::JobQueue::new();
-            dcpwizard_core::job_queue::start_daemon_ipc(&queue, encode_threads)
+            let queue = std::sync::Arc::new(dcpwizard_core::job_queue::JobQueue::new(
+                dcpwizard_core::store::jobs_path(),
+            ));
+            dcpwizard_core::job_queue::start_daemon_ipc(queue, encode_threads)
         }
 
         Commands::SubtitleConvert {
@@ -7438,7 +7440,7 @@ fn run() {
         },
 
         Commands::Batch { action } => {
-            use dcpwizard_core::job_queue::{IpcRequest, IpcResponse, send_ipc_request};
+            use dcpwizard_core::job_queue::{IpcRequest, IpcResponse, JobType, send_ipc_request};
 
             match action {
                 BatchAction::List => match send_ipc_request(&IpcRequest::List) {
@@ -7447,13 +7449,17 @@ fn run() {
                             println!("No jobs in queue");
                         } else {
                             println!(
-                                "{:<38} {:<12} {:<10} {:<14} Message",
+                                "{:<6} {:<10} {:<9} {:<14} Message",
                                 "ID", "State", "Progress", "Type"
                             );
-                            for j in &jobs {
+                            for job in &jobs {
                                 println!(
-                                    "{:<38} {:?} {:<10}% {:?} {}",
-                                    j.id, j.state, j.progress_percent, j.job_type, j.message
+                                    "{:<6} {:<10} {:<9} {:<14} {}",
+                                    job.id,
+                                    format!("{:?}", job.state),
+                                    format!("{:.0}%", job.percent),
+                                    job.title,
+                                    job.message
                                 );
                             }
                         }
@@ -7474,18 +7480,9 @@ fn run() {
                         tracing::error!("Daemon is not running. Start it with: dcpwizard daemon");
                         std::process::exit(1);
                     }
-                    let job_type = match r#type.as_str() {
-                        "create-dcp" => dcpwizard_core::job_queue::JobType::CreateDcp,
-                        "verify-dcp" => dcpwizard_core::job_queue::JobType::VerifyDcp,
-                        "export-dcp" => dcpwizard_core::job_queue::JobType::ExportDcp,
-                        "import-video" => dcpwizard_core::job_queue::JobType::ImportVideo,
-                        "encode-j2k" => dcpwizard_core::job_queue::JobType::EncodeJ2k,
-                        "wrap-mxf" => dcpwizard_core::job_queue::JobType::WrapMxf,
-                        "copy-to-drive" => dcpwizard_core::job_queue::JobType::CopyToDrive,
-                        other => {
-                            tracing::error!("Unknown job type: {other}");
-                            std::process::exit(1);
-                        }
+                    let Some(job_type) = JobType::from_name(&r#type) else {
+                        tracing::error!("Unknown job type: {}", r#type);
+                        std::process::exit(1);
                     };
                     match send_ipc_request(&IpcRequest::Submit { job_type, params }) {
                         Ok(IpcResponse::Submitted { id }) => {
@@ -7503,27 +7500,25 @@ fn run() {
                         _ => 1,
                     }
                 }
-                BatchAction::Cancel { id } => {
-                    match send_ipc_request(&IpcRequest::Cancel { id: id.clone() }) {
-                        Ok(IpcResponse::Cancelled(true)) => {
-                            println!("Cancelled job {id}");
-                            0
-                        }
-                        Ok(IpcResponse::Cancelled(false)) => {
-                            println!("Could not cancel job {id}");
-                            1
-                        }
-                        Ok(IpcResponse::Error(e)) => {
-                            tracing::error!("{e}");
-                            1
-                        }
-                        Err(e) => {
-                            tracing::error!("{e}");
-                            1
-                        }
-                        _ => 1,
+                BatchAction::Cancel { id } => match send_ipc_request(&IpcRequest::Cancel { id }) {
+                    Ok(IpcResponse::Cancelled(true)) => {
+                        println!("Cancelled job {id}");
+                        0
                     }
-                }
+                    Ok(IpcResponse::Cancelled(false)) => {
+                        println!("Could not cancel job {id}");
+                        1
+                    }
+                    Ok(IpcResponse::Error(e)) => {
+                        tracing::error!("{e}");
+                        1
+                    }
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        1
+                    }
+                    _ => 1,
+                },
             }
         }
 

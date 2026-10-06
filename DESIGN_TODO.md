@@ -80,12 +80,12 @@ user-facing surface is here.
   than reading blackdetect and freezedetect.
 - The GUI's create step has no watermark field: `create --watermark` and the
   `watermark` command that marks a finished DCP are CLI only.
-- The GUI's Jobs panel lists both queues but they stay separate: the GUI runs its own
-  queue in tauri state (`postkit::gui_job_queue`) and only `serve` proxies to the daemon, so
-  two queues exist on one machine and neither can take the other's jobs. The daemon
-  cannot take a GUI job as things stand: its `CreateDcp` runs
-  `create_dcp_with_progress` over a `DcpConfig` of already-encoded J2K, while a GUI
-  job encodes through postkit and reports per-frame progress. One queue for both
+- The GUI and the job daemon run separate instances of postkit's `JobQueue` on one
+  machine, each with its own jobs file, and neither can take the other's jobs. The
+  Jobs panel lists both. The daemon cannot take a GUI build as things stand: its
+  `create-dcp` job runs `create_dcp_with_progress` over a `DcpConfig` of
+  already-encoded J2K, while a GUI job encodes through postkit and reports per-frame
+  progress. One queue for both
   needs a job type that carries a GUI build, or the GUI build path moved into CORE
   behind the existing IPC. GUI + CORE.
 - DCP-o-matic allows fully custom colour conversions (user chromaticities,

@@ -1,4 +1,5 @@
-use crate::job_queue::{IpcRequest, IpcResponse, Job, JobType, send_ipc_request};
+use crate::job_queue::{IpcRequest, IpcResponse, JobType, send_ipc_request};
+use postkit::job_queue::{JobInfo, JobState};
 use postkit::rest_api::{Request, RestServer, RouteResponse};
 use std::net::TcpListener;
 
@@ -55,8 +56,7 @@ pub fn start_rest_api(bind_addr: &str, api_key: Option<&str>) -> i32 {
     }
 }
 
-// this server owns no queue of its own: every job route proxies to the shared job
-// daemon over IPC, the same queue the `batch` CLI drives
+// every job route goes over IPC to the job daemon's queue, the one `batch` drives
 fn build_server(bind_addr: &str, api_key: Option<&str>) -> RestServer {
     let mut server = RestServer::new(bind_addr);
     if let Some(key) = api_key {
@@ -142,7 +142,7 @@ fn submitted(job_type: JobType, params: &str) -> (u16, String) {
 }
 
 /// Ask the daemon for the current job list over IPC.
-fn daemon_jobs() -> Result<Vec<Job>, String> {
+fn daemon_jobs() -> Result<Vec<JobInfo>, String> {
     match send_ipc_request(&IpcRequest::List)? {
         IpcResponse::Jobs(jobs) => Ok(jobs),
         IpcResponse::Error(e) => Err(e),
@@ -151,7 +151,7 @@ fn daemon_jobs() -> Result<Vec<Job>, String> {
 }
 
 /// Submit a job to the daemon over IPC, returning the new job id.
-fn submit_to_daemon(job_type: JobType, params: &str) -> Result<String, String> {
+fn submit_to_daemon(job_type: JobType, params: &str) -> Result<u64, String> {
     match send_ipc_request(&IpcRequest::Submit {
         job_type,
         params: params.to_string(),
@@ -170,18 +170,15 @@ fn daemon_error(e: &str) -> String {
 }
 
 /// Build Prometheus-compatible metrics text from a job list.
-fn build_prometheus_metrics(jobs: &[Job]) -> String {
-    use crate::job_queue::JobState;
+fn build_prometheus_metrics(jobs: &[JobInfo]) -> String {
     use std::fmt::Write;
 
+    let count_in = |state: JobState| jobs.iter().filter(|job| job.state == state).count();
     let total = jobs.len();
-    let pending = jobs.iter().filter(|j| j.state == JobState::Pending).count();
-    let running = jobs.iter().filter(|j| j.state == JobState::Running).count();
-    let completed = jobs
-        .iter()
-        .filter(|j| j.state == JobState::Completed)
-        .count();
-    let failed = jobs.iter().filter(|j| j.state == JobState::Failed).count();
+    let queued = count_in(JobState::Queued);
+    let running = count_in(JobState::Running);
+    let completed = count_in(JobState::Completed);
+    let failed = count_in(JobState::Failed);
 
     let mut out = String::new();
 
@@ -192,9 +189,9 @@ fn build_prometheus_metrics(jobs: &[Job]) -> String {
     let _ = writeln!(out, "# TYPE dcpwizard_jobs_total gauge");
     let _ = writeln!(out, "dcpwizard_jobs_total {total}");
     let _ = writeln!(out);
-    let _ = writeln!(out, "# HELP dcpwizard_jobs_pending Number of pending jobs.");
+    let _ = writeln!(out, "# HELP dcpwizard_jobs_pending Number of queued jobs.");
     let _ = writeln!(out, "# TYPE dcpwizard_jobs_pending gauge");
-    let _ = writeln!(out, "dcpwizard_jobs_pending {pending}");
+    let _ = writeln!(out, "dcpwizard_jobs_pending {queued}");
     let _ = writeln!(out);
     let _ = writeln!(out, "# HELP dcpwizard_jobs_running Number of running jobs.");
     let _ = writeln!(out, "# TYPE dcpwizard_jobs_running gauge");

@@ -725,14 +725,16 @@ dcpwizard watch ./incoming --output ./packages --interval 30 \
 # (default 127.0.0.1:9457). The queue is written to
 # ~/.local/share/dcpwizard/jobs.jsonl, one JSON line per job on submit and on
 # every state change, and read back on start, so a crash or a reboot does not
-# lose queued jobs. $DCPWIZARD_JOBS_FILE points a second daemon at another file.
+# lose queued jobs. A jobs.jsonl written by an older daemon cannot be read and
+# its lines are skipped on the first start. $DCPWIZARD_JOBS_FILE points a second
+# daemon at another file.
 #
 # The desktop GUI runs a queue of its own, written to
-# ~/.local/share/dcpwizard/gui-jobs.jsonl, one JSON line per record like the
-# daemon's file but with the GUI's own record shape, and listed in the
-# Jobs panel beside the daemon's. $DCPWIZARD_GUI_JOBS_FILE points a second GUI
-# at another file. The two variables name different files: DCPWIZARD_JOBS_FILE
-# is the daemon's jobs.jsonl, DCPWIZARD_GUI_JOBS_FILE the GUI's gui-jobs.jsonl.
+# ~/.local/share/dcpwizard/gui-jobs.jsonl in the same record shape as the
+# daemon's file, and listed in the Jobs panel beside the daemon's.
+# $DCPWIZARD_GUI_JOBS_FILE points a second GUI at another file. The two variables
+# name different files: DCPWIZARD_JOBS_FILE is the daemon's jobs.jsonl,
+# DCPWIZARD_GUI_JOBS_FILE the GUI's gui-jobs.jsonl.
 dcpwizard daemon
 
 # Manage job queue. A create-dcp job writes to <output_dir>/<title>, here ./dcp/My Film
