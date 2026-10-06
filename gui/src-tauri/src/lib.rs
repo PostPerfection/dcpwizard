@@ -45,11 +45,11 @@ fn component_versions(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
-    guikit::startup::prefer_shared_memory_webkit_frames_on_nvidia();
+    guikit_startup::prefer_shared_memory_webkit_frames_on_nvidia();
     postkit::grok_encoder::set_packaged_gpu_plugin_path("dcpwizard");
 
     #[cfg(unix)]
-    guikit::startup::fork_terminal_guard();
+    guikit_startup::fork_terminal_guard();
     crash_log::install();
 
     let job_queue = pipeline::JobQueue::new(pipeline::jobs_path());

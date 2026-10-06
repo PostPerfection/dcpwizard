@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -15,6 +15,8 @@ pub struct ImageSequenceEncode {
     // the running process's setting, never read from a job
     #[serde(skip)]
     pub encode_threads: u32,
+    #[serde(default)]
+    pub container: Option<(u32, u32)>,
 }
 
 /// Compress a still sequence into `<output_dir>/j2k` at the bandwidth's bytes a frame.
@@ -26,7 +28,7 @@ pub fn encode_image_sequence(
     postkit::pipeline::run_encode_with_options(
         &encode.input_dir,
         &encode.output_dir,
-        &image_sequence_encode_options(encode),
+        &image_sequence_encode_options(encode)?,
         cancel,
         &Arc::new(AtomicBool::new(false)),
         on_progress,
@@ -36,12 +38,16 @@ pub fn encode_image_sequence(
 
 fn image_sequence_encode_options(
     encode: &ImageSequenceEncode,
-) -> postkit::pipeline::EncodeRunOptions {
+) -> Result<postkit::pipeline::EncodeRunOptions, String> {
+    let picture = match encode.container {
+        Some(container) => container_fit(&encode.input_dir, container)?,
+        None => postkit::picture_processing::PictureProcessing::default(),
+    };
     let fps = encode.fps;
     let dci_cap = postkit::j2k::dci_codestream_byte_cap(fps);
     let target_codestream_bytes = (encode.bandwidth_mbps > 0)
         .then(|| video_codestream_byte_cap(fps, encode.bandwidth_mbps, false));
-    postkit::pipeline::EncodeRunOptions {
+    Ok(postkit::pipeline::EncodeRunOptions {
         compression_ratio: DEFAULT_COMPRESSION_RATIO,
         target_codestream_bytes,
         fps: postkit::encode::FrameRate::whole(fps),
@@ -49,8 +55,50 @@ fn image_sequence_encode_options(
             target_codestream_bytes.map_or(dci_cap, |target| dci_cap.min(target)),
         ),
         encode_threads: encode.encode_threads,
+        picture,
         ..Default::default()
-    }
+    })
+}
+
+fn container_fit(
+    sequence: &Path,
+    container: (u32, u32),
+) -> Result<postkit::picture_processing::PictureProcessing, String> {
+    let (width, height) = first_image_raster(sequence).ok_or_else(|| {
+        format!(
+            "cannot read the size of the first image in {}",
+            sequence.display()
+        )
+    })?;
+    let resolved = crate::source_picture::resolve_picture(
+        &crate::source_picture::SourcePictureOptions::default(),
+        sequence,
+        width,
+        height,
+        &crate::source_picture::EncodeGeometry {
+            forced_raster: Some(container),
+            container: Some(container),
+        },
+        true,
+    )?;
+    tracing::info!("Picture: {}", resolved.plan.describe());
+    Ok(resolved.processing)
+}
+
+pub fn first_image_raster(sequence: &Path) -> Option<(u32, u32)> {
+    let mut images: Vec<PathBuf> = std::fs::read_dir(sequence)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && postkit::encode::detect_input_type(path)
+                    == postkit::encode::InputType::ImageSequence
+        })
+        .collect();
+    images.sort();
+    let info = crate::probe::probe_video(images.first()?)?;
+    Some((info.width, info.height))
 }
 
 /// Compression ratio used when no target bandwidth is given: 10:1 is the
@@ -230,12 +278,13 @@ mod tests {
             bandwidth_mbps,
             fps: 24,
             encode_threads: crate::preferences::AUTOMATIC_ENCODE_THREADS,
+            container: None,
         }
     }
 
     #[test]
     fn a_bandwidth_is_what_the_still_sequence_allocation_aims_at() {
-        let options = image_sequence_encode_options(&image_sequence(230));
+        let options = image_sequence_encode_options(&image_sequence(230)).unwrap();
         assert_eq!(options.target_codestream_bytes, Some(1_197_916));
         assert_eq!(options.compression_ratio, DEFAULT_COMPRESSION_RATIO);
         assert_eq!(options.codestream_byte_cap, Some(1_197_916));
@@ -249,14 +298,16 @@ mod tests {
             ..image_sequence(0)
         };
         assert_eq!(
-            image_sequence_encode_options(&encode).encode_threads,
+            image_sequence_encode_options(&encode)
+                .unwrap()
+                .encode_threads,
             ENCODE_THREADS
         );
     }
 
     #[test]
     fn no_bandwidth_encodes_at_the_default_ratio_under_the_dci_cap() {
-        let options = image_sequence_encode_options(&image_sequence(0));
+        let options = image_sequence_encode_options(&image_sequence(0)).unwrap();
         assert_eq!(options.target_codestream_bytes, None);
         assert_eq!(options.compression_ratio, DEFAULT_COMPRESSION_RATIO);
         assert_eq!(

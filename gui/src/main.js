@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -12,7 +12,7 @@ import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, marker
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
-import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
+import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
@@ -25,10 +25,13 @@ import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js"
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
 import { prefilledRecipientKey } from "./recipient-identity.js";
+import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
+import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import {
   chainPaths,
   describeSigner,
   kdmRequest,
+  packageSignerArgs,
   recipientCertificateCommand,
   recipientCreationRefusals,
   recipientPaths,
@@ -58,6 +61,7 @@ document.querySelectorAll(".sidebar-btn[data-view]").forEach((btn) => {
     btn.classList.add("active");
     const view = document.getElementById(`view-${btn.dataset.view}`);
     if (view) view.classList.add("active");
+    if (btn.dataset.view === "reels") showProjectTimeline();
 
     // Auto-refresh jobs when switching to jobs view
     if (btn.dataset.view === "jobs") {
@@ -91,6 +95,7 @@ function switchView(viewName) {
   if (btn) btn.classList.add("active");
   const view = document.getElementById(`view-${viewName}`);
   if (view) view.classList.add("active");
+  if (viewName === "reels") showProjectTimeline();
   if (viewName === "jobs") { refreshJobs(); startJobsPolling(); } else { stopJobsPolling(); }
 }
 
@@ -160,7 +165,7 @@ const DEFAULT_FRAMERATE = 24;
 const AUTOMATIC_ENCODE_THREADS = 0;
 
 const PREF_DEFAULTS = {
-  standard: "SMPTE", resolution: "2K", framerate: DEFAULT_FRAMERATE,
+  standard: "SMPTE", resolution: "auto", framerate: DEFAULT_FRAMERATE,
   encrypt: false, stereo3d: false, validate: true,
   creator: "", facility: "", bandwidth: DEFAULT_BANDWIDTH_MBPS, gpu: false,
   gpuLicense: "", gpuRegistrationUrl: "", encodeThreads: AUTOMATIC_ENCODE_THREADS,
@@ -186,7 +191,7 @@ async function savePrefs(prefs) {
   }
 }
 
-async function initializePreferences() {
+async function loadPreferences() {
   try {
     const loaded = await invoke("load_preferences");
     let legacy = {};
@@ -211,6 +216,9 @@ async function initializePreferences() {
   }
 
   loadSettings();
+}
+
+async function applyStartupPreferences() {
   const preferences = getPrefs();
   await applyGpuSetting(
     preferences.gpu,
@@ -464,6 +472,7 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     prefs.encodeThreads,
   )) return;
   if (!await savePrefs(prefs)) return;
+  takeProjectDefaultsFromPreferences();
   refreshSignerLine();
   refreshIsdcfPreview();
   setStatus("Settings saved");
@@ -479,7 +488,8 @@ document.getElementById("set-reset")?.addEventListener("click", async () => {
   }
 });
 
-initializePreferences();
+const preferencesLoaded = loadPreferences();
+preferencesLoaded.then(applyStartupPreferences);
 
 // === Project State ===
 const project = {
@@ -1680,12 +1690,14 @@ function previewTargetInput() {
   };
 }
 
-document.getElementById("btn-preview")?.addEventListener("click", () => {
+function previewCurrentTarget() {
   const target = previewTarget(previewTargetInput());
   if (!target) return;
   if (target.kind === PREVIEW_KIND_SOURCE) previewSourcePicture(target.path);
   else previewPackage(target.path);
-});
+}
+
+document.getElementById("btn-preview")?.addEventListener("click", previewCurrentTarget);
 
 // content keys entered this session, by the package or picture path they opened
 const sessionContentKeys = new Map();
@@ -2160,6 +2172,7 @@ function renderVfReplacements() {
         <div class="input-with-btn">
           <input type="text" class="vf-picture" value="${r.picture}" placeholder="J2K dir or .mxf…" readonly>
           <button class="btn-sm vf-browse-picture" type="button">…</button>
+          <button class="btn-sm vf-browse-picture-mxf" type="button">MXF…</button>
         </div>
       </div>
       <div class="prop-field">
@@ -2209,6 +2222,9 @@ document.getElementById("vf-repl-list")?.addEventListener("click", async (e) => 
   if (e.target.classList.contains("vf-browse-picture")) {
     const d = await open({ directory: true });
     if (d) { rec.picture = d; renderVfReplacements(); }
+  } else if (e.target.classList.contains("vf-browse-picture-mxf")) {
+    const f = await open({ directory: false, filters: [{ name: "MXF", extensions: ["mxf"] }] });
+    if (f) { rec.picture = f; renderVfReplacements(); }
   } else if (e.target.classList.contains("vf-browse-sound")) {
     const f = await open({ directory: false, filters: [{ name: "Audio/MXF", extensions: ["wav", "mxf"] }, { name: "All", extensions: ["*"] }] });
     if (f) { rec.sound = f; renderVfReplacements(); }
@@ -2504,13 +2520,13 @@ function checkEncodeReady() {
 document.getElementById("run-encode")?.addEventListener("click", async () => {
   const input = document.getElementById("enc-input").value;
   const output = document.getElementById("enc-output").value;
-  const resolution = document.getElementById("enc-resolution").value;
+  const container = document.getElementById("enc-resolution").value;
   const bandwidth = document.getElementById("enc-bandwidth").value;
   const framerate = document.getElementById("enc-framerate").value;
   const resultsBox = document.getElementById("encode-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Encoding...";
-  const args = ["encode", "-i", input, "-o", output, "--bandwidth", bandwidth];
+  const args = ["encode", "-i", input, "-o", output, "--bandwidth", bandwidth, "--fps", framerate, "--container", container];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
@@ -2604,15 +2620,15 @@ document.getElementById("report-browse")?.addEventListener("click", async () => 
 
 document.getElementById("report-start")?.addEventListener("click", async () => {
   const dcp = document.getElementById("report-dcp").value;
-  const format = document.getElementById("report-format").value;
+  const reportPath = qcReportPathBeside(dcp);
   const resultsBox = document.getElementById("report-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Generating report...";
-  const args = ["report", "--dcp", dcp, "-o", dcp + "/report." + format];
+  const args = ["report", "--dcp", dcp, "-o", reportPath];
   const cmd = Command.sidecar("dcpwizard", args);
   const result = await cmd.execute();
   resultsBox.textContent = result.code === 0
-    ? result.stdout
+    ? `✓ Report written to ${reportPath}\n\n${result.stdout}`
     : "✗ Failed\n\n" + (result.stderr || result.stdout);
 });
 
@@ -2644,7 +2660,10 @@ async function restoreBuildPanel(saved) {
   renderAssets();
   updateStatusStats();
   submittedPackage = null;
+  openedPackage = null;
   clearPreviewSelection();
+  stopPreview();
+  if (isPreviewVisible()) previewCurrentTarget();
   refreshPreviewCrop();
   refreshDiskSpace();
 
@@ -3019,26 +3038,53 @@ function libraryNameFor(path) {
 renderAssets();
 renderReels();
 const buildPanelDefaults = serializeBuildPanel();
-initProjects({
-  wizard: "dcpwizard",
-  projectFileVersion: PROJECT_FILE_VERSION,
-  projectFileMigrations: PROJECT_FILE_MIGRATIONS,
-  applicationName: "DCP Wizard",
-  packageNoun: "DCP",
-  outputFields: OUTPUT_FIELDS,
-  textFields: TEXT_FIELDS,
-  defaults: buildPanelDefaults,
-  defaultProjectFolder: defaultOutputFolder,
-  setProjectTitle,
-  setOutputFolder,
-  serialize: serializeBuildPanel,
-  restore: restoreBuildPanel,
-  projectTitle: (form) => form.title?.trim(),
-  onQueue: addToPlaylist,
-  onRetitle: retitleRecentPackage,
-  onDelete: deleteRecentPackage,
-  afterRecentRender: applyPreviewSelection,
-  setStatus,
+
+function preferredProjectControls() {
+  return PREFERRED_PROJECT_CONTROLS.map(([key, id]) => [key, document.getElementById(id)]);
+}
+
+function takeProjectDefaultsFromPreferences() {
+  const optionValues = preferredProjectControls()
+    .filter(([, control]) => control.options)
+    .map(([key, control]) => [key, [...control.options].map((option) => option.value)]);
+  const preferredDefaults = projectDefaultsFromPreferences(getPrefs(), Object.fromEntries(optionValues));
+  Object.assign(buildPanelDefaults, preferredDefaults);
+  return preferredDefaults;
+}
+
+async function showProjectTimeline() {
+  if (openedPackage) return;
+  const editRate = parseInt(document.getElementById("prop-framerate")?.value) || DEFAULT_FRAMERATE;
+  const reels = [...project.reels];
+  const sources = await Promise.all(reels.map((reel) => (reel.picture ? probeVideo(reel.picture.path) : null)));
+  const durationsFrames = sources.map((source) => Math.round((source?.duration || 0) * editRate));
+  loadTimelineFromProject(reels, durationsFrames, editRate);
+}
+
+preferencesLoaded.then(() => {
+  const controls = Object.fromEntries(preferredProjectControls());
+  for (const [key, value] of Object.entries(takeProjectDefaultsFromPreferences())) controls[key].value = value;
+  initProjects({
+    wizard: "dcpwizard",
+    projectFileVersion: PROJECT_FILE_VERSION,
+    projectFileMigrations: PROJECT_FILE_MIGRATIONS,
+    applicationName: "DCP Wizard",
+    packageNoun: "DCP",
+    outputFields: OUTPUT_FIELDS,
+    textFields: TEXT_FIELDS,
+    defaults: buildPanelDefaults,
+    defaultProjectFolder: defaultOutputFolder,
+    setProjectTitle,
+    setOutputFolder,
+    serialize: serializeBuildPanel,
+    restore: restoreBuildPanel,
+    projectTitle: (form) => form.title?.trim(),
+    onQueue: addToPlaylist,
+    onRetitle: retitleRecentPackage,
+    onDelete: deleteRecentPackage,
+    afterRecentRender: applyPreviewSelection,
+    setStatus,
+  });
 });
 refreshLibrary();
 updateStatusStats();
@@ -3073,8 +3119,8 @@ document.getElementById("srt-convert")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["subtitle-convert", "-i", input, "-l", lang, "--fps", fps, "--vposition", vposition];
-    if (output) args.push("-o", output);
+    const outputFile = outputFileInFolder({ folder: output, input, extension: SUBTITLE_CONVERSION_EXTENSION });
+    const args = ["subtitle-convert", "-i", input, "-o", outputFile, "-l", lang, "--fps", fps, "--vposition", vposition];
     const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
@@ -3164,8 +3210,8 @@ document.getElementById("burnin-start")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["burnin", "-i", video, "-s", sub];
-    if (output) args.push("-o", output);
+    const outputFile = outputFileInFolder({ folder: output, input: video, nameParts: [BURN_IN_NAME_PART], extension: BURN_IN_EXTENSION });
+    const args = ["burnin", "-i", video, "-s", sub, "-o", outputFile];
     const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
@@ -3203,8 +3249,8 @@ document.getElementById("convert-start")?.addEventListener("click", async () => 
   resultsEl.classList.add("visible");
 
   try {
-    const args = ["convert", "-i", input, "-t", container, "-m", method];
-    if (output) args.push("-o", output);
+    const outputFile = outputFileInFolder({ folder: output, input, nameParts: [container], extension: TARGET_CONVERSION_EXTENSION });
+    const args = ["convert", "-i", input, "-t", container, "-m", method, "-o", outputFile];
     const cmd = Command.sidecar("dcpwizard", args);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
@@ -3232,7 +3278,12 @@ document.getElementById("ingest-start")?.addEventListener("click", async () => {
   resultsEl.classList.add("visible");
 
   try {
-    const cmd = Command.sidecar("dcpwizard", ["ingest-package", dir]);
+    const signerArgs = packageSignerArgs({
+      signingCert: document.getElementById("set-signing-cert")?.value || null,
+      signingKey: document.getElementById("set-signing-key")?.value || null,
+      signingChain: signingChainFrom(getPrefs()),
+    });
+    const cmd = Command.sidecar("dcpwizard", ["ingest-package", dir, ...signerArgs]);
     const result = await cmd.execute();
     resultsEl.textContent = result.code === 0
       ? `✓ Repackaged\n${result.stdout}`

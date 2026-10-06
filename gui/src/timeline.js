@@ -1,5 +1,6 @@
 // DCP Timeline View - renders multi-reel timeline with visual reel segments and playback integration
 import { invoke } from '@tauri-apps/api/core';
+import { projectTimelineEntries, segmentSpan } from './project-timeline.js';
 
 let timelineData = null; // { reels: [], totalFrames, editRate }
 let currentReel = -1;
@@ -28,24 +29,12 @@ export async function loadTimelineFromCpl(cplPath) {
 }
 
 // Load timeline from the project model (for DCPs being built)
-export function loadTimelineFromProject(reels, editRate) {
+export function loadTimelineFromProject(reels, durationsFrames, editRate) {
   if (!reels || reels.length === 0) {
     renderEmpty();
     return;
   }
-  // Convert project reels to timeline format
-  const entries = reels.map((reel, i) => ({
-    reel_id: String(reel.id),
-    reel_number: i + 1,
-    duration_frames: reel.durationFrames || 0,
-    entry_point: 0,
-    edit_rate: editRate || '24 1',
-    picture_asset_id: '',
-    sound_asset_id: '',
-    picture_file: reel.picture?.path || '',
-    sound_file: reel.sound?.path || '',
-  }));
-  buildTimelineData(entries);
+  buildTimelineData(projectTimelineEntries(reels, durationsFrames, editRate));
   render();
 }
 
@@ -137,7 +126,7 @@ function renderRuler() {
   ruler.appendChild(playhead);
 
   // Click on ruler to seek
-  ruler.addEventListener('mousedown', handleRulerSeek);
+  ruler.onmousedown = handleRulerSeek;
 }
 
 function renderTracks() {
@@ -153,10 +142,10 @@ function renderTracks() {
   const { reels, totalFrames } = timelineData;
   const colors = ['#7c3aed', '#6d28d9', '#5b21b6', '#4c1d95', '#8b5cf6'];
   const soundColors = ['#3b82f6', '#2563eb', '#1d4ed8', '#1e40af', '#60a5fa'];
+  const subtitleColors = ['#d97706', '#b45309', '#92400e', '#78350f', '#f59e0b'];
 
   for (const reel of reels) {
-    const widthPct = (reel.duration_frames / totalFrames) * 100;
-    const leftPct = (reel.startFrame / totalFrames) * 100;
+    const { leftPercent: leftPct, widthPercent: widthPct } = segmentSpan(reel, reels.length, totalFrames);
 
     // Picture segment
     if (reel.picture_file || reel.picture_asset_id) {
@@ -169,11 +158,17 @@ function renderTracks() {
       const seg = createSegment(reel, leftPct, widthPct, soundColors[(reel.reel_number - 1) % soundColors.length], 'sound');
       soundEl.appendChild(seg);
     }
+
+    if (subtitleEl && (reel.subtitle_file || reel.subtitle_asset_id)) {
+      const seg = createSegment(reel, leftPct, widthPct, subtitleColors[(reel.reel_number - 1) % subtitleColors.length], 'subtitle');
+      subtitleEl.appendChild(seg);
+    }
   }
 
-  // Click on track to seek
-  pictureEl.addEventListener('mousedown', handleTrackSeek);
-  soundEl.addEventListener('mousedown', handleTrackSeek);
+  // an added listener would pile up on every render
+  pictureEl.onmousedown = handleTrackSeek;
+  soundEl.onmousedown = handleTrackSeek;
+  if (subtitleEl) subtitleEl.onmousedown = handleTrackSeek;
 }
 
 function createSegment(reel, leftPct, widthPct, color, type) {

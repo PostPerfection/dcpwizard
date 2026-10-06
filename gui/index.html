@@ -1030,8 +1030,8 @@
                 <div class="prop-field">
                   <label>Resolution</label>
                   <select id="enc-resolution">
-                    <option value="2k">2K (2048×1080)</option>
-                    <option value="4k">4K (4096×2160)</option>
+                    <option value="2k-full">2K (2048×1080)</option>
+                    <option value="4k-full">4K (4096×2160)</option>
                   </select>
                 </div>
                 <div class="prop-field">
@@ -1140,14 +1140,6 @@
                   <button id="report-browse" class="btn-sm">…</button>
                 </div>
               </div>
-              <div class="prop-field">
-                <label>Output Format</label>
-                <select id="report-format">
-                  <option value="text">Plain Text</option>
-                  <option value="html">HTML</option>
-                  <option value="pdf">PDF</option>
-                </select>
-              </div>
               <button id="report-start" class="btn-primary" disabled>Generate Report</button>
               <div id="report-results" class="results-box"></div>
             </section>
@@ -1181,9 +1173,9 @@
                 </div>
               </div>
               <div class="prop-field">
-                <label>Output File</label>
+                <label>Output Folder</label>
                 <div class="input-with-btn">
-                  <input id="srt-output" type="text" placeholder="Output .xml path" readonly>
+                  <input id="srt-output" type="text" placeholder="Output folder…" readonly>
                   <button id="srt-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
@@ -1456,9 +1448,14 @@
                 <div class="prop-field">
                   <label for="set-resolution">Resolution</label>
                   <select id="set-resolution">
-                    <option value="2K">2K</option>
-                    <option value="4K">4K</option>
-                  </select>
+                    <option value="auto">Auto (nearest container)</option>
+                    <option value="2k-scope">2K Scope (2048×858)</option>
+                    <option value="2k-flat">2K Flat (1998×1080)</option>
+                    <option value="2k-full">2K Full (2048×1080)</option>
+                    <option value="4k-scope">4K Scope (4096×1716)</option>
+                    <option value="4k-flat">4K Flat (3996×2160)</option>
+                    <option value="4k-full">4K Full (4096×2160)</option>
+                                      </select>
                 </div>
                 <div class="prop-field">
                   <label for="set-framerate">Frame Rate</label>

@@ -329,11 +329,8 @@ fn assemble_signs_the_composition_it_writes() {
     assert_package_signed_and_hashed_after_signing(&out, &signer);
 }
 
-/// The VF CPL is written, then rewritten to carry the OriginalPackagingList
-/// marker. Signing before that rewrite would leave exactly the stale signature
-/// `edit` used to produce.
 #[test]
-fn create_vf_signs_after_the_supplemental_marker_rewrite() {
+fn create_vf_signs_its_cpl_and_pkl() {
     let dir = tempfile::tempdir().unwrap();
     let certs = dir.path().join("certs");
     std::fs::create_dir_all(&certs).unwrap();
@@ -360,12 +357,6 @@ fn create_vf_signs_after_the_supplemental_marker_rewrite() {
     assert_eq!(code, 0, "signed create-vf must succeed");
     let out = dcpwizard_core::vf::vf_package_dir(&vf_config).unwrap();
 
-    let cpl = only_file_matching(&out, "CPL_");
-    let xml = std::fs::read_to_string(&cpl).unwrap();
-    assert!(
-        xml.contains("OriginalPackagingList"),
-        "the marker must be present, or this proves nothing"
-    );
     assert_package_signed_and_hashed_after_signing(&out, &signer);
 }
 

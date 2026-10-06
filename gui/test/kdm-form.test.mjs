@@ -5,6 +5,7 @@ import {
   describeSigner,
   kdmRequest,
   kdmTimestamp,
+  packageSignerArgs,
   recipientCertificateCommand,
   recipientCreationRefusals,
   rewrapRequest,
@@ -168,4 +169,25 @@ test("the signer line names the leaf Settings will use", () => {
     signingRoot: "/certs/root.pem",
   }), /signer\.pem/);
   assert.match(describeSigner({ signingCert: "", signingKey: "" }), /No signing certificate/);
+});
+
+test("a package is signed with the leaf, then each chain certificate in order", () => {
+  const args = packageSignerArgs({
+    signingCert: "/certs/signer.pem",
+    signingKey: "/certs/signer.key",
+    signingChain: ["/certs/intermediate.pem", "/certs/root.pem"],
+  });
+
+  assert.deepEqual(args, [
+    "--signer-cert", "/certs/signer.pem",
+    "--signer-key", "/certs/signer.key",
+    "--signer-chain", "/certs/intermediate.pem",
+    "--signer-chain", "/certs/root.pem",
+  ]);
+});
+
+test("a package gets no signer flags without both the leaf and its key", () => {
+  const args = packageSignerArgs({ signingCert: "/certs/signer.pem", signingKey: null, signingChain: ["/certs/root.pem"] });
+
+  assert.deepEqual(args, []);
 });

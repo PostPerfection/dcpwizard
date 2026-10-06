@@ -20,6 +20,7 @@ pub struct VerifyCliOptions {
     /// Read every frame's codestream, which is what the QC report's forensics
     /// line is measured from.
     pub scan_every_frame: bool,
+    pub ov_dir: Option<PathBuf>,
 }
 
 /// Verify a DCP by delegating to dcpdoctor-core.
@@ -70,6 +71,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
         }
         o.scan_every_frame = options.scan_every_frame;
         o.skip_bitrate_measurement = options.skip_bitrate_measurement;
+        o.ov = options.ov_dir.clone();
         o
     } else {
         dcpdoctor_core::VerifyOptions {
@@ -79,7 +81,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
             scan_every_frame: options.scan_every_frame,
             skip_bitrate_measurement: options.skip_bitrate_measurement,
             strict_smpte: false,
-            ov: None,
+            ov: options.ov_dir.clone(),
             kdm: None,
             recipient_key: None,
             // a DCP gets no IMF pass

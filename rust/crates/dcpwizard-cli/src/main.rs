@@ -1275,6 +1275,10 @@ enum Commands {
         /// Frame rate the bitrate is budgeted at
         #[arg(long, default_value = "24")]
         fps: u32,
+        /// Picture container the frames are fitted into: 2k-scope, 2k-flat,
+        /// 2k-full, 4k-scope, 4k-flat, or 4k-full. Unset keeps each frame's own size
+        #[arg(long)]
+        container: Option<String>,
     },
     /// Full pipeline: video → J2K → DCP (streaming, no intermediate files)
     Pipeline {
@@ -1377,6 +1381,10 @@ enum Commands {
         /// Strict SMPTE verification, then dcpdoctor's Bv2.1 profile check
         #[arg(long)]
         strict: bool,
+        /// Original Version DCP a version file references, so its references
+        /// to the OV's assets are checked rather than reported as unresolved
+        #[arg(long)]
+        ov: Option<String>,
         /// Write report to file (.txt or .html)
         #[arg(short, long)]
         output: Option<String>,
@@ -1704,7 +1712,7 @@ enum Commands {
         /// Input video file
         #[arg(short, long)]
         input: String,
-        /// Subtitle file (SRT or ASS)
+        /// Subtitle file: SRT, ASS, WebVTT, or a SMPTE or Interop subtitle XML or MXF
         #[arg(short, long)]
         subtitles: String,
         /// Output video file
@@ -2633,7 +2641,7 @@ fn isdcf_package(
     let planned_raster = match dcpwizard_core::preflight::plan_picture(plan)? {
         Some(picture) => Some(picture.raster),
         // the plan reads no image sequence, which is compressed at its own size
-        None if request.sequence_input => first_image_raster(&plan.picture),
+        None if request.sequence_input => dcpwizard_core::encode::first_image_raster(&plan.picture),
         None => None,
     };
     // the video branch fits the resolution to the encode raster unless a flag fixed it
@@ -2694,22 +2702,6 @@ fn isdcf_package(
         &dcpwizard_core::package_dir::PackageName::Isdcf(naming),
         request.resume,
     )
-}
-
-fn first_image_raster(sequence: &Path) -> Option<(u32, u32)> {
-    let mut images: Vec<PathBuf> = std::fs::read_dir(sequence)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && postkit::encode::detect_input_type(path)
-                    == postkit::encode::InputType::ImageSequence
-        })
-        .collect();
-    images.sort();
-    let info = dcpwizard_core::probe::probe_video(images.first()?)?;
-    Some((info.width, info.height))
 }
 
 fn delivery_profile(name: &str) -> Result<dcpwizard_core::profiles::Profile, String> {
@@ -2863,6 +2855,7 @@ fn verify_finished_package(output_dir: &Path) -> i32 {
             skip_bitrate_measurement: false,
             strict: false,
             scan_every_frame: false,
+            ov_dir: None,
         },
     );
     print_verify_findings(&result);
@@ -5763,6 +5756,7 @@ fn run() {
                             bandwidth_mbps: video_bit_rate.unwrap_or(0),
                             fps,
                             encode_threads,
+                            container: None,
                         },
                         &cancel,
                         print_encode_progress,
@@ -5998,10 +5992,19 @@ fn run() {
             output,
             bandwidth,
             fps,
+            container,
         } => {
             use std::sync::Arc;
             use std::sync::atomic::AtomicBool;
 
+            let container = match resolve_container(container.as_deref(), None, false) {
+                Ok(NO_CONTAINER) => None,
+                Ok(container) => Some(container),
+                Err(e) => {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+            };
             let cancel = Arc::new(AtomicBool::new(false));
             let cancel_clone = cancel.clone();
             let _ = ctrlc::set_handler(move || {
@@ -6013,6 +6016,7 @@ fn run() {
                 bandwidth_mbps: bandwidth,
                 fps,
                 encode_threads,
+                container,
             };
             let result = dcpwizard_core::encode::encode_image_sequence(
                 &encode,
@@ -6293,6 +6297,7 @@ fn run() {
             no_hash_check,
             no_picture_check,
             strict,
+            ov,
             output,
             quiet,
         } => {
@@ -6304,6 +6309,7 @@ fn run() {
                     skip_bitrate_measurement: false,
                     strict,
                     scan_every_frame: false,
+                    ov_dir: ov.map(PathBuf::from),
                 },
             );
 

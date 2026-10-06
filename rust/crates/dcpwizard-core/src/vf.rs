@@ -172,6 +172,9 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                 ) else {
                     return -1;
                 };
+                if !replacement_fits_reel(entry, "picture", input, &a) {
+                    return -1;
+                }
                 let out = (a.id.clone(), a.duration);
                 new_assets.push(a);
                 out
@@ -192,6 +195,9 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                 ) else {
                     return -1;
                 };
+                if !replacement_fits_reel(entry, "sound", input, &a) {
+                    return -1;
+                }
                 let out = Some((a.id.clone(), a.duration));
                 if main_sound_track.is_none() {
                     main_sound_track = Some(vf_dir.join(&a.filename));
@@ -334,30 +340,6 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         return -1;
     }
 
-    // dcpdoctor detects a supplemental DCP by an <OriginalPackagingList> /
-    // <OriginalFileName> / <OPL> marker in the CPL. Reference the OV package so
-    // validating the VF alone yields the supplemental warning, not a hard
-    // cross-ref error.
-    let ov_ref = find_ov_pkl_id(&vf_dir, &config.ov_dir).unwrap_or_else(|| ov_cpl.id.clone());
-    let marker = format!("  <OriginalPackagingList>urn:uuid:{ov_ref}</OriginalPackagingList>\n");
-    match std::fs::read_to_string(&cpl_path) {
-        Ok(xml) => {
-            let marked = xml.replace(
-                "</CompositionPlaylist>",
-                &format!("{marker}</CompositionPlaylist>"),
-            );
-            if let Err(e) = std::fs::write(&cpl_path, marked) {
-                tracing::error!("Failed to mark VF CPL supplemental: {e}");
-                return -1;
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to read VF CPL back: {e}");
-            return -1;
-        }
-    }
-    // after the supplemental marker rewrite, which would otherwise invalidate
-    // the signature, and before the PKL hashes the file
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &cpl_path, "VF CPL") {
         return -1;
     }
@@ -425,32 +407,59 @@ pub fn create_vf(config: &VfConfig) -> i32 {
 }
 
 /// Read the AssetUUID an already-wrapped MXF carries, so a copied track file is
-/// listed in the CPL/PKL/ASSETMAP under the id it actually holds.
-fn embedded_asset_uuid(path: &Path, mxf_type: crate::mxf_wrap::MxfType) -> Option<uuid::Uuid> {
+/// listed in the CPL/PKL/ASSETMAP under the id it actually holds, and its
+/// length in edit units.
+fn wrapped_asset_uuid_and_duration(
+    path: &Path,
+    mxf_type: crate::mxf_wrap::MxfType,
+) -> Option<(uuid::Uuid, u64)> {
     let file = path.to_string_lossy().to_string();
-    let info = match mxf_type {
+    let (info, duration) = match mxf_type {
         crate::mxf_wrap::MxfType::J2kPicture => {
             let mut reader = asdcplib::jp2k::MxfReader::new();
             reader.open_read(&file).ok()?;
-            reader.writer_info().ok()?
+            let duration = reader.picture_descriptor().ok()?.container_duration;
+            (reader.writer_info().ok()?, duration)
         }
         crate::mxf_wrap::MxfType::PcmAudio => {
             let mut reader = asdcplib::pcm::MxfReader::new();
             reader.open_read(&file).ok()?;
-            reader.writer_info().ok()?
+            let duration = reader.audio_descriptor().ok()?.container_duration;
+            (reader.writer_info().ok()?, duration)
         }
         crate::mxf_wrap::MxfType::TimedText => {
             let mut reader = asdcplib::timed_text::MxfReader::new();
             reader.open_read(&file).ok()?;
-            reader.writer_info().ok()?
+            let duration = reader.descriptor().ok()?.container_duration;
+            (reader.writer_info().ok()?, duration)
         }
         crate::mxf_wrap::MxfType::Atmos => {
             let mut reader = asdcplib::atmos::MxfReader::new();
             reader.open_read(&file).ok()?;
-            reader.writer_info().ok()?
+            let duration = reader.atmos_descriptor().ok()?.container_duration;
+            (reader.writer_info().ok()?, duration)
         }
     };
-    Some(uuid::Uuid::from_bytes(info.asset_uuid))
+    Some((uuid::Uuid::from_bytes(info.asset_uuid), u64::from(duration)))
+}
+
+fn replacement_fits_reel(
+    reel: &crate::multi_cpl::TimelineEntry,
+    track: &str,
+    input: &Path,
+    replacement: &NewAsset,
+) -> bool {
+    if replacement.duration == reel.duration_frames {
+        return true;
+    }
+    tracing::error!(
+        "reel {} is {} frames long, but the replacement {track} {} is {} frames",
+        reel.reel_number,
+        reel.duration_frames,
+        input.display(),
+        replacement.duration
+    );
+    false
 }
 
 /// Wrap raw essence (or copy an already-wrapped MXF) into the VF directory and
@@ -477,7 +486,7 @@ fn prepare_asset(
     let (id, filename, duration) = if is_mxf {
         // Already wrapped: copy verbatim under the id the MXF itself carries,
         // so the CPL/PKL/ASSETMAP entries match what the file holds.
-        let Some(id) = embedded_asset_uuid(input, mxf_type) else {
+        let Some((id, duration)) = wrapped_asset_uuid_and_duration(input, mxf_type) else {
             tracing::error!("cannot read the asset id of MXF {}", input.display());
             return None;
         };
@@ -487,13 +496,32 @@ fn prepare_asset(
             tracing::error!("Failed to copy MXF {}: {e}", input.display());
             return None;
         }
-        (id, filename, fallback_duration)
+        (id, filename, duration)
     } else {
         // Raw essence: mint the id, name the file with it and wrap the MXF under it.
         let id = uuid::Uuid::new_v4();
         let filename = format!("{prefix}_{id}.mxf");
+        let packaged_sound = vf_dir.join(format!(".dcpwizard_audio_{id}.wav"));
+        let input_path = match mxf_type {
+            crate::mxf_wrap::MxfType::PcmAudio => {
+                match crate::mxf_wrap::prepare_packaged_channels(
+                    input,
+                    &packaged_sound,
+                    crate::mxf_wrap::AudioInputOrder::default(),
+                    None,
+                ) {
+                    Ok(true) => packaged_sound.clone(),
+                    Ok(false) => input.to_path_buf(),
+                    Err(e) => {
+                        tracing::error!("audio preparation failed: {e}");
+                        return None;
+                    }
+                }
+            }
+            _ => input.to_path_buf(),
+        };
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-            input_path: input.to_path_buf(),
+            input_path,
             output_mxf: vf_dir.join(&filename),
             mxf_type,
             frame_rate: fps,
@@ -501,7 +529,9 @@ fn prepare_asset(
             mca_config: None,
             asset_uuid: Some(*id.as_bytes()),
         };
-        let tf = crate::mxf_wrap::wrap_mxf_result(&wrap_config)?;
+        let wrapped = crate::mxf_wrap::wrap_mxf_result(&wrap_config);
+        let _ = std::fs::remove_file(&packaged_sound);
+        let tf = wrapped?;
         let duration = if tf.duration > 0 {
             tf.duration
         } else {
@@ -650,35 +680,6 @@ fn parse_screen_aspect(cpl: &str) -> (u32, u32) {
     }
 }
 
-/// Find the OV's PKL id (the id to record as the original package). Skips any
-/// PKL already written into `vf_dir`.
-fn find_ov_pkl_id(vf_dir: &Path, ov_dir: &Path) -> Option<String> {
-    for entry in std::fs::read_dir(ov_dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.parent() == Some(vf_dir) {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        if name.starts_with("PKL") && name.ends_with(".xml") {
-            let content = std::fs::read_to_string(&path).ok()?;
-            if let Some(pos) = content.find("urn:uuid:") {
-                let rest = &content[pos + "urn:uuid:".len()..];
-                let id: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
-                    .collect();
-                if !id.is_empty() {
-                    return Some(id);
-                }
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,11 +763,13 @@ mod tests {
 
     /// Wrap a second of stereo silence into a real sound MXF carrying `asset_id`.
     fn write_sound_mxf(dir: &Path, asset_id: uuid::Uuid) -> PathBuf {
+        // the 48 frame reel `write_ov` declares, at 24 fps
+        const REEL_SECONDS: u64 = 2;
         let sample_rate = 48_000u32;
         let channels = 2u16;
         let bits = 24u16;
         let block_align = (bits / 8) * channels;
-        let data_len = sample_rate as u64 * block_align as u64;
+        let data_len = REEL_SECONDS * sample_rate as u64 * block_align as u64;
         let mut w = Vec::new();
         w.extend_from_slice(b"RIFF");
         w.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
@@ -885,12 +888,6 @@ mod tests {
             !cpl.contains(SND_ID),
             "replaced OV sound id must not remain in CPL"
         );
-        // Supplemental marker so dcpdoctor detects a VF.
-        assert!(
-            cpl.contains("OriginalPackagingList"),
-            "VF CPL must carry a supplemental marker"
-        );
-
         assert_eq!(create_vf(&config), -1, "a second VF under the same title");
         assert_eq!(
             std::fs::read_to_string(vf.join(&cpl_name)).unwrap(),

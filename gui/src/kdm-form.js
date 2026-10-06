@@ -3,7 +3,7 @@ function fileName(path) {
   return name || "";
 }
 
-function joinPath(directory, name) {
+export function joinPath(directory, name) {
   const sep = directory.includes("\\") && !directory.includes("/") ? "\\" : "/";
   return `${directory.replace(/[/\\]+$/, "")}${sep}${name}`;
 }
@@ -189,3 +189,9 @@ export function rewrapRequest(fields) {
 }
 
 export const SIGNER_FIELDS = SIGNER;
+
+export function packageSignerArgs({ signingCert, signingKey, signingChain }) {
+  if (!signingCert || !signingKey) return [];
+  const chainArgs = signingChain.flatMap((path) => ["--signer-chain", path]);
+  return ["--signer-cert", signingCert, "--signer-key", signingKey, ...chainArgs];
+}

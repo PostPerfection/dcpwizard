@@ -1,12 +1,6 @@
 //! Subtitle-only VF end-to-end (dom#1062): author a VF that adds a subtitle track
 //! to an OV, referencing the OV's picture/sound by id and shipping only the new
 //! subtitle MXF.
-//!
-//! A supplemental VF is not independently verify-clean: vf.rs marks it with an
-//! `<OriginalPackagingList>` element (so dcpdoctor's --ov path detects the VF),
-//! which trips strict CPL schema validation in `verify_dcp`. So this test asserts
-//! the VF structure and PKL hash-consistency (the meaningful correctness check,
-//! as the existing vf.rs tests do) and confirms the OV output stays verify-clean.
 
 use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 use dcpwizard_core::vf::{ReplacementReel, VfConfig, create_vf};

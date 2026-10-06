@@ -77,7 +77,7 @@ pub fn ingest_package(dir: &Path, signer: Option<&crate::package_signature::Pack
             continue;
         }
         let name = file_name(&path);
-        if is_packaging_file(&name) || is_cpl_path(&path) {
+        if is_packaging_file(&name) || is_pkl_name(&name) || is_cpl_path(&path) {
             continue;
         }
         if has_ext(&path, "mxf") {
@@ -313,8 +313,7 @@ fn parse_existing_pkls(dir: &Path) -> HashMap<String, OldAsset> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let name = file_name(&path);
-        if !(name.starts_with("PKL") && name.ends_with(".xml")) {
+        if !is_pkl_name(&file_name(&path)) {
             continue;
         }
         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -374,14 +373,19 @@ fn remove_existing_packaging(dir: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             let path = entry.path();
             let name = file_name(&path);
-            let is_pkl = name.starts_with("PKL") && name.ends_with(".xml");
-            if (is_packaging_file(&name) || is_pkl) && std::fs::remove_file(&path).is_ok() {
+            if (is_packaging_file(&name) || is_pkl_name(&name))
+                && std::fs::remove_file(&path).is_ok()
+            {
                 removed.push(name);
             }
         }
     }
     removed.sort();
     removed
+}
+
+fn is_pkl_name(name: &str) -> bool {
+    name.starts_with("PKL") && name.ends_with(".xml")
 }
 
 fn is_packaging_file(name: &str) -> bool {

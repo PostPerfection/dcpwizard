@@ -5,11 +5,21 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const CURRENT_PREFERENCES_VERSION: u32 = 2;
+pub const CURRENT_PREFERENCES_VERSION: u32 = 3;
 const FIRST_MIGRATION_VERSION: u32 = 2;
 pub const DEFAULT_GPU_REGISTRATION_URL: &str = "https://grokcompression.com/api/register";
 pub const AUTOMATIC_ENCODE_THREADS: u32 = 0;
 const DEFAULT_BANDWIDTH_MBPS: u32 = 230;
+const AUTOMATIC_RESOLUTION: &str = "auto";
+const RESOLUTION_CHOICES: [&str; 7] = [
+    AUTOMATIC_RESOLUTION,
+    "2k-scope",
+    "2k-flat",
+    "2k-full",
+    "4k-scope",
+    "4k-flat",
+    "4k-full",
+];
 const SNAKE_CASE_RENAMES: [(&str, &str); 10] = [
     ("default_standard", "standard"),
     ("default_resolution", "resolution"),
@@ -62,7 +72,7 @@ impl Default for Preferences {
         Self {
             version: CURRENT_PREFERENCES_VERSION,
             standard: "SMPTE".to_string(),
-            resolution: "2K".to_string(),
+            resolution: AUTOMATIC_RESOLUTION.to_string(),
             framerate: 24,
             encrypt: false,
             stereo3d: false,
@@ -108,11 +118,36 @@ pub fn load_preferences_if_present() -> io::Result<Option<Preferences>> {
 }
 
 pub fn preference_migrations() -> Vec<PrefsMigration> {
-    vec![PrefsMigration {
-        version: FIRST_MIGRATION_VERSION,
-        description: "rename snake_case keys, cap bandwidth, make gpu a boolean".to_string(),
-        apply: Box::new(migrate_to_version_two),
-    }]
+    vec![
+        PrefsMigration {
+            version: FIRST_MIGRATION_VERSION,
+            description: "rename snake_case keys, cap bandwidth, make gpu a boolean".to_string(),
+            apply: Box::new(migrate_to_version_two),
+        },
+        PrefsMigration {
+            version: FIRST_MIGRATION_VERSION + 1,
+            description: "resolution takes the Properties container names".to_string(),
+            apply: Box::new(migrate_to_version_three),
+        },
+    ]
+}
+
+// 2K and 4K never reached a build
+fn migrate_to_version_three(json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<Value>(json) else {
+        return json.to_string();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return json.to_string();
+    };
+    let offered = object
+        .get("resolution")
+        .and_then(Value::as_str)
+        .is_some_and(|resolution| RESOLUTION_CHOICES.contains(&resolution));
+    if !offered {
+        object.insert("resolution".to_string(), Value::from(AUTOMATIC_RESOLUTION));
+    }
+    value.to_string()
 }
 
 fn migrate_to_version_two(json: &str) -> String {
@@ -348,7 +383,7 @@ mod tests {
 
     fn assert_every_snake_case_key_renamed(preferences: &Preferences, path: &Path) {
         assert_eq!(preferences.standard, "Interop");
-        assert_eq!(preferences.resolution, "4K");
+        assert_eq!(preferences.resolution, AUTOMATIC_RESOLUTION);
         assert_eq!(preferences.framerate, 25);
         assert_eq!(preferences.creator, "Studio");
         assert_eq!(preferences.facility, "FAC");
@@ -467,5 +502,30 @@ mod tests {
 
         assert_eq!(preferences.bandwidth, DEFAULT_BANDWIDTH_MBPS);
         assert!(!preferences.gpu);
+    }
+
+    fn resolution_after_loading_version_two(resolution: &str) -> String {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("preferences.json");
+        let contents = format!(r#"{{"version":2,"resolution":"{resolution}"}}"#);
+        postkit::preferences::write_preferences_file(&path, &contents).unwrap();
+        load_preferences_from(&path).unwrap().unwrap().resolution
+    }
+
+    #[test]
+    fn a_version_two_resolution_no_build_reads_becomes_auto() {
+        assert_eq!(
+            resolution_after_loading_version_two("2K"),
+            AUTOMATIC_RESOLUTION
+        );
+        assert_eq!(
+            resolution_after_loading_version_two("4K"),
+            AUTOMATIC_RESOLUTION
+        );
+    }
+
+    #[test]
+    fn a_version_two_container_resolution_is_kept() {
+        assert_eq!(resolution_after_loading_version_two("2k-flat"), "2k-flat");
     }
 }

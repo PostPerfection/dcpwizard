@@ -2,6 +2,7 @@
 //! ASSETMAP/PKL (the exported OV/VF case) is re-declared under its embedded
 //! asset UUID after repackaging.
 
+use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 use dcpwizard_core::ingest_package::ingest_package;
 use dcpwizard_core::mxf_wrap::{MxfType, MxfWrapConfig, wrap_mxf_result};
 use std::io::Write;
@@ -153,5 +154,49 @@ fn repackage_declares_present_mxf_omitted_from_assetmap() {
     assert!(
         root.join("VOLINDEX.xml").exists(),
         "VOLINDEX written for SMPTE"
+    );
+}
+
+#[test]
+fn ingest_in_place_leaves_a_package_that_verifies() {
+    const FRAME_RATE: u32 = 24;
+    const FRAME_COUNT: usize = 3;
+    const WIDTH: u32 = 2048;
+    const HEIGHT: u32 = 1080;
+    let dir = tempfile::tempdir().unwrap();
+    let frames = dir.path().join("frames");
+    std::fs::create_dir_all(&frames).unwrap();
+    let seed = frames.join("seed.j2c");
+    dcpwizard_core::pad::generate_black_frame(WIDTH, HEIGHT, FRAME_RATE, &seed).unwrap();
+    for index in 0..FRAME_COUNT {
+        std::fs::copy(&seed, frames.join(format!("frame_{index:05}.j2c"))).unwrap();
+    }
+    std::fs::remove_file(&seed).unwrap();
+    let package = dir.path().join("package");
+    let config = DcpConfig {
+        title: "Ingest Verify".into(),
+        frame_rate_num: FRAME_RATE,
+        frame_rate_den: 1,
+        output_dir: package.clone(),
+        j2k_dir: Some(frames),
+        ..Default::default()
+    };
+    assert_eq!(create_dcp(&config), 0);
+
+    assert_eq!(ingest_package(&package, None), 0);
+
+    let assetmap = std::fs::read_to_string(package.join("ASSETMAP.xml")).unwrap();
+    for listed in assetmap.split("<Path>").skip(1) {
+        let name = listed.split("</Path>").next().unwrap();
+        assert!(
+            package.join(name).exists(),
+            "ASSETMAP lists {name}, which is not in the package"
+        );
+    }
+    let result = dcpwizard_core::verify::verify_dcp(&package);
+    assert!(
+        result.errors.is_empty(),
+        "verify errors: {:?}",
+        result.errors
     );
 }

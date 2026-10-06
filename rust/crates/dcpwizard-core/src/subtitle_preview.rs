@@ -15,7 +15,7 @@ const PLAYABLE_EXTENSIONS: [&str; 5] = ["srt", "ass", "ssa", "vtt", "webvtt"];
 
 /// What `subtitle_extract` reads: ST 428-7 DCST or Interop DCSubtitle, loose or
 /// MXF wrapped.
-const PACKAGED_EXTENSIONS: [&str; 2] = ["xml", "mxf"];
+pub(crate) const PACKAGED_EXTENSIONS: [&str; 2] = ["xml", "mxf"];
 
 /// One file per preview slot, so a second preview replaces the track it wrote
 /// last time instead of filling the work dir.

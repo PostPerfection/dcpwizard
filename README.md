@@ -87,7 +87,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Multilingual subtitles** with RFC 5646 language tags
 - **Burn-in during the encode** via `create --burn-subtitle <file>` (+ `--burn-subtitle-font <ttf/otf>`): the cues are drawn into the picture as it encodes, so a burnt festival print costs one generation rather than two. Takes SRT, ASS/SSA, PAC, MKS, FCPXML and Interop DCSubtitle, not a supplied SMPTE DCST, and covers video, image sequences and held stills. Burnt text is part of the image and registers no timed-text track; the same file cannot be both, and burning onto an already-X'Y'Z' source or a J2K directory is refused
 - **Burn-in appearance** on `create`: `--burn-font-size <pct of frame height>`, `--burn-colour <RRGGBB[AA]>`, `--burn-effect none|outline|shadow`, `--burn-effect-colour <RRGGBB[AA]>`, `--burn-outline-width <pct of text height>`, `--burn-line-height <multiple of text height>`, `--burn-margin <pct of frame height>`, `--burn-x-scale`, `--burn-y-scale`, `--burn-fade-up <ms>` and `--burn-fade-down <ms>`. Each is laid over postkit's burn defaults, so an unnamed one keeps the value it always had. Any of them without `--burn-subtitle` is refused by name
-- **Subtitle burn-in as a standalone pass** via `burnin`, for a review copy rather than a package: it writes a video file, so a DCP burn goes through `create --burn-subtitle` instead of this. `--font-size`, `--colour <RRGGBB>` and `--position top|center|bottom` style the cues, and `--video-codec <encoder>` with `--crf <n>` name the output encoder and its quality rather than leaving both to ffmpeg's guess from the output file name: `--video-codec libx264 --crf 0` writes a lossless copy
+- **Subtitle burn-in as a standalone pass** via `burnin`, for a review copy rather than a package: it writes a video file, so a DCP burn goes through `create --burn-subtitle` instead of this. It takes SRT, ASS/SSA and WebVTT, and a SMPTE or Interop subtitle XML or MXF, which is written out as SRT before the burn. `--font-size`, `--colour <RRGGBB>` and `--position top|center|bottom` style the cues, and `--video-codec <encoder>` with `--crf <n>` name the output encoder and its quality rather than leaving both to ffmpeg's guess from the output file name: `--video-codec libx264 --crf 0` writes a lossless copy
 
 ### Audio
 - **PCM audio wrapping** (48 kHz)
@@ -604,10 +604,12 @@ dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 # Supplemental Version File (VF): replace reel 1's sound against an existing OV.
 # Unchanged reels reference the OV by asset id; only the new MXF ships in the VF.
 # Replacement can be raw essence (WAV/J2K, gets wrapped) or an already-wrapped MXF.
+# A replacement must be as long as the reel it replaces, and an 8 or 16-bit WAV
+# is widened to 24-bit the way create widens it.
 # With no --title the VF goes in ./dcp_vf/<OV title>_VF.
 dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf --replace-sound 1=./new_mix.wav
 # Validate the VF against its OV (resolves cross-references):
-dcpdoctor validate "./dcp_vf/My Film_VF" --ov "./dcp/My Film"
+dcpwizard verify "./dcp_vf/My Film_VF" --ov "./dcp/My Film"
 # Subtitle VF: add or replace a reel's subtitle (SRT or SMPTE XML). A subtitle-only
 # VF references the OV picture/sound by id and ships just the new subtitle MXF.
 dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf \
@@ -641,6 +643,9 @@ dcpwizard decrypt --input ./enc_dcp --output ./clear_dcp --kdm kdm.xml
 
 # Encode images to JPEG 2000 codestreams in ./out/j2k
 dcpwizard encode --input ./dpx --output ./out --bandwidth 250 --fps 24
+# --container fits the frames into a DCI container the way create does
+# (2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat, 4k-full), unset keeps their size
+dcpwizard encode --input ./hd_tiffs --output ./out --container 2k-full
 
 # Transcode video to image sequence (format/bit-depth optional)
 dcpwizard transcode --input movie.mov --output ./sequence --format dpx --bit-depth 16

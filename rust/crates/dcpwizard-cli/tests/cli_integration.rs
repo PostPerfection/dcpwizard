@@ -96,7 +96,10 @@ fn preferences_are_shared_between_invocations() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"gpuLicense\": \"test-license\""))
-        .stdout(predicate::str::contains("\"version\": 2"));
+        .stdout(predicate::str::contains(format!(
+            "\"version\": {}",
+            dcpwizard_core::preferences::CURRENT_PREFERENCES_VERSION
+        )));
 }
 
 #[test]
@@ -635,6 +638,38 @@ fn encode_compresses_a_still_sequence_into_a_j2k_directory() {
         "a DCI codestream carries 12-bit samples"
     );
     assert_eq!(decoded.components.len(), 3);
+}
+
+#[test]
+fn encode_fits_the_stills_into_the_named_container() {
+    let dir = TempDir::new().unwrap();
+    let stills = dir.path().join("stills");
+    write_test_stills(&stills, 1920, 1080);
+    let out = dir.path().join("out");
+
+    cmd()
+        .args([
+            "encode",
+            "--input",
+            stills.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--container",
+            "2k-full",
+        ])
+        .assert()
+        .success();
+
+    let codestream = std::fs::read_dir(out.join("j2k"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|e| e == "j2c"))
+        .expect("a codestream was written");
+    assert_eq!(
+        dcpwizard_core::pad::read_j2k_dimensions(&codestream).unwrap(),
+        (2048, 1080)
+    );
 }
 
 #[test]
