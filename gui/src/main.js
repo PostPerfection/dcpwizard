@@ -572,20 +572,30 @@ document.getElementById("import-subtitle")?.addEventListener("click", async () =
   if (path) importAssetFromPath(path, 'subtitle');
 });
 
+const REEL_SLOT_BY_ASSET_TYPE = { video: 'picture', audio: 'sound', subtitle: 'subtitle' };
+
+function placedAssetIds() {
+  return new Set(project.reels.flatMap(r => [r.picture, r.sound, r.subtitle]).filter(Boolean).map(a => a.id));
+}
+
+// the first reel takes the first asset of each type no reel holds yet
+function fillFirstReelFromUnplacedAssets() {
+  const reel = project.reels[0];
+  const placed = placedAssetIds();
+  for (const [type, slot] of Object.entries(REEL_SLOT_BY_ASSET_TYPE)) {
+    if (reel[slot]) continue;
+    reel[slot] = project.assets.find(a => a.type === type && !placed.has(a.id)) ?? null;
+  }
+}
+
 function importAssetFromPath(path, type) {
   const name = path.split(/[/\\]/).pop();
   const asset = { id: nextAssetId++, type, path, name, meta: '' };
   project.assets.push(asset);
 
-  // Auto-assign to first reel if empty
   const reel = project.reels[0];
-  if (type === 'video' && !reel.picture) {
-    reel.picture = asset;
-  } else if (type === 'audio' && !reel.sound) {
-    reel.sound = asset;
-  } else if (type === 'subtitle' && !reel.subtitle) {
-    reel.subtitle = asset;
-  }
+  const slot = REEL_SLOT_BY_ASSET_TYPE[type];
+  if (slot && !reel[slot]) reel[slot] = asset;
 
   renderAssets();
   renderReels();
@@ -2784,6 +2794,7 @@ async function removeAsset(assetId) {
     if (r.sound?.id === assetId) r.sound = null;
     if (r.subtitle?.id === assetId) r.subtitle = null;
   });
+  fillFirstReelFromUnplacedAssets();
   renderAssets();
   renderReels();
   updateStatusStats();
