@@ -29,9 +29,9 @@ impl Template {
         let start_delta = if self.start_offset.trim().is_empty() {
             chrono::Duration::zero()
         } else {
-            crate::kdm::parse_duration(&self.start_offset)?
+            postkit::certificate::parse_duration(&self.start_offset)?
         };
-        let dur = crate::kdm::parse_duration(&self.duration)?;
+        let dur = postkit::certificate::parse_duration(&self.duration)?;
         let from = now + start_delta;
         let to = from + dur;
         let fmt = "%Y-%m-%dT%H:%M:%S%:z";

@@ -3277,8 +3277,8 @@ fn send_kdm_email(
     if to.is_empty() {
         return Err("no email recipients: pass --email-to".to_string());
     }
-    let cfg = dcpwizard_core::email::SmtpConfig::load(Path::new(cfg_path))?;
-    dcpwizard_core::email::send_kdms(&cfg, cinema, title, to, files)
+    let cfg = dcpwizard_core::email::load_smtp_config(Path::new(cfg_path))?;
+    postkit::kdm_distribution::email::send_kdms(&cfg, cinema, title, to, files)
 }
 
 fn load_tms_config(
@@ -3288,38 +3288,6 @@ fn load_tms_config(
         .map(PathBuf::from)
         .unwrap_or_else(dcpwizard_core::tms_upload::default_config_path);
     dcpwizard_core::tms_upload::load_config(&path)
-}
-
-fn sanitize_dir_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn xml_files_in(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("xml"))
-        .collect();
-    v.sort();
-    v
-}
-
-/// a set of recipients that share one delivery email (one cinema, or the loose
-/// --cert/--cert-dir group with an empty name).
-struct BatchGroup {
-    name: String,
-    emails: Vec<String>,
-    cert_paths: Vec<PathBuf>,
 }
 
 struct KdmBatchArgs {
@@ -3400,151 +3368,86 @@ fn run_kdm_batch(a: KdmBatchArgs) -> i32 {
         }
     }
 
-    let mut groups: Vec<BatchGroup> = Vec::new();
-    if !loose.is_empty() {
-        groups.push(BatchGroup {
-            name: String::new(),
-            emails: Vec::new(),
-            cert_paths: loose.into_iter().map(PathBuf::from).collect(),
-        });
-    }
-
     // db-resolved cinema/screen recipients, grouped by cinema.
+    let mut recipients = Vec::new();
     if !a.cinemas.is_empty() || !a.screens.is_empty() {
-        let db = match dcpwizard_core::cinema::CinemaDb::load(&cinema_db_path(a.db)) {
+        let db = match postkit::kdm_distribution::cinema::CinemaDb::load(&cinema_db_path(a.db)) {
             Ok(d) => d,
             Err(e) => {
                 tracing::error!("{e}");
                 return 1;
             }
         };
-        let recips = match db.resolve(&a.cinemas, &a.screens, tmp.path()) {
+        recipients = match db.resolve(&a.cinemas, &a.screens, tmp.path()) {
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("{e}");
                 return 1;
             }
         };
-        for r in recips {
-            match groups.iter_mut().find(|g| g.name == r.cinema) {
-                Some(g) => g.cert_paths.push(r.cert_path),
-                None => groups.push(BatchGroup {
-                    name: r.cinema,
-                    emails: r.emails,
-                    cert_paths: vec![r.cert_path],
-                }),
-            }
-        }
     }
+    let groups = postkit::kdm_distribution::issue::group_recipients(
+        loose.into_iter().map(PathBuf::from).collect(),
+        recipients,
+    );
 
     if groups.iter().all(|g| g.cert_paths.is_empty()) {
         tracing::error!("No recipients (use --cert, --cert-dir, --cinema or --screen)");
         return 1;
     }
 
-    let history = Some(history_path(a.history_file));
-    let signer_cert = PathBuf::from(&a.signer_cert);
-    let signer_key = PathBuf::from(&a.signer_key);
-    let signer_chain: Vec<PathBuf> = a.signer_chain.iter().map(PathBuf::from).collect();
+    // no --device-cert here: a batch spans cinemas, and one device list
+    // shared across them would lock every recipient to someone else's gear
+    let request = dcpwizard_core::kdm::kdm_request(
+        a.cpl_id,
+        a.content_title.clone(),
+        PathBuf::from(&a.signer_cert),
+        PathBuf::from(&a.signer_key),
+        a.signer_chain.iter().map(PathBuf::from).collect(),
+        valid_from,
+        valid_to,
+        content_keys,
+        None,
+        Some(history_path(a.history_file)),
+        Vec::new(),
+        a.options,
+    );
     let output_root = PathBuf::from(&a.output_dir);
 
     // without email: one flat batch into output_dir (preserves prior behaviour).
-    if a.smtp_config.is_none() {
+    let Some(cfg_path) = a.smtp_config else {
         let all: Vec<PathBuf> = groups.into_iter().flat_map(|g| g.cert_paths).collect();
-        return dcpwizard_core::kdm::generate_kdm_batch(
-            a.cpl_id,
-            a.content_title,
-            all,
-            signer_cert,
-            signer_key,
-            signer_chain,
-            valid_from,
-            valid_to,
-            content_keys,
-            output_root,
-            None,
-            history,
-            // no --device-cert here: a batch spans cinemas, and one device list
-            // shared across them would lock every recipient to someone else's gear
-            Vec::new(),
-            a.options,
-        );
-    }
+        return dcpwizard_core::kdm::generate_kdm_batch(&request, &all, &output_root);
+    };
 
     // with email: one email per group (dom#2516), each with that group's KDMs
     // zipped. multiple groups get their own subdir so files don't collide.
-    let cfg_path = a.smtp_config.unwrap();
-    let multi = groups.len() > 1;
-    let mut failures = 0;
-    for g in &groups {
-        let out_dir = if multi {
-            let sub = if g.name.is_empty() {
-                "additional".to_string()
-            } else {
-                sanitize_dir_name(&g.name)
-            };
-            output_root.join(sub)
-        } else {
-            output_root.clone()
-        };
-        let code = dcpwizard_core::kdm::generate_kdm_batch(
-            a.cpl_id.clone(),
-            a.content_title.clone(),
-            g.cert_paths.clone(),
-            signer_cert.clone(),
-            signer_key.clone(),
-            signer_chain.clone(),
-            valid_from.clone(),
-            valid_to.clone(),
-            content_keys.clone(),
-            out_dir.clone(),
-            None,
-            history.clone(),
-            Vec::new(),
-            a.options.clone(),
-        );
-        if code != 0 {
-            failures += 1;
-            continue;
-        }
-        // recipients: cinema contacts (unless only-additional) plus --email-to.
-        let mut to: Vec<String> = if a.email_only_additional {
-            Vec::new()
-        } else {
-            g.emails.clone()
-        };
-        for e in &a.email_to {
-            if !to.contains(e) {
-                to.push(e.clone());
-            }
-        }
-        let files = xml_files_in(&out_dir);
-        let label = if g.name.is_empty() {
-            "additional recipients"
-        } else {
-            &g.name
-        };
-        match send_kdm_email(&cfg_path, &g.name, &a.content_title, &to, &files) {
-            Ok(()) => tracing::info!("emailed {} KDM(s) for {label}", files.len()),
-            Err(e) => {
-                tracing::error!("{label}: {e}");
-                failures += 1;
-            }
-        }
-    }
+    let mut send = |cinema: &str, to: &[String], files: &[PathBuf]| {
+        send_kdm_email(&cfg_path, cinema, &a.content_title, to, files)
+    };
+    let failures = postkit::kdm_distribution::issue::issue_and_send_groups(
+        &request,
+        &groups,
+        &output_root,
+        postkit::kdm_distribution::issue::GroupDelivery {
+            extra_addresses: &a.email_to,
+            only_extra_addresses: a.email_only_additional,
+            send: &mut send,
+        },
+    );
     if failures == 0 { 0 } else { 1 }
 }
 
 fn run_cinema(db: Option<String>, action: CinemaAction) -> i32 {
     let path = cinema_db_path(db);
-    let mut store = match dcpwizard_core::cinema::CinemaDb::load(&path) {
+    let mut store = match postkit::kdm_distribution::cinema::CinemaDb::load(&path) {
         Ok(d) => d,
         Err(e) => {
             tracing::error!("{e}");
             return 1;
         }
     };
-    use dcpwizard_core::cinema::CertSource;
+    use postkit::kdm_distribution::cinema::CertSource;
     let mutated: Result<bool, String> = match action {
         CinemaAction::Add {
             name,
@@ -3629,14 +3532,14 @@ fn run_kdm_history(
     until: Option<String>,
 ) -> i32 {
     let path = history_path(history_file);
-    let all = match dcpwizard_core::kdm_log::read_all(&path) {
+    let all = match postkit::kdm_distribution::history::read_all(&path) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("{e}");
             return 1;
         }
     };
-    let recs = dcpwizard_core::kdm_log::filter(
+    let recs = postkit::kdm_distribution::history::filter(
         all,
         title.as_deref(),
         recipient.as_deref(),
