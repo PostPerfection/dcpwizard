@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **The preview goes full screen**: the ⛶ button in the preview header fills the screen with the picture and the transport bar, and the button again or Escape returns to the window.
 - **`encode --container` fits the frames into a DCI container**: `encode` had no container flag, so the GUI's 2K and 4K choices could not reach it. `--container` takes the names `create --container` takes, 2k-scope, 2k-flat, 2k-full, 4k-scope, 4k-flat and 4k-full, and fits each frame into that container the way `create` does, so a 1920x1080 still encodes at 2048x1080 under `2k-full`. Without the flag the frames keep their own size.
 - **`verify --ov <dir>` checks a Version File against its OV**: the warning on a VF said to supply the OV with `--ov`, which `verify` did not have. `verify --ov` now resolves the VF's references in the OV package, so a reference found in neither is an error and the VF no longer gets the `supplemental_ov_not_provided` warning.
 - **A second build queues while one runs**: the Build button was greyed out while a build ran, and now stays enabled and greys only while the Properties title matches a build this window already has queued or running. A build with a different title joins the queue behind the running one, the Jobs panel lists it, and the progress panel follows whichever build is running. A second build into the same output folder is still refused.

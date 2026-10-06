@@ -17,6 +17,7 @@ import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js"
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
+import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
@@ -73,14 +74,9 @@ document.querySelectorAll(".sidebar-btn[data-view]").forEach((btn) => {
   });
 });
 
-// === Theme toggle ===
-document.getElementById("set-gpu-license-show")?.addEventListener("click", (event) => {
-  const license = document.getElementById("set-gpu-license");
-  const hidden = license.type === "password";
-  license.type = hidden ? "text" : "password";
-  event.currentTarget.textContent = hidden ? "Hide" : "Show";
-});
+initGpuSettings();
 
+// === Theme toggle ===
 document.getElementById("theme-toggle")?.addEventListener("click", () => {
   document.body.classList.toggle("light");
   const btn = document.getElementById("theme-toggle");
@@ -219,13 +215,7 @@ async function loadPreferences() {
 }
 
 async function applyStartupPreferences() {
-  const preferences = getPrefs();
-  await applyGpuSetting(
-    preferences.gpu,
-    preferences.gpuLicense,
-    preferences.gpuRegistrationUrl,
-    preferences.encodeThreads,
-  );
+  await applyGpuPreference(getPrefs());
   await loadComponentVersions(invoke);
 }
 
@@ -370,8 +360,6 @@ function loadSettings() {
     "set-facility": prefs.facility,
     "set-bandwidth": prefs.bandwidth,
     "set-output-dir": prefs.outputDir,
-    "set-gpu-license": prefs.gpuLicense,
-    "set-gpu-registration-url": prefs.gpuRegistrationUrl,
     "set-encode-threads": prefs.encodeThreads || "",
   };
   for (const { field, input } of CERTIFICATE_SETTING_FIELDS) map[input] = prefs[field];
@@ -385,29 +373,17 @@ function loadSettings() {
   if (showHints) showHints.checked = prefs.showHintsBeforeBuild;
   const detectPictureFindings = document.getElementById("set-detect-picture-findings");
   if (detectPictureFindings) detectPictureFindings.checked = prefs.detectPictureFindings;
-  const gpu = document.getElementById("set-gpu");
-  if (gpu) gpu.checked = prefs.gpu;
+  fillGpuSettings(prefs);
   refreshSignerLine();
 }
 
-// grok routes every compress and decompress in the process
-async function applyGpuSetting(enabled, license, registrationUrl, encodeThreads) {
-  try {
-    const active = await invoke("set_gpu", {
-      enabled,
-      license: license || null,
-      registrationUrl: registrationUrl || null,
-      encodeThreads,
-    });
-    if (enabled && !active) throw new Error("Grok did not enable the GPU");
-    return true;
-  } catch (error) {
-    setStatus(`GPU encoding unavailable: ${error}`);
-    const gpu = document.getElementById("set-gpu");
-    if (gpu) gpu.checked = false;
-    await savePrefs({ ...getPrefs(), gpu: false });
-    return false;
-  }
+async function applyGpuPreference(prefs) {
+  const gpuFailure = await applyGpuSetting(prefs, prefs.encodeThreads);
+  if (!gpuFailure) return true;
+  setStatus(`GPU encoding unavailable: ${gpuFailure}`);
+  uncheckGpu();
+  await savePrefs({ ...getPrefs(), gpu: false });
+  return false;
 }
 
 // Advisory findings the pre-build check made. Returns true to build anyway.
@@ -459,18 +435,11 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     isdcfNaming: document.getElementById("set-isdcf-naming")?.checked || false,
     showHintsBeforeBuild: !!document.getElementById("set-show-hints")?.checked,
     detectPictureFindings: !!document.getElementById("set-detect-picture-findings")?.checked,
-    gpu: !!document.getElementById("set-gpu")?.checked,
-    gpuLicense: document.getElementById("set-gpu-license")?.value.trim() || "",
-    gpuRegistrationUrl: document.getElementById("set-gpu-registration-url")?.value.trim() || "",
+    ...gpuSettingsFromForm(),
     encodeThreads:
       parseInt(document.getElementById("set-encode-threads")?.value) || AUTOMATIC_ENCODE_THREADS,
   };
-  if (!await applyGpuSetting(
-    prefs.gpu,
-    prefs.gpuLicense,
-    prefs.gpuRegistrationUrl,
-    prefs.encodeThreads,
-  )) return;
+  if (!await applyGpuPreference(prefs)) return;
   if (!await savePrefs(prefs)) return;
   takeProjectDefaultsFromPreferences();
   refreshSignerLine();
