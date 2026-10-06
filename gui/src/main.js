@@ -11,6 +11,7 @@ import { markerSpecs } from "./marker-specs.js";
 import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
+import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
@@ -1372,11 +1373,15 @@ for (const id of ISDCF_PREVIEW_CONTROLS) {
 renderRatings();
 
 document.getElementById("btn-build")?.addEventListener("click", async () => {
-  // a second build would queue behind the first and encode all over again
-  if (buildInFlight) return;
-
   let title = document.getElementById("prop-title")?.value?.trim();
   if (!title) { tauriMessage("Enter a project title in Properties"); return; }
+  // builds are tracked by the Properties title, result.title can differ
+  const buildTitle = title;
+  if (buildsInFlight.buildInFlight(buildTitle)) {
+    tauriMessage(`A build titled "${buildTitle}" is already queued or running. A different title queues another build.`);
+    return;
+  }
+  const anotherBuildInFlight = buildsInFlight.anyBuildInFlight();
 
   const reel = project.reels[0];
   if (!reel?.picture) { tauriMessage("Import a video asset first"); return; }
@@ -1399,17 +1404,21 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   const progressBar = document.getElementById("progress-bar");
   const stageEl = document.getElementById("progress-stage");
   const statsEl = document.getElementById("progress-stats");
-  progressSection.style.display = "flex";
-  progressBar.value = 0;
-  stageEl.textContent = "Queued...";
-  statsEl.textContent = "";
-  paused = false;
-  resetStatusBar();
+  if (!anotherBuildInFlight) {
+    progressSection.style.display = "flex";
+    progressBar.value = 0;
+    stageEl.textContent = "Queued...";
+    statsEl.textContent = "";
+    paused = false;
+    resetStatusBar();
+  }
   let projectRecordPath = null;
+  let jobId = null;
 
   const unlisten = await listen("pipeline-progress", (event) => {
     const p = event.payload;
-    if (currentJobId && p.job_id !== currentJobId) return;
+    if (p.job_id !== jobId) return;
+    currentJobId = p.job_id;
 
     const display = progressDisplay(p);
     if (display.percent === null) progressBar.removeAttribute("value");
@@ -1424,14 +1433,14 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       notifyBuildComplete(true, title);
       if (projectRecordPath) addRecentProject(projectRecordPath, title);
       showPostBuildActions(output);
-      endBuild();
+      endBuild(buildTitle);
       unlisten();
       unlistenVal();
     } else if (p.stage === "cancelled") {
       setStatus("Cancelled");
       stageEl.textContent = "Cancelled";
       setTitleProgress(-1);
-      endBuild();
+      endBuild(buildTitle);
       unlisten();
       unlistenVal();
     } else if (p.stage === "error") {
@@ -1439,7 +1448,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       setTitleProgress(-1);
       notifyBuildComplete(false, title);
       tauriMessage(p.message, { title: "Build failed", kind: "error" });
-      endBuild();
+      endBuild(buildTitle);
       unlisten();
       unlistenVal();
     }
@@ -1447,7 +1456,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
 
   const unlistenVal = await listen("validation-result", (event) => {
     const v = event.payload;
-    if (currentJobId && v.job_id !== currentJobId) return;
+    if (v.job_id !== jobId) return;
     lastValidation = v;
     const validEl = document.getElementById("status-validation");
     validEl.title = "Click for details";
@@ -1461,7 +1470,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   });
 
   try {
-    beginBuild();
+    beginBuild(buildTitle);
     const submit = (hintsAccepted) => invoke("submit_job", {
       hintsAccepted,
       videoPath: video,
@@ -1557,9 +1566,11 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
     let result = await submit(!getPrefs().showHintsBeforeBuild);
     if (result.jobId === null) {
       if (!await showHintsDialog(result.hints)) {
-        progressSection.style.display = "none";
-        setStatus("Build cancelled");
-        endBuild();
+        if (!anotherBuildInFlight) {
+          progressSection.style.display = "none";
+          setStatus("Build cancelled");
+        }
+        endBuild(buildTitle);
         unlisten();
         unlistenVal();
         return;
@@ -1569,14 +1580,21 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
     title = result.title;
     output = result.outputDir;
     submittedPackage = output;
-    currentJobId = result.jobId;
-    setStatus("Building DCP...");
+    jobId = result.jobId;
+    if (anotherBuildInFlight) {
+      setStatus(`Queued "${buildTitle}" behind the running build`);
+    } else {
+      currentJobId = jobId;
+      setStatus("Building DCP...");
+    }
     projectRecordPath = await saveProjectBesidePackage(output);
   } catch (e) {
-    stageEl.textContent = "Failed";
-    setStatus("Error: " + e);
+    if (!anotherBuildInFlight) {
+      stageEl.textContent = "Failed";
+      setStatus("Error: " + e);
+    }
     tauriMessage(String(e), { title: "Build failed", kind: "error" });
-    endBuild();
+    endBuild(buildTitle);
     unlisten();
     unlistenVal();
   }
@@ -2714,26 +2732,25 @@ function updateStatusStats() {
 }
 
 // === Toolbar Button State ===
-let buildInFlight = false;
-
-function beginBuild() {
-  buildInFlight = true;
+function beginBuild(title) {
+  buildsInFlight.beginBuild(title);
   hidePostBuildActions();
   updateToolbarState();
 }
 
-function endBuild() {
-  buildInFlight = false;
+function endBuild(title) {
+  buildsInFlight.endBuild(title);
   updateToolbarState();
   refreshDiskSpace();
 }
 
 function updateToolbarState() {
   const hasVideo = project.reels.some(r => r.picture);
-  const hasTitle = !!(document.getElementById("prop-title")?.value?.trim());
+  const title = document.getElementById("prop-title")?.value?.trim();
+  const hasTitle = !!title;
   const buildBtn = document.getElementById("btn-build");
   const previewBtn = document.getElementById("btn-preview");
-  if (buildBtn) buildBtn.disabled = buildInFlight || !(hasVideo && hasTitle);
+  if (buildBtn) buildBtn.disabled = !(hasVideo && hasTitle) || buildsInFlight.buildInFlight(title);
   if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath);
   refreshMarkerFromPlayerButtons();
 }
