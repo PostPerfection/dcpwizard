@@ -2486,6 +2486,7 @@ dependencies = [
  "hevc_parser",
  "hex",
  "hound",
+ "icu_normalizer",
  "jiff",
  "lettre",
  "libc",
