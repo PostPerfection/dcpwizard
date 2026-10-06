@@ -727,8 +727,10 @@ function renderReels() {
       const reel = project.reels.find(r => r.id === reelId);
       if (!reel) return;
       const trackType = track.dataset.track;
+      if (REEL_SLOT_BY_ASSET_TYPE[asset.type] !== trackType) return;
       reel[trackType] = asset;
       renderReels();
+      updateStatusStats();
     });
   });
 
