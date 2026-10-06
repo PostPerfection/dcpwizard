@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DCP Wizard manual</title>
-    <meta name="description" content="Build a DCP, encrypt it, make a KDM, re-wrap a DKDM, and export the recipient certificate.">
+    <meta name="description" content="Build, encrypt and validate a DCP, make KDMs, encode, convert and copy, work with subtitles, export, make a Version File, and change the settings.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -99,7 +99,7 @@
 </nav>
 <main>
     <h1>Manual</h1>
-    <p>Six jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
+    <p>Twenty-one jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
     <ol class="contents">
         <li><a href="#build">Build a DCP</a></li>
         <li><a href="#encrypt">Encrypt it</a></li>
@@ -107,6 +107,21 @@
         <li><a href="#dkdm">Re-wrap a DKDM</a></li>
         <li><a href="#cert">Export the recipient certificate</a></li>
         <li><a href="#batch">Build several DCPs</a></li>
+        <li><a href="#verify">Validate a DCP</a></li>
+        <li><a href="#timeline">See the reels on the Timeline</a></li>
+        <li><a href="#encode">Encode to JPEG 2000</a></li>
+        <li><a href="#transcode">Transcode a video to frames</a></li>
+        <li><a href="#loudness">Measure loudness</a></li>
+        <li><a href="#copy">Copy a DCP to a drive</a></li>
+        <li><a href="#report">Make a QC report</a></li>
+        <li><a href="#srt">Convert SRT to SMPTE subtitles</a></li>
+        <li><a href="#subextract">Extract subtitles</a></li>
+        <li><a href="#burnin">Burn in subtitles</a></li>
+        <li><a href="#convert">Convert to a DCI container</a></li>
+        <li><a href="#ingest">Re-ingest a package</a></li>
+        <li><a href="#export">Export a DCP</a></li>
+        <li><a href="#vf">Make a Version File</a></li>
+        <li><a href="#settings">Change the settings</a></li>
     </ol>
 
     <h2 id="build">Build a DCP</h2>
@@ -208,6 +223,105 @@ dcpwizard batch add -T create-dcp -p '{"title":"My Film","standard":"Smpte","res
 dcpwizard batch list
 dcpwizard batch move 3 --before 2</pre>
     <p>The daemon's jobs show in the same Jobs panel, with their own Run next, Earlier and Later buttons.</p>
+    <h2 id="verify">Validate a DCP</h2>
+    <h3>In the app</h3>
+    <p>Open Verify, press Select DCP… and pick the package folder, then press Validate. The app runs the strict SMPTE check and then the Bv2.1 profile check, and a package with only warnings passes. Inspect MXF essence is off by default, so the picture bitstream is not read unless you tick it. Inspect, in the bottom bar after a build, opens this view on the new package and runs it.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard verify "./dcp/My Film" --strict
+dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre>
+
+    <h2 id="timeline">See the reels on the Timeline</h2>
+    <h3>In the app</h3>
+    <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. The Picture and Sound tracks show one block per reel of the package's first CPL, with the reel's length. Click the ruler or a track to move the preview to that point. A project you are building does not show here, only an opened package.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard info "./dcp/Two Reels"</pre>
+
+    <h2 id="encode">Encode to JPEG 2000</h2>
+    <h3>In the app</h3>
+    <p>Open Tools. Under Encode to JPEG 2000, pick the image sequence folder as Input, pick an Output Directory, set Bandwidth (Mbps) and press Encode. The codestreams go in a j2k folder inside the output. Resolution and Frame Rate do not reach the encoder: each frame keeps its own size, and the bitrate is budgeted at 24 fps.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard encode -i ./frames -o ./encoded --bandwidth 230</pre>
+
+    <h2 id="transcode">Transcode a video to frames</h2>
+    <h3>In the app</h3>
+    <p>Under Transcode Video, pick the Input Video and an Output Directory, choose Format and Bit Depth, and press Transcode. The frames come out as frame_00000001.tiff and on, at the source's size, ready to be the Input of Encode to JPEG 2000. A 16-bit TIFF of a 2K frame is about 12 MB, so a 90 minute feature fills well over a terabyte.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard transcode -i movie.mov -o ./frames --format tiff --bit-depth 16</pre>
+
+    <h2 id="loudness">Measure loudness</h2>
+    <h3>In the app</h3>
+    <p>Under Loudness Measurement, pick the Audio File and press Measure. It reports integrated loudness in LUFS, true peak in dBTP and the loudness range. The file has to be a WAV or a sound MXF out of a DCP. The picker also offers FLAC, AIFF and MP3, and those fail.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard loudness mix.wav</pre>
+
+    <h2 id="copy">Copy a DCP to a drive</h2>
+    <h3>In the app</h3>
+    <p>Under Copy DCP, pick the Source DCP folder and the Destination, then press Copy DCP. The package lands in a folder of the same name inside the destination. Each file is read back after the copy and its hash checked against the source.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard copy --src "./dcp/My Film" --dst ./drive</pre>
+
+    <h2 id="report">Make a QC report</h2>
+    <h3>In the app</h3>
+    <p>Under QC Report, pick the DCP Directory and press Generate Report. The report is written into the DCP folder as report.html, report.txt or report.pdf, and the file is HTML whichever Output Format you pick. Move it out before delivery, since Validate warns about a file the ASSETMAP does not list.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard report --dcp "./dcp/My Film" -o report.html</pre>
+
+    <h2 id="srt">Convert SRT to SMPTE subtitles</h2>
+    <h3>In the app</h3>
+    <p>A build converts an SRT on the Subtitle track by itself, so this is only for a standalone SMPTE subtitle XML. Under SRT → SMPTE Subtitle Conversion, the Convert button fails: Output File picks a folder where the command needs a file, and with Output File empty the command refuses to run. Run it from a terminal instead.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard subtitle-convert -i subs.srt -o subs.xml -l en --fps 24 --vposition 8</pre>
+
+    <h2 id="subextract">Extract subtitles</h2>
+    <h3>In the app</h3>
+    <p>Under Subtitle Extraction, press Folder for a DCP or File for a subtitle XML or MXF, choose Format and press Extract. The text goes to subtitles.srt or subtitles.txt in Output Folder, or in the folder that holds the input when Output Folder is empty. Cue times come out rounded to the DCP's frames.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard subtitle-extract -i "./dcp/Subbed" -o subtitles.srt</pre>
+
+    <h2 id="burnin">Burn in subtitles</h2>
+    <h3>In the app</h3>
+    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. The Burn In button fails: the command needs an output file, and the view passes Output Directory or nothing. From a terminal it takes SRT or ASS, and refuses the SMPTE or Interop XML the picker offers.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard burnin -i movie.mov -s subs.srt -o review.mp4</pre>
+
+    <h2 id="convert">Convert to a DCI container</h2>
+    <h3>In the app</h3>
+    <p>Target Conversion scales, crops or letterboxes a video to one of the six DCI containers. The Convert button fails the same way as Burn In: the command needs an output file, and the view passes Output Directory or nothing. From a terminal the codec follows the output's name, so scope.mov comes out as H.264.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard convert -i movie.mov -t 2k-scope -m letterbox -o scope.mov</pre>
+
+    <h2 id="ingest">Re-ingest a package</h2>
+    <h3>In the app</h3>
+    <p>Under Re-ingest Package, pick the Package Directory and press Rebuild ASSETMAP &amp; PKL. It writes a new ASSETMAP and PKL listing every asset file in the folder, deletes the old ones, and leaves the essence alone. When the folder still has its old PKL, the new ASSETMAP lists that deleted PKL and Validate fails with asset_not_found, so use it on a folder whose PKL is gone. The app writes an unsigned PKL, which Validate rejects on an encrypted package, so sign that one from a terminal.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard ingest-package ./pkg
+dcpwizard ingest-package ./pkg \
+  --signer-cert ~/dcp-certs/signer.pem \
+  --signer-key ~/dcp-certs/signer.key \
+  --signer-chain ~/dcp-certs/intermediate.pem \
+  --signer-chain ~/dcp-certs/root.pem</pre>
+
+    <h2 id="export">Export a DCP</h2>
+    <h3>In the app</h3>
+    <p>Under Export DCP, press DCP folder or CPL or MXF, choose Format, press Save as for the Output and press Export. Only a one-reel composition exports. For a longer one, export each reel's picture MXF and give its sound MXF as the Sound override, since a picture MXF on its own exports silent. An encrypted DCP needs its KDM with the Recipient private key it was issued to, or the KEYS.json from the build.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard export --input "./dcp/My Film" -o my-film.mp4 --format h264
+dcpwizard export --input ./dcp/Locked --keys ~/keys/locked.json -o locked.mp4</pre>
+
+    <h2 id="vf">Make a Version File</h2>
+    <h3>In the app</h3>
+    <p>Open Version File (Supplemental DCP) and pick the Original Version (OV) Directory and an Output Folder. Under Replacement Reels, set each Reel number and pick its Picture, a folder of J2K frames, or its Sound, a 24-bit WAV, press + Reel for the next one, and press Create Version File. The VF goes in a new folder named after Title, which defaults to the OV's title with _VF on the end. Nothing checks that a replacement runs as long as the reel it replaces. Validate reports a schema error at OriginalPackagingList in the VF's CPL.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard create-vf --ov "./dcp/Two Reels" --output ./vf \
+  --replace-picture 2=./j2k-reel2 --replace-sound 2=reel2.wav</pre>
+
+    <h2 id="settings">Change the settings</h2>
+    <h3>In the app</h3>
+    <p>Open Settings, change what you need and press Save. Terminal commands read the same file, so Encode on the GPU, Encode threads, Grok License and Report black and frozen runs while encoding apply there too, and their flags override them. A build goes to Default Output Directory when Folder is empty, and ISDCF Facility Code fills the mastering facility in the CPL and the ISDCF name when the project leaves it blank. If grok cannot start the GPU plugin, Save unticks Encode on the GPU and the status bar says why. Reset puts every setting back to its default.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard preferences show
+dcpwizard preferences set encode-threads 8</pre>
+
 </main>
 <footer>
     <p><a href="index.html">DCP Wizard</a></p>
