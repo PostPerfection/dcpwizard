@@ -20,6 +20,7 @@ import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
+import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
@@ -656,6 +657,7 @@ function renderAssets() {
   list.querySelectorAll('.asset-item').forEach(el => {
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', el.dataset.assetId);
+      setDragLabel(e, el.querySelector('.asset-name').textContent);
     });
     el.addEventListener('contextmenu', (e) => {
       showContextMenu(e, parseInt(el.dataset.assetId));
@@ -2905,6 +2907,7 @@ function renderLibrary() {
     list.querySelectorAll(".asset-item").forEach(el => {
       el.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/plain", libraryPayload(el.dataset.libraryName));
+        setDragLabel(e, el.dataset.libraryName);
       });
     });
     list.querySelectorAll("[data-library-remove]").forEach(el => {
