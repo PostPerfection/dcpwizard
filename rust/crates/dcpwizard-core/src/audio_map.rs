@@ -73,9 +73,56 @@ pub fn apply_audio_map(spec: &str, input: &Path, output: &Path) -> Result<Applie
     })
 }
 
+/// A map typed against a channel set, where input `n` is the set's `n`th file
+/// in lane order, rewritten against the routed WAV, where that file sits at its
+/// lane. `routed` is the set as [`crate::audio_route::channel_lanes`] gives it.
+pub fn channel_set_audio_map(
+    spec: &str,
+    routed: &[(usize, std::path::PathBuf)],
+) -> Result<String, String> {
+    let entries = spec
+        .split(',')
+        .map(|entry| {
+            let entry = entry.trim();
+            let (row, rest) = entry
+                .split_once(':')
+                .ok_or_else(|| format!("audio map entry '{entry}' names no output"))?;
+            let lane = row
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .and_then(|row| row.checked_sub(1))
+                .and_then(|index| routed.get(index))
+                .ok_or_else(|| {
+                    format!(
+                        "audio map entry '{entry}': the channel set has {} files",
+                        routed.len()
+                    )
+                })?;
+            Ok(format!("{}:{rest}", lane.0 + 1))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(entries.join(","))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_channel_set_map_reads_each_row_as_the_lane_its_file_routes_to() {
+        // L, R, Ls, Rs: no C or LFE, so rows 3 and 4 are routed channels 5 and 6
+        let routed: Vec<(usize, std::path::PathBuf)> = [0, 1, 4, 5]
+            .into_iter()
+            .map(|lane| (lane, std::path::PathBuf::from(format!("mix_{lane}.wav"))))
+            .collect();
+        assert_eq!(
+            channel_set_audio_map("1:L,2:R,3:Ls@-3,4:Rs,3:C@-6", &routed).unwrap(),
+            "1:L,2:R,5:Ls@-3,6:Rs,5:C@-6"
+        );
+        let error = channel_set_audio_map("5:L", &routed).unwrap_err();
+        assert!(error.contains("has 4 files"), "{error}");
+    }
 
     const STEREO: usize = 2;
 

@@ -229,3 +229,14 @@ export function audioMapCells(spec) {
     return { input, lane, gain };
   });
 }
+
+// row n is input n, and an untyped row keeps its automatic lane once anything is typed
+export function audioMapSpecFrom(rows) {
+  if (!rows.some((row) => row.typed.length)) return null;
+  const entries = rows.flatMap((row, index) => {
+    const input = index + 1;
+    if (!row.typed.length) return row.autoRoute ? [`${input}:${row.autoRoute}`] : [];
+    return row.typed.map(({ lane, gain }) => (parseFloat(gain) === 0 ? `${input}:${lane}` : `${input}:${lane}@${gain}`));
+  });
+  return entries.join(",");
+}

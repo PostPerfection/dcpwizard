@@ -102,10 +102,12 @@ pub fn build_soundtrack(source: &SoundtrackSource) -> Result<SoundtrackSummary, 
 }
 
 fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
-    let read_count = match (source.channel_files, source.audio) {
-        (Some(files), _) => {
-            crate::audio_route::routed_channel_count_of(&crate::audio_route::channel_lanes(files)?)
-        }
+    let channel_set = source
+        .channel_files
+        .map(crate::audio_route::channel_lanes)
+        .transpose()?;
+    let read_count = match (&channel_set, source.audio) {
+        (Some(routed), _) => crate::audio_route::routed_channel_count_of(routed),
         (None, Some(dir)) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
         (None, Some(wav)) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
         (None, None) => embedded_channel_count(source.picture)?,
@@ -113,11 +115,14 @@ fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
     if read_count == 0 {
         return Ok(0);
     }
-    // the build routes channel files after the map has run
-    let routes_channel_files =
-        source.channel_files.is_some() || source.audio.is_some_and(Path::is_dir);
-    let mapped_count = match source.audio_map {
-        Some(spec) if !routes_channel_files => {
+    // the build routes a channel directory after the map has run
+    let routes_a_directory = channel_set.is_none() && source.audio.is_some_and(Path::is_dir);
+    let channel_set_map = match (&channel_set, source.audio_map) {
+        (Some(routed), Some(spec)) => Some(crate::audio_map::channel_set_audio_map(spec, routed)?),
+        _ => None,
+    };
+    let mapped_count = match channel_set_map.as_deref().or(source.audio_map) {
+        Some(spec) if !routes_a_directory => {
             crate::audio_map::parse_audio_map(spec, read_count)?.output_channels()
         }
         _ => read_count,
@@ -725,6 +730,29 @@ mod tests {
             ..sound_from(None, dir.path())
         });
         assert!(name.contains("_51_"), "{name}");
+    }
+
+    #[test]
+    fn a_channel_set_map_names_what_it_produces_from_the_routed_lanes() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<PathBuf> = ["L", "Rs"]
+            .iter()
+            .map(|lane| dir.path().join(format!("mix_{lane}.wav")))
+            .collect();
+        for file in &files {
+            write_wav(file, 1);
+        }
+        let routed = name_of(SoundtrackSource {
+            channel_files: Some(&files),
+            ..sound_from(None, dir.path())
+        });
+        assert!(routed.contains("_51_"), "{routed}");
+        let folded = name_of(SoundtrackSource {
+            channel_files: Some(&files),
+            audio_map: Some("1:L,2:R"),
+            ..sound_from(None, dir.path())
+        });
+        assert!(folded.contains("_20_"), "{folded}");
     }
 
     #[test]

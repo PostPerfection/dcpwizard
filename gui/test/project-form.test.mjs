@@ -12,6 +12,7 @@ import {
   serializeForm,
   restoreFormState,
   audioMapCells,
+  audioMapSpecFrom,
 } from '../src/project-form.js';
 
 register('../../extern/guikit/test/tauri-plugins-hooks.mjs', import.meta.url);
@@ -288,4 +289,29 @@ test('the audio map spec comes back as the cells it was read from', () => {
     { input: '3', lane: 'C', gain: '0.5' },
   ]);
   assert.deepEqual(audioMapCells(null), []);
+});
+
+const UNTOUCHED_SET = [
+  { typed: [], autoRoute: 'L' },
+  { typed: [], autoRoute: 'R' },
+  { typed: [], autoRoute: 'C' },
+];
+
+test('an untouched matrix sends no map', () => {
+  assert.equal(audioMapSpecFrom(UNTOUCHED_SET), null);
+});
+
+test('one typed cell keeps the other rows on their automatic lanes', () => {
+  const rows = UNTOUCHED_SET.map((row) => ({ ...row }));
+  rows[1].typed = [{ lane: 'Rs', gain: '-3' }];
+
+  assert.equal(audioMapSpecFrom(rows), '1:L,2:Rs@-3,3:C');
+});
+
+test('a typed row routes only its typed cells', () => {
+  const rows = UNTOUCHED_SET.map((row) => ({ ...row }));
+  rows[2].typed = [{ lane: 'C', gain: '0' }, { lane: 'Lc', gain: '-6' }];
+  rows.push({ typed: [], autoRoute: null });
+
+  assert.equal(audioMapSpecFrom(rows), '1:L,2:R,3:C,3:Lc@-6');
 });

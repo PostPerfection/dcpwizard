@@ -20,7 +20,7 @@ import { loadComponentVersions } from "../../extern/guikit/src/component-version
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
-import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
+import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
@@ -795,7 +795,7 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
 let audioMapSource = null;
 let audioMapDrawn = Promise.resolve();
 
-const AUDIO_MAP_HINT = "Dotted cells are the automatic routing. Click a cell to route it at 0 dB, or type a gain in dB. Upmix and the input channel order change the automatic routing, the cells show the plain one.";
+const AUDIO_MAP_HINT = "Dotted cells route at 0 dB unless you type in their row. Click a cell to route it at 0 dB, or type a gain in dB. Upmix and the input channel order change the automatic routing, the cells show the plain one.";
 
 async function refreshAudioMapMatrix() {
   const grid = document.getElementById("prop-audio-map");
@@ -835,17 +835,16 @@ async function refreshAudioMapMatrix() {
   });
 }
 
-// The grid as an IN:LANE@GAIN spec, or null when nothing is routed.
+// The grid as an IN:LANE@GAIN spec, or null when nothing is typed.
 function audioMapSpec() {
-  const cells = document.querySelectorAll("#prop-audio-map input");
-  const entries = [];
-  for (const cell of cells) {
-    const gain = cell.value.trim();
-    if (!gain) continue;
-    const pair = `${cell.dataset.input}:${cell.dataset.lane}`;
-    entries.push(parseFloat(gain) === 0 ? pair : `${pair}@${gain}`);
-  }
-  return entries.length ? entries.join(",") : null;
+  const rows = [...document.querySelectorAll("#prop-audio-map tbody tr")].map((row) => {
+    const cells = [...row.querySelectorAll("input")];
+    return {
+      typed: cells.filter((cell) => cell.value.trim()).map((cell) => ({ lane: cell.dataset.lane, gain: cell.value.trim() })),
+      autoRoute: cells.find((cell) => cell.classList.contains("auto-routed"))?.dataset.lane ?? null,
+    };
+  });
+  return audioMapSpecFrom(rows);
 }
 
 // Add reel button

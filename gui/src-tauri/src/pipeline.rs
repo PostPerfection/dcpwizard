@@ -839,7 +839,6 @@ pub async fn submit_job(
                 "the six-channel input order",
             ),
             (upmix.is_some(), "the stereo upmix"),
-            (audio_channel_files.is_some(), "a channel set"),
         ];
         if let Some((_, name)) = competing.into_iter().find(|(set, _)| *set) {
             return Err(format!(
@@ -847,6 +846,13 @@ pub async fn submit_job(
                  use one or the other"
             ));
         }
+    }
+    if let (Some(files), Some(spec)) = (&audio_channel_files, &audio_map) {
+        let routed = dcpwizard_core::audio_route::channel_lanes(files)?;
+        dcpwizard_core::audio_map::parse_audio_map(
+            &dcpwizard_core::audio_map::channel_set_audio_map(spec, &routed)?,
+            dcpwizard_core::audio_route::routed_channel_count_of(&routed),
+        )?;
     }
 
     // reel splitting: length, timecodes and chapters are three ways to say the
@@ -2186,38 +2192,26 @@ fn prepare_audio(
 
     // the map places every channel by hand, so it runs before anything that
     // moves channels for it
-    if let (Some(spec), Some(input)) = (job.audio_map.as_deref(), &audio_path) {
-        std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-        let mapped = work_dir.join("mapped.wav");
-        let applied = dcpwizard_core::audio_map::apply_audio_map(spec, input, &mapped)?;
-        log(&format!(
-            "[AUDIO] Map: {} channels to {} over {} frames{}",
-            applied.report.input_channels,
-            applied.report.output_channels,
-            applied.report.frames,
-            if applied.pure_routing {
-                ", bit-exact routing"
-            } else {
-                ""
-            }
-        ));
-        if applied.report.clipped_samples > 0 {
-            log(&format!(
-                "[AUDIO] Map clipped {} sample(s): lower the cell gains",
-                applied.report.clipped_samples
-            ));
-        }
-        audio_path = Some(mapped);
+    if let (Some(spec), Some(input), None) = (
+        job.audio_map.as_deref(),
+        &audio_path,
+        &job.audio_channel_files,
+    ) {
+        audio_path = Some(map_audio(spec, input, &work_dir, &log)?);
     }
 
     if let Some(files) = job.audio_channel_files.as_deref() {
         std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-        let routed = work_dir.join("routed.wav");
-        audio_path = Some(dcpwizard_core::audio_route::route_files(
-            &dcpwizard_core::audio_route::channel_lanes(files)?,
-            &routed,
-        )?);
+        let set = dcpwizard_core::audio_route::channel_lanes(files)?;
+        let mut routed =
+            dcpwizard_core::audio_route::route_files(&set, &work_dir.join("routed.wav"))?;
         log("[AUDIO] Routed the channel set by filename");
+        // the map's inputs are the set's files, which sit at their lanes only once routed
+        if let Some(spec) = job.audio_map.as_deref() {
+            let spec = dcpwizard_core::audio_map::channel_set_audio_map(spec, &set)?;
+            routed = map_audio(&spec, &routed, &work_dir, &log)?;
+        }
+        audio_path = Some(routed);
     }
 
     if let (Some(variant), Some(input)) = (job.upmix, &audio_path) {
@@ -2267,6 +2261,35 @@ fn prepare_audio(
     }
 
     Ok(audio_path)
+}
+
+fn map_audio(
+    spec: &str,
+    input: &Path,
+    work_dir: &Path,
+    log: &impl Fn(&str),
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+    let mapped = work_dir.join("mapped.wav");
+    let applied = dcpwizard_core::audio_map::apply_audio_map(spec, input, &mapped)?;
+    log(&format!(
+        "[AUDIO] Map: {} channels to {} over {} frames{}",
+        applied.report.input_channels,
+        applied.report.output_channels,
+        applied.report.frames,
+        if applied.pure_routing {
+            ", bit-exact routing"
+        } else {
+            ""
+        }
+    ));
+    if applied.report.clipped_samples > 0 {
+        log(&format!(
+            "[AUDIO] Map clipped {} sample(s): lower the cell gains",
+            applied.report.clipped_samples
+        ));
+    }
+    Ok(mapped)
 }
 
 /// The burn a job asks for, rebuilt from the cue file. `submit_job` already
@@ -4062,6 +4085,56 @@ mod tests {
                 (full_scale / 3) * 2,
             ]
         );
+    }
+
+    #[test]
+    fn a_channel_set_map_runs_on_the_routed_lanes() {
+        let dir = tempfile::tempdir().unwrap();
+        let full_scale = 1i32 << 23;
+        let centre = full_scale / 4;
+        let mut files = Vec::new();
+        for (lane, value) in [
+            ("L", full_scale / 10),
+            ("R", full_scale / 5),
+            ("C", centre),
+            ("LFE", full_scale / 3),
+            ("Ls", full_scale / 2),
+            ("Rs", (full_scale / 3) * 2),
+        ] {
+            let file = dir.path().join(format!("260810 DST_MIX_V2.3.2.{lane}.wav"));
+            write_mono(&file, value, 64);
+            files.push(file);
+        }
+
+        let mut job = test_job();
+        job.audio_channel_files = Some(files);
+        // row 3 is the C file: kept on C and copied onto Lc 6 dB down
+        job.audio_map = Some("1:L,2:R,3:C,3:Lc@-6,4:LFE,5:Ls,6:Rs".into());
+
+        let mapped = prepare_audio(&job, SourceConform::default(), dir.path(), |_| {})
+            .unwrap()
+            .unwrap();
+        let mut reader = WavReader::open(&mapped).unwrap();
+        assert_eq!(reader.spec().channels, 8);
+        let samples: Vec<i32> = reader.samples::<i32>().map(|s| s.unwrap()).collect();
+        assert_eq!(
+            &samples[..6],
+            &[
+                full_scale / 10,
+                full_scale / 5,
+                centre,
+                full_scale / 3,
+                full_scale / 2,
+                (full_scale / 3) * 2,
+            ]
+        );
+        let attenuated = f64::from(centre) * 10f64.powf(-6.0 / 20.0);
+        assert!(
+            (f64::from(samples[6]) - attenuated).abs() <= 2.0,
+            "Lc {} against {attenuated}",
+            samples[6]
+        );
+        assert_eq!(samples[7], 0, "Rc silent");
     }
 
     #[test]
