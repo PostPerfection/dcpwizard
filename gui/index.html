@@ -398,7 +398,18 @@
                       <option value="both">Both</option>
                     </select>
                   </div>
-                  <p class="field-hint">The picture is scaled onto the chosen container: Fill container crops it to the container's aspect first, otherwise it is letterboxed inside it.</p>
+                  <div class="prop-field">
+                    <label for="prop-picture-scale">Scale (%)</label>
+                    <input id="prop-picture-scale" type="number" min="25" max="400" step="0.1" value="100">
+                  </div>
+                  <div class="prop-field">
+                    <label>Offset X / Y (container pixels)</label>
+                    <div class="crop-grid">
+                      <label for="prop-picture-offset-x">X<input id="prop-picture-offset-x" type="number" step="1" value="0"></label>
+                      <label for="prop-picture-offset-y">Y<input id="prop-picture-offset-y" type="number" step="1" value="0"></label>
+                    </div>
+                  </div>
+                  <p class="field-hint">The picture is scaled onto the chosen container: Fill container crops it to the container's aspect first, otherwise it is letterboxed inside it. Scale 100 fits the container, over 100 the edges are cut. A positive offset moves the picture right and down.</p>
                 </fieldset>
 
                 <fieldset>

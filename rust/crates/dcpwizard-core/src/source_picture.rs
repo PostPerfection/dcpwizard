@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use postkit::picture_processing::{
-    Crop, DEFAULT_AUTO_CROP_THRESHOLD, Fit, PicturePlan, PictureProcessing, Rotation, detect_crop,
-    fill_crop, require_one_crop_decider,
+    Crop, DEFAULT_AUTO_CROP_THRESHOLD, Fit, PicturePlan, PictureProcessing, Placement, Rotation,
+    detect_crop, fill_crop, require_one_crop_decider,
 };
 
 /// What the caller asked for. Crops are source pixels, taken before any
@@ -28,7 +28,11 @@ pub struct SourcePictureOptions {
     pub rotation: Rotation,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
+    pub placement: Placement,
 }
+
+pub const MINIMUM_SCALE_PERCENT: f64 = 25.0;
+pub const MAXIMUM_SCALE_PERCENT: f64 = 400.0;
 
 impl Default for SourcePictureOptions {
     fn default() -> Self {
@@ -42,6 +46,7 @@ impl Default for SourcePictureOptions {
             rotation: Rotation::None,
             flip_horizontal: false,
             flip_vertical: false,
+            placement: Placement::default(),
         }
     }
 }
@@ -58,6 +63,7 @@ impl SourcePictureOptions {
             && self.rotation == Rotation::None
             && !self.flip_horizontal
             && !self.flip_vertical
+            && self.placement.is_default()
     }
 }
 
@@ -115,6 +121,15 @@ fn cropped_raster(
     Ok((plan.output_width, plan.output_height))
 }
 
+pub fn check_scale_percent(scale_percent: f64) -> Result<(), String> {
+    if (MINIMUM_SCALE_PERCENT..=MAXIMUM_SCALE_PERCENT).contains(&scale_percent) {
+        return Ok(());
+    }
+    Err(format!(
+        "picture scale {scale_percent}% is outside {MINIMUM_SCALE_PERCENT}% to {MAXIMUM_SCALE_PERCENT}%"
+    ))
+}
+
 /// Resolve the picture flags against a source of `source_width`x`source_height`.
 ///
 /// The fit box is the container's active area when one was given, else the
@@ -135,6 +150,7 @@ pub fn resolve_picture(
         options.auto_crop,
         options.fill_crop,
     )?;
+    check_scale_percent(options.placement.scale_percent)?;
 
     let detected = options
         .auto_crop
@@ -178,7 +194,15 @@ pub fn resolve_picture(
             box_height: fit_box.1,
             raster_width,
             raster_height,
+            placement: options.placement,
         });
+    if fit.is_none() && !options.placement.is_default() {
+        return Err(
+            "picture scale and offset need a raster to place the picture on: \
+             choose a container or a resolution"
+                .to_string(),
+        );
+    }
 
     let processing = PictureProcessing {
         deinterlace: options.deinterlace,
@@ -246,6 +270,7 @@ mod tests {
                 box_height: TWO_K_FLAT.1,
                 raster_width: TWO_K_FLAT.0,
                 raster_height: TWO_K_FLAT.1,
+                placement: Placement::default(),
             })
         );
         assert_eq!((resolved.encode_width, resolved.encode_height), TWO_K_FLAT);
@@ -420,6 +445,70 @@ mod tests {
         .unwrap();
         assert!(resolved.processing.fit.is_none());
         assert_eq!((resolved.encode_width, resolved.encode_height), (1920, 804));
+    }
+
+    #[test]
+    fn a_placement_reaches_the_fit_and_moves_the_picture() {
+        let placement = Placement {
+            scale_percent: 50.0,
+            offset_x: -100,
+            offset_y: 40,
+        };
+        let resolved = resolve(
+            &SourcePictureOptions {
+                placement,
+                ..SourcePictureOptions::default()
+            },
+            &EncodeGeometry {
+                forced_raster: Some(TWO_K_FLAT),
+                container: Some(TWO_K_FLAT),
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved.processing.fit.unwrap().placement, placement);
+        assert_eq!((resolved.encode_width, resolved.encode_height), TWO_K_FLAT);
+        assert_eq!(
+            (resolved.plan.scaled_width, resolved.plan.scaled_height),
+            (960, 540)
+        );
+        assert_eq!((resolved.plan.pad_left, resolved.plan.pad_top), (418, 310));
+    }
+
+    #[test]
+    fn a_placement_without_a_raster_to_place_on_is_refused() {
+        let refused = resolve(
+            &SourcePictureOptions {
+                placement: Placement {
+                    offset_x: 10,
+                    ..Placement::default()
+                },
+                ..SourcePictureOptions::default()
+            },
+            &EncodeGeometry {
+                forced_raster: None,
+                container: Some(TWO_K_SCOPE),
+            },
+        )
+        .unwrap_err();
+        assert!(refused.contains("container or a resolution"), "{refused}");
+    }
+
+    #[test]
+    fn a_scale_outside_the_range_is_refused() {
+        for scale_percent in [10.0, 500.0, f64::NAN] {
+            let refused = resolve(
+                &SourcePictureOptions {
+                    placement: Placement {
+                        scale_percent,
+                        ..Placement::default()
+                    },
+                    ..SourcePictureOptions::default()
+                },
+                &EncodeGeometry::default(),
+            )
+            .unwrap_err();
+            assert!(refused.contains("outside 25% to 400%"), "{refused}");
+        }
     }
 
     #[test]
