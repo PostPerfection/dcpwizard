@@ -117,6 +117,7 @@ pub fn run() {
             pipeline::detect_source_crop,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,
+            pipeline::group_channel_files,
             pipeline::isdcf_name_preview,
             pipeline::create_vf,
             export::export_dcp,

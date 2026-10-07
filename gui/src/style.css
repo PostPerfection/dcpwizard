@@ -79,21 +79,60 @@
 }
 .audio-map table {
   border-collapse: collapse;
-  font-size: 11px;
 }
 .audio-map th,
 .audio-map td {
   padding: 2px 3px;
   text-align: center;
 }
+.audio-map td {
+  min-width: 48px;
+}
 .audio-map th {
   color: var(--text-muted);
   font-weight: normal;
 }
-.audio-map input {
-  width: 34px;
+.audio-map tbody th {
+  text-align: left;
+  white-space: nowrap;
+}
+.audio-map tbody th span {
+  display: inline-block;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+/* the panel's text inputs fill their field, a cell input keeps its own width */
+.prop-field .audio-map input[type="text"] {
+  width: 44px;
   padding: 2px;
   text-align: center;
+}
+.prop-field .audio-map input.auto-routed {
+  border-style: dotted;
+}
+.prop-field .audio-map input.auto-routed:not(:focus) {
+  border-color: var(--text-muted);
+}
+.audio-map input.auto-routed::placeholder {
+  color: var(--text-muted);
+}
+
+/* the mono files of a channel set, under its asset row */
+.asset-item.channel-set {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.asset-files {
+  flex-basis: 100%;
+  padding-left: 26px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.asset-file-lane {
+  display: inline-block;
+  min-width: 3em;
 }
 
 /* Version File replacement rows */

@@ -8,7 +8,7 @@ use crate::isdcf_name::{
     isdcf_name,
 };
 use chrono::Datelike;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Composition version number when the config carries none, as Bv2.1 requires
 /// the element present.
@@ -81,6 +81,8 @@ pub fn soundtrack_summary(
 pub struct SoundtrackSource<'a> {
     // a WAV, or a directory of channel WAVs
     pub audio: Option<&'a Path>,
+    // mono WAVs routed by their channel suffix, in place of audio
+    pub channel_files: Option<&'a [PathBuf]>,
     pub picture: Option<&'a Path>,
     pub audio_map: Option<&'a str>,
     pub upmix: bool,
@@ -100,18 +102,22 @@ pub fn build_soundtrack(source: &SoundtrackSource) -> Result<SoundtrackSummary, 
 }
 
 fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
-    let read_count = match source.audio {
-        Some(dir) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
-        Some(wav) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
-        None => embedded_channel_count(source.picture)?,
+    let read_count = match (source.channel_files, source.audio) {
+        (Some(files), _) => {
+            crate::audio_route::routed_channel_count_of(&crate::audio_route::channel_lanes(files)?)
+        }
+        (None, Some(dir)) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
+        (None, Some(wav)) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
+        (None, None) => embedded_channel_count(source.picture)?,
     };
     if read_count == 0 {
         return Ok(0);
     }
-    // the build routes a channel directory after the map has run
-    let routes_a_directory = source.audio.is_some_and(Path::is_dir);
+    // the build routes channel files after the map has run
+    let routes_channel_files =
+        source.channel_files.is_some() || source.audio.is_some_and(Path::is_dir);
     let mapped_count = match source.audio_map {
-        Some(spec) if !routes_a_directory => {
+        Some(spec) if !routes_channel_files => {
             crate::audio_map::parse_audio_map(spec, read_count)?.output_channels()
         }
         _ => read_count,
@@ -615,6 +621,7 @@ mod tests {
     fn sound_from<'a>(audio: Option<&'a Path>, picture: &'a Path) -> SoundtrackSource<'a> {
         SoundtrackSource {
             audio,
+            channel_files: None,
             picture: Some(picture),
             audio_map: None,
             upmix: false,
@@ -700,6 +707,23 @@ mod tests {
             write_wav(&dir.path().join(format!("mix_{lane}.wav")), 1);
         }
         let name = name_of(sound_from(Some(dir.path()), dir.path()));
+        assert!(name.contains("_51_"), "{name}");
+    }
+
+    #[test]
+    fn a_channel_set_names_the_lanes_it_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<PathBuf> = ["L", "R", "C", "LFE", "Ls", "Rs"]
+            .iter()
+            .map(|lane| dir.path().join(format!("mix.{lane}.wav")))
+            .collect();
+        for file in &files {
+            write_wav(file, 1);
+        }
+        let name = name_of(SoundtrackSource {
+            channel_files: Some(&files),
+            ..sound_from(None, dir.path())
+        });
         assert!(name.contains("_51_"), "{name}");
     }
 

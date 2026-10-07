@@ -21,6 +21,7 @@ import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
+import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -49,7 +50,8 @@ let lastBrowseDir = localStorage.getItem(LAST_BROWSE_DIR_KEY);
 async function open(opts = {}) {
   const result = await _open({ ...opts, defaultPath: opts.defaultPath || lastBrowseDir || undefined });
   if (result) {
-    lastBrowseDir = opts.directory ? result : result.replace(/[/\\][^/\\]*$/, '');
+    const chosen = opts.multiple ? result[0] : result;
+    lastBrowseDir = opts.directory ? chosen : chosen.replace(/[/\\][^/\\]*$/, '');
     localStorage.setItem(LAST_BROWSE_DIR_KEY, lastBrowseDir);
   }
   return result;
@@ -501,9 +503,7 @@ getCurrentWebview().onDragDropEvent((event) => {
     if (dropOverlay) dropOverlay.hidden = false;
   } else if (p.type === "drop") {
     if (dropOverlay) dropOverlay.hidden = true;
-    for (const path of p.paths) {
-      importAssetFromPath(path, guessType(path));
-    }
+    importAssetsFromPaths(p.paths.map((path) => [path, guessType(path)]));
   } else {
     // "leave" / "cancel"
     if (dropOverlay) dropOverlay.hidden = true;
@@ -532,14 +532,14 @@ document.getElementById("import-video")?.addEventListener("click", async () => {
 });
 
 document.getElementById("import-audio")?.addEventListener("click", async () => {
-  const path = await open({
-    directory: false, multiple: false,
+  const paths = await open({
+    directory: false, multiple: true,
     filters: [
       { name: 'Audio', extensions: ['wav','aiff','flac','mp3'] },
       { name: 'All', extensions: ['*'] }
     ]
   });
-  if (path) importAssetFromPath(path, 'audio');
+  if (paths) importAssetsFromPaths(paths.map((path) => [path, 'audio']));
 });
 
 document.getElementById("import-subtitle")?.addEventListener("click", async () => {
@@ -567,6 +567,32 @@ function fillFirstReelFromUnplacedAssets() {
     if (reel[slot]) continue;
     reel[slot] = project.assets.find(a => a.type === type && !placed.has(a.id)) ?? null;
   }
+}
+
+async function importAssetsFromPaths(pathsWithTypes) {
+  for (const [path, type] of pathsWithTypes) importAssetFromPath(path, type);
+  if (pathsWithTypes.some(([, type]) => type === 'audio')) await groupAudioIntoChannelSets();
+}
+
+// mono WAVs named <stem>_L.wav, <stem>.R.wav and so on become one sound asset
+async function groupAudioIntoChannelSets() {
+  const audioPaths = project.assets
+    .filter((asset) => asset.type === 'audio')
+    .flatMap((asset) => (isChannelSet(asset) ? asset.channelFiles.map((file) => file.path) : [asset.path]));
+  const groups = await invoke("group_channel_files", { paths: audioPaths });
+  const { assets, absorbedInto } = mergeChannelSets(project.assets, groups, () => nextAssetId++);
+  if (absorbedInto.size === 0) return;
+  project.assets = assets;
+  for (const reel of project.compositions.flatMap((composition) => composition.reels)) {
+    const set = reel.sound && absorbedInto.get(reel.sound.id);
+    if (set) reel.sound = set;
+  }
+  fillFirstReelFromUnplacedAssets();
+  renderAssets();
+  renderReels();
+  updateStatusStats();
+  const sets = [...new Set(absorbedInto.values())];
+  setStatus(`Channel set: ${sets.map((set) => `${set.name} (${set.meta})`).join(", ")}`);
 }
 
 function importAssetFromPath(path, type) {
@@ -624,12 +650,16 @@ function renderAssets() {
   }
 
   const icons = { video: '🎬', audio: '🔊', subtitle: '📝' };
+  const channelFileList = (a) => isChannelSet(a)
+    ? `<div class="asset-files">${a.channelFiles.map(f => `<div><span class="asset-file-lane">${f.lane}</span> ${f.path.split(/[/\\]/).pop()}</div>`).join('')}</div>`
+    : '';
   list.innerHTML = project.assets.map(a => `
-    <div class="asset-item" data-asset-id="${a.id}" draggable="true">
+    <div class="asset-item${isChannelSet(a) ? ' channel-set' : ''}" data-asset-id="${a.id}" draggable="true">
       <span class="asset-icon">${icons[a.type]}</span>
-      <span class="asset-name" title="${a.path}">${a.name}</span>
+      <span class="asset-name" title="${a.path ?? a.name}">${a.name}</span>
       <span class="asset-meta">${a.meta || a.type}</span>
       <button class="asset-remove" data-remove-id="${a.id}" title="Remove from project">✕</button>
+      ${channelFileList(a)}
     </div>
   `).join('');
 
@@ -644,7 +674,10 @@ function renderAssets() {
     });
     el.addEventListener('click', () => {
       const asset = project.assets.find(a => a.id === parseInt(el.dataset.assetId));
-      if (asset) selectPreview("source", asset.path);
+      if (!asset) return;
+      const previewPath = channelSetPreviewPath(asset);
+      if (previewPath) selectPreview("source", previewPath);
+      else setStatus(CHANNEL_SET_PREVIEW_STATUS);
     });
   });
   list.querySelectorAll('.asset-remove').forEach(el => {
@@ -661,6 +694,13 @@ function renderAssets() {
   }
 
   applyPreviewSelection();
+}
+
+const CHANNEL_SET_PREVIEW_STATUS = "A channel set previews after the build";
+
+function soundTrackLabel(sound) {
+  if (!sound) return 'Drop audio here';
+  return isChannelSet(sound) ? `${sound.name}, ${sound.channelFiles.length} channels` : sound.name;
 }
 
 function renderReels() {
@@ -680,7 +720,7 @@ function renderReels() {
         </div>
         <div class="track track-sound" data-reel-id="${reel.id}" data-track="sound">
           <span class="track-label">Sound</span>
-          <span class="track-info ${reel.sound ? 'has-content' : ''}">${reel.sound ? reel.sound.name : 'Drop audio here'}</span>
+          <span class="track-info ${reel.sound ? 'has-content' : ''}">${soundTrackLabel(reel.sound)}</span>
         </div>
         <div class="track track-subtitle" data-reel-id="${reel.id}" data-track="subtitle">
           <span class="track-label">Subtitle</span>
@@ -750,37 +790,42 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
 
 // === Audio channel mapping matrix ===
 
-// the path the drawn matrix belongs to, so re-rendering the reels does not throw
+// the sound the drawn matrix belongs to, so re-rendering the reels does not throw
 // away gains the user has typed
-let audioMapPath = null;
+let audioMapSource = null;
 let audioMapDrawn = Promise.resolve();
+
+const AUDIO_MAP_HINT = "Dotted cells are the automatic routing. Click a cell to route it at 0 dB, or type a gain in dB. Upmix and the input channel order change the automatic routing, the cells show the plain one.";
 
 async function refreshAudioMapMatrix() {
   const grid = document.getElementById("prop-audio-map");
   const hint = document.getElementById("prop-audio-map-hint");
   if (!grid) return;
-  const audio = project.reels[0]?.sound?.path || null;
-  if (audio === audioMapPath) return;
-  audioMapPath = audio;
+  const { audioPath, audioChannelFiles } = soundSource(project.reels[0]?.sound);
+  const sound = audioPath ?? audioChannelFiles?.join("\n") ?? null;
+  if (sound === audioMapSource) return;
+  audioMapSource = sound;
   grid.innerHTML = "";
-  if (!audio) {
+  if (!sound) {
     if (hint) hint.textContent = "Import a sound asset to map its channels.";
     return;
   }
   let panel;
   try {
-    panel = await invoke("probe_audio_map", { audioPath: audio });
+    panel = await invoke("probe_audio_map", { audioPath, channelFiles: audioChannelFiles });
   } catch (e) {
     if (hint) hint.textContent = String(e);
     return;
   }
-  if (hint) hint.textContent = "Empty leaves a channel unrouted. Click a cell to route it at 0 dB.";
+  if (hint) hint.textContent = AUDIO_MAP_HINT;
   const header = panel.lanes.map(lane => `<th>${lane}</th>`).join("");
-  const rows = Array.from({ length: panel.channels }, (_, channel) => {
-    const cells = panel.lanes.map(lane =>
-      `<td><input type="text" inputmode="decimal" data-input="${channel + 1}" data-lane="${lane}" title="Channel ${channel + 1} to ${lane}, gain in dB"></td>`
-    ).join("");
-    return `<tr><th>${channel + 1}</th>${cells}</tr>`;
+  const rows = panel.channelNames.map((name, channel) => {
+    const autoLane = panel.autoRoutes[channel];
+    const cells = panel.lanes.map(lane => {
+      const auto = lane === autoLane ? ' class="auto-routed" placeholder="auto"' : '';
+      return `<td><input type="text" inputmode="decimal"${auto} data-input="${channel + 1}" data-lane="${lane}" title="${name} to ${lane}, gain in dB"></td>`;
+    }).join("");
+    return `<tr><th title="${name}"><span>${name}</span></th>${cells}</tr>`;
   }).join("");
   grid.innerHTML = `<table><thead><tr><th></th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
   grid.querySelectorAll("input").forEach(cell => {
@@ -1031,11 +1076,6 @@ document.getElementById("prop-browse-versions")?.addEventListener("click", async
     ]
   });
   if (path) document.getElementById("prop-versions").value = path;
-});
-
-document.getElementById("prop-browse-audio-channel-dir")?.addEventListener("click", async () => {
-  const dir = await open({ directory: true });
-  if (dir) document.getElementById("prop-audio-channel-dir").value = dir;
 });
 
 document.getElementById("prop-browse-sign-language-video")?.addEventListener("click", async () => {
@@ -1311,8 +1351,7 @@ function isdcfNameRequest() {
     framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
     contentKind: document.getElementById("prop-content-kind")?.value || "feature",
     videoPath: reel?.picture?.path || null,
-    audioPath: reel?.sound?.path || null,
-    audioChannelDir: document.getElementById("prop-audio-channel-dir")?.value || null,
+    ...soundSource(reel?.sound),
     audioMap: audioMapSpec(),
     upmix: document.getElementById("prop-upmix")?.value || "none",
     subtitle: reel?.subtitle?.path || null,
@@ -1357,7 +1396,7 @@ const ISDCF_PREVIEW_CONTROLS = [
   "prop-territory-type", "prop-content-versions", "prop-temp-version", "prop-pre-release",
   "prop-red-band", "prop-two-d-version-of-three-d", "prop-version-file",
   "prop-crop-left", "prop-crop-right", "prop-crop-top", "prop-crop-bottom", "prop-rotate",
-  "prop-audio-channel-dir", "prop-audio-map", "prop-upmix",
+  "prop-audio-map", "prop-upmix",
   "prop-version-number", "prop-chain", "prop-facility-name", "prop-luminance", "prop-luminance-units",
 ];
 for (const id of ISDCF_PREVIEW_CONTROLS) {
@@ -1388,7 +1427,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   }
 
   const video = reel.picture.path;
-  const audio = reel.sound?.path || null;
+  const { audioPath, audioChannelFiles } = soundSource(reel.sound);
   const outputEl = document.getElementById("prop-output");
   let output = outputEl?.value || await defaultOutputFolder();
   if (outputEl) outputEl.value = output;
@@ -1470,7 +1509,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       videoPath: video,
       title,
       outputDir: output,
-      audioPath: audio,
+      audioPath,
       validate: document.getElementById("prop-validate")?.checked ?? true,
       standard: document.getElementById("prop-standard")?.value || "smpte",
       resolution: document.getElementById("prop-resolution")?.value || "auto",
@@ -1516,7 +1555,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
       loudnessTarget: document.getElementById("prop-loudness")?.value || null,
       truePeakCeiling: parseFloat(document.getElementById("prop-true-peak")?.value) || null,
-      audioChannelDir: document.getElementById("prop-audio-channel-dir")?.value || null,
+      audioChannelFiles,
       audioMap: audioMapSpec(),
       audioInputOrder: document.getElementById("prop-audio-input-order")?.value || "dcp",
       audioChannels: parseInt(document.getElementById("prop-audio-channels")?.value) || null,
@@ -2621,7 +2660,7 @@ async function restoreBuildPanel(saved) {
   renderRatings();
   renderCplTabs();
   // undefined matches no sound path, not even none, so the matrix is drawn again
-  audioMapPath = undefined;
+  audioMapSource = undefined;
   renderReels();
   renderAssets();
   updateStatusStats();
@@ -2795,12 +2834,14 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
     const asset = project.assets.find(a => a.id === ctxAssetId);
     if (!asset) return;
     if (action === "preview") {
-      previewSourcePicture(asset.path);
+      const previewPath = channelSetPreviewPath(asset);
+      if (previewPath) previewSourcePicture(previewPath);
+      else setStatus(CHANNEL_SET_PREVIEW_STATUS);
     } else if (action === "remove") {
       removeAsset(ctxAssetId);
     } else if (action === "reveal") {
       // reveals the file in the OS file manager (shell open only accepts URLs)
-      revealItemInDir(asset.path);
+      revealItemInDir(asset.path ?? asset.channelFiles[0].path);
     }
     ctxMenu.hidden = true;
   });

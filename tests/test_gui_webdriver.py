@@ -48,10 +48,11 @@ FIXTURE_SPLIT_AT = "00:00:02"
 FIXTURE_CHANNELS = 6
 
 PROJECT_WIZARD = "dcpwizard"
-PROJECT_FILE_VERSION = 1
+PROJECT_FILE_VERSION = 2
 
 PROJECT_TITLE = "Film"
 SECOND_PROJECT_TITLE = "Second"
+CHANNEL_SET_NAME = "mix"
 NEW_PROJECT_CHORD = "ctrl+n"
 SAVE_PROJECT_CHORD = "ctrl+s"
 BUILD_COMPLETE_STATUS = "Build complete"
@@ -137,6 +138,20 @@ return [...document.querySelectorAll("#asset-list .asset-item")].map(
 
 ASSET_METAS = """
 return [...document.querySelectorAll("#asset-list .asset-meta")].map((meta) => meta.textContent);
+"""
+
+CHANNEL_SET_ROWS = """
+return [...document.querySelectorAll("#asset-list .asset-item.channel-set")].map((item) => ({
+  name: item.querySelector(".asset-name").textContent,
+  files: [...item.querySelectorAll(".asset-files > div")].map((line) => line.textContent),
+}));
+"""
+
+AUDIO_MAP_ROWS = """
+return [...document.querySelectorAll("#prop-audio-map tbody tr")].map((row) => ({
+  name: row.querySelector("th").title,
+  autoRouted: [...row.querySelectorAll("input.auto-routed")].map((cell) => cell.dataset.lane),
+}));
 """
 
 # guikit stores the recent list only once it knows the form a New would discard
@@ -767,6 +782,108 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     for field, _, value, _ in COMPOSITION_METADATA:
         assert session.property(field, "value") == value, field
     assert session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS
+
+
+def write_mono_channel(path):
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"sine=frequency=440:sample_rate=48000:duration={FIXTURE_SECONDS}",
+        "-ac", "1", "-c:a", "pcm_s24le",
+        str(path),
+    )
+
+
+# the channel count of every sound track in the package, read off its MXF
+def packaged_sound_channels(package):
+    counts = []
+    for mxf in sorted(package.glob("*.mxf")):
+        probed = subprocess.run(
+            (
+                "ffprobe", "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=channels",
+                "-of", "csv=p=0",
+                str(mxf),
+            ),
+            capture_output=True,
+            text=True,
+        )
+        assert probed.returncode == 0, probed.stderr
+        counts.extend(int(line) for line in probed.stdout.split())
+    return counts
+
+
+def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    picture, _ = write_media(media)
+    left = media / f"{CHANNEL_SET_NAME}_L.wav"
+    right = media / f"{CHANNEL_SET_NAME}_R.wav"
+    write_mono_channel(left)
+    write_mono_channel(right)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    package = tmp_path / PROJECT_TITLE
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+
+    choose_in_dialog(window, "#import-video", picture)
+    wait_until(
+        "the video's size was never probed",
+        lambda: any(FIXTURE_ASSET_SIZE in meta for meta in session.execute(ASSET_METAS)),
+        OPEN_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-audio", left)
+    wait_until(
+        "the left channel never reached the asset list",
+        lambda: session.execute(ASSET_PATHS) == [str(picture), str(left)],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-audio", right)
+    wait_until(
+        "the two channels never became one set",
+        lambda: session.execute(ASSET_PATHS) == [str(picture), CHANNEL_SET_NAME],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.execute(CHANNEL_SET_ROWS) == [
+        {"name": CHANNEL_SET_NAME, "files": [f"L {left.name}", f"R {right.name}"]}
+    ]
+    assert session.text(".track-sound .track-info") == f"{CHANNEL_SET_NAME}, 2 channels"
+    wait_until(
+        "the mapping matrix never named the set's files",
+        lambda: session.execute(AUDIO_MAP_ROWS)
+        == [
+            {"name": left.name, "autoRouted": ["L"]},
+            {"name": right.name, "autoRouted": ["R"]},
+        ],
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    wait_until(
+        "the Build button stayed disabled",
+        lambda: session.property("#btn-build", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-build")
+    wait_until(
+        "the hints dialog never opened",
+        lambda: session.property("#hints-dialog", "hidden") is False,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    window.click("#hints-build")
+    wait_until(
+        "the build never finished",
+        lambda: session.property("#progress-stage", "textContent") in FINISHED_BUILD_STAGES,
+        CREATE_TIMEOUT_SECONDS,
+    )
+    assert status_text(session) == BUILD_COMPLETE_STATUS
+    assert packaged_sound_channels(package) == [2]
 
 
 def counted_video_frames(movie):

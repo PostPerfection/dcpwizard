@@ -187,6 +187,42 @@ test('a version 1 project file, saved before the subtitle placement fields, open
   assert.equal(reopened.controls.get('prop-subtitle-no-subset').checked, false);
 });
 
+test('a version 1 channel WAV directory is dropped on upgrade and named as not restored', () => {
+  const saved = JSON.parse(readFileSync(new URL('./fixtures/Film-version-1.dcpwizard', import.meta.url), 'utf8'));
+  saved.form.audioChannelDir = '/media/channels';
+  const { form } = readProjectFile(JSON.stringify(saved), 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+
+  const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  assert.equal('audioChannelDir' in form, false);
+  assert.deepEqual(notRestored, ['Channel WAV directory /media/channels: drop the WAVs on Assets instead']);
+  assert.equal(reopened.controls.get('prop-title').value, 'Film');
+});
+
+test('a channel set on the sound track comes back with its files', () => {
+  const panel = editedPanel();
+  const set = {
+    id: 8,
+    type: 'audio',
+    name: 'mix',
+    meta: '2 ch: L R',
+    path: null,
+    channelFiles: [
+      { path: '/media/mix_L.wav', lane: 'L' },
+      { path: '/media/mix_R.wav', lane: 'R' },
+    ],
+  };
+  panel.project.assets.push(set);
+  panel.project.compositions[0].reels[0].sound = set;
+  const reopened = emptyPanel(() => '');
+
+  restoreFormState(JSON.parse(JSON.stringify(serialized(panel))), serialized(emptyPanel(() => ''), null), reopened);
+
+  assert.deepEqual(reopened.project.compositions[0].reels[0].sound, set);
+  assert.deepEqual(serialized(reopened), serialized(panel));
+});
+
 function selectOffering(label, values, value) {
   return { value, labels: [{ textContent: ` ${label} ` }], options: values.map((optionValue) => ({ value: optionValue })) };
 }

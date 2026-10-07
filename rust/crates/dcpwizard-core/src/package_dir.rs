@@ -232,6 +232,7 @@ mod tests {
             options,
             sound: crate::isdcf_title::SoundtrackSource {
                 audio: None,
+                channel_files: None,
                 picture: None,
                 audio_map: None,
                 upmix: false,

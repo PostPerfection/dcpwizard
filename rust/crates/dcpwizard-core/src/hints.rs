@@ -419,7 +419,9 @@ fn probe_hint_facts(plan: &CreatePlan) -> HintFacts {
             .or(plan.geometry.forced_raster),
         packaged_channels: packaged_channels(plan),
         upmix: plan.upmix,
-        has_audio: plan.audio.is_some() || source.is_some_and(|info| info.has_audio),
+        has_audio: plan.audio.is_some()
+            || !plan.channel_files.is_empty()
+            || source.is_some_and(|info| info.has_audio),
         audio_language: plan.audio_language.clone(),
         audio,
         marker_labels: placed_marker_labels(plan),
@@ -1127,6 +1129,15 @@ Dialogue: 0,0:00:08.00,0:00:10.00,Top,,0,0,0,,top
             ..Default::default()
         };
         assert_eq!(probe_hint_facts(&plan).packaged_subtitle_font, Some(font));
+    }
+
+    #[test]
+    fn a_channel_set_is_sound() {
+        let plan = CreatePlan {
+            channel_files: vec![PathBuf::from("mix.L.wav"), PathBuf::from("mix.R.wav")],
+            ..Default::default()
+        };
+        assert!(probe_hint_facts(&plan).has_audio);
     }
 
     #[test]

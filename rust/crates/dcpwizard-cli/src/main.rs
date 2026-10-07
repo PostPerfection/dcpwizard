@@ -2685,6 +2685,7 @@ fn isdcf_package(
         options: &parsed.naming.options,
         sound: dcpwizard_core::isdcf_title::SoundtrackSource {
             audio: plan.audio.as_deref(),
+            channel_files: None,
             // only a video file's own sound is demuxed when --audio names none
             picture: request.is_video_file.then_some(plan.picture.as_path()),
             audio_map: plan.audio_map.as_deref(),
@@ -4671,6 +4672,7 @@ fn run() {
                     pad_head_frames: parsed.pad_head_frames,
                     pad_tail_frames: parsed.pad_tail_frames,
                     audio: audio.as_deref().map(PathBuf::from),
+                    channel_files: Vec::new(),
                     audio_map: audio_map.clone(),
                     upmix: upmix.is_some(),
                     audio_channels,

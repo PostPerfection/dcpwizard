@@ -12,7 +12,7 @@ export function projectTimelineEntries(reels, durationsFrames, editRate) {
     sound_asset_id: "",
     subtitle_asset_id: "",
     picture_file: reel.picture?.path || "",
-    sound_file: reel.sound?.path || "",
+    sound_file: reel.sound?.path || reel.sound?.channelFiles?.[0]?.path || "",
     subtitle_file: reel.subtitle?.path || "",
   }));
 }

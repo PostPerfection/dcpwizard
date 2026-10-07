@@ -1,5 +1,5 @@
-// Filename-based channel auto-routing (dom#2134): given a directory of mono
-// WAVs named with a channel suffix (Foo_L.wav, Foo_Lfe.wav, ...), combine them
+// Filename-based channel auto-routing (dom#2134): given mono WAVs named with a
+// channel suffix (Foo_L.wav, Foo.Lfe.wav, Foo-Rs.wav, ...), combine them
 // into one interleaved multichannel WAV in the canonical DCP channel order.
 
 use hound::WavSpec;
@@ -26,26 +26,41 @@ pub fn channel_index(suffix: &str) -> Option<usize> {
     }
 }
 
-// the channel suffix is the token after the last '_' in the file stem.
+const CHANNEL_SUFFIX_SEPARATORS: [char; 4] = ['_', '.', '-', ' '];
+
+/// Split a channel file's stem at the last `_`, `.`, `-` or space into the
+/// set's name and the channel token: "260810 DST_MIX_V2.3.2.C.wav" gives
+/// ("260810 DST_MIX_V2.3.2", "C").
+pub fn channel_stem(path: &Path) -> Option<(String, String)> {
+    let stem = path.file_stem()?.to_str()?;
+    let (prefix, suffix) = stem.rsplit_once(CHANNEL_SUFFIX_SEPARATORS)?;
+    Some((prefix.to_string(), suffix.to_string()))
+}
+
 fn suffix_of(path: &Path) -> Option<String> {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .and_then(|s| s.rsplit_once('_'))
-        .map(|(_, suf)| suf.to_string())
+    channel_stem(path).map(|(_, suffix)| suffix)
 }
 
 /// Route every `*.wav` in `dir` to its channel lane and write one interleaved
-/// multichannel WAV to `output`. Every file must be mono, share sample rate /
-/// bit depth / format, and carry a recognized channel suffix; anything else
-/// fails loud. The output channel count is the highest routed lane + 1, with
-/// unused lanes silent. Returns `output`.
+/// multichannel WAV to `output`. Every file must carry a recognized channel
+/// suffix, the rest is [`route_files`]. Returns `output`.
 pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
-    let entries = channel_files(dir)?;
+    route_files(&channel_files(dir)?, output)
+}
+
+/// Write the mono files, each at its lane, as one interleaved multichannel WAV
+/// to `output`. Every file must be mono and share sample rate / bit depth /
+/// format, anything else fails loud. The output channel count is the highest
+/// routed lane + 1, with unused lanes silent. Returns `output`.
+pub fn route_files(entries: &[(usize, PathBuf)], output: &Path) -> Result<PathBuf, String> {
+    if entries.is_empty() {
+        return Err("no channel WAVs to route".to_string());
+    }
 
     // read every channel, enforcing mono and a shared format.
     let mut spec: Option<WavSpec> = None;
     let mut lanes: Vec<(usize, Vec<f32>)> = Vec::new();
-    for (idx, path) in &entries {
+    for (idx, path) in entries {
         let (s, samples) =
             read_interleaved(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if s.channels != 1 {
@@ -70,7 +85,10 @@ pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
                     ));
                 }
                 if lanes.iter().any(|(i, _)| i == idx) {
-                    return Err(format!("channel index {idx} routed twice"));
+                    return Err(format!(
+                        "{}: channel index {idx} routed twice",
+                        path.display()
+                    ));
                 }
             }
         }
@@ -100,43 +118,54 @@ pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn routed_channel_count(dir: &Path) -> Result<usize, String> {
-    let entries = channel_files(dir)?;
-    Ok(entries
-        .iter()
-        .map(|(index, _)| index + 1)
-        .max()
-        .unwrap_or(0))
+    Ok(routed_channel_count_of(&channel_files(dir)?))
+}
+
+/// Highest routed lane + 1.
+pub fn routed_channel_count_of(files: &[(usize, PathBuf)]) -> usize {
+    files.iter().map(|(index, _)| index + 1).max().unwrap_or(0)
 }
 
 // every *.wav in dir with its lane, in lane order
 fn channel_files(dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
-    let mut entries: Vec<(usize, PathBuf)> = Vec::new();
+    let mut wavs: Vec<PathBuf> = Vec::new();
     let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
     for e in rd.filter_map(|e| e.ok()) {
         let path = e.path();
-        if !path.is_file()
-            || path
+        if path.is_file()
+            && path
                 .extension()
                 .and_then(|x| x.to_str())
                 .map(|x| x.to_lowercase())
-                != Some("wav".to_string())
+                == Some("wav".to_string())
         {
-            continue;
+            wavs.push(path);
         }
-        let suffix = suffix_of(&path).ok_or_else(|| {
-            format!(
-                "{}: no channel suffix (expected e.g. name_L.wav)",
-                path.display()
-            )
-        })?;
-        let idx = channel_index(&suffix)
-            .ok_or_else(|| format!("{}: unknown channel suffix '{suffix}'", path.display()))?;
-        entries.push((idx, path));
     }
-    if entries.is_empty() {
+    if wavs.is_empty() {
         return Err(format!("no channel WAVs found in {}", dir.display()));
     }
-    entries.sort_by_key(|(i, _)| *i);
+    channel_lanes(&wavs)
+}
+
+/// Each file with the lane its channel suffix names, in lane order. A file
+/// with no suffix or an unknown one fails loud.
+pub fn channel_lanes(paths: &[PathBuf]) -> Result<Vec<(usize, PathBuf)>, String> {
+    let mut entries = paths
+        .iter()
+        .map(|path| {
+            let suffix = suffix_of(path).ok_or_else(|| {
+                format!(
+                    "{}: no channel suffix (expected e.g. name_L.wav or name.L.wav)",
+                    path.display()
+                )
+            })?;
+            let index = channel_index(&suffix)
+                .ok_or_else(|| format!("{}: unknown channel suffix '{suffix}'", path.display()))?;
+            Ok((index, path.clone()))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    entries.sort_by_key(|(index, _)| *index);
     Ok(entries)
 }
 
@@ -206,6 +235,50 @@ mod tests {
         assert_eq!(s[2], 0, "C silent");
         assert_eq!(s[3], 0, "LFE silent");
         assert_eq!(s[4], fs / 2, "Ls present");
+    }
+
+    #[test]
+    fn dotted_suffix_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let fs = 1i32 << 23;
+        write_mono(&d.join("260810 DST_MIX_V2.3.2.L.wav"), fs / 10, 20);
+        write_mono(&d.join("260810 DST_MIX_V2.3.2.LFE.wav"), fs / 3, 20);
+        assert_eq!(
+            channel_stem(&d.join("260810 DST_MIX_V2.3.2.LFE.wav")),
+            Some(("260810 DST_MIX_V2.3.2".to_string(), "LFE".to_string()))
+        );
+        let out = d.join("routed.wav");
+        route_directory(d, &out).unwrap();
+        let mut r = WavReader::open(&out).unwrap();
+        assert_eq!(r.spec().channels, 4);
+        let s: Vec<i32> = r.samples::<i32>().map(|x| x.unwrap()).collect();
+        assert_eq!(&s[..4], &[fs / 10, 0, 0, fs / 3]);
+    }
+
+    #[test]
+    fn file_list_routes_like_the_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let fs = 1i32 << 23;
+        write_mono(&d.join("mix-R.wav"), fs / 5, 30);
+        write_mono(&d.join("mix L.wav"), fs / 10, 30);
+        write_mono(&d.join("mix_C.wav"), fs / 4, 30);
+        let from_directory = d.join("from_directory.wav");
+        route_directory(d, &from_directory).unwrap();
+        let listed = channel_lanes(&[
+            d.join("mix_C.wav"),
+            d.join("mix L.wav"),
+            d.join("mix-R.wav"),
+        ])
+        .unwrap();
+        assert_eq!(routed_channel_count_of(&listed), 3);
+        let from_list = d.join("from_list.wav");
+        route_files(&listed, &from_list).unwrap();
+        assert_eq!(
+            std::fs::read(&from_directory).unwrap(),
+            std::fs::read(&from_list).unwrap()
+        );
     }
 
     #[test]

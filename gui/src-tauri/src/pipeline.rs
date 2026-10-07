@@ -85,7 +85,7 @@ pub struct IsdcfNameRequest {
     pub content_kind: Option<String>,
     pub video_path: Option<String>,
     pub audio_path: Option<String>,
-    pub audio_channel_dir: Option<String>,
+    pub audio_channel_files: Option<Vec<PathBuf>>,
     pub audio_map: Option<String>,
     pub upmix: Option<String>,
     pub subtitle: Option<String>,
@@ -219,11 +219,10 @@ fn isdcf_naming<'a>(
     dcpwizard_core::isdcf_title::IsdcfNaming {
         config,
         options,
-        // prepare_audio routes a channel directory in place of the sound file
+        // prepare_audio routes channel files in place of the sound file
         sound: dcpwizard_core::isdcf_title::SoundtrackSource {
-            audio: filled(&request.audio_channel_dir)
-                .or(filled(&request.audio_path))
-                .map(Path::new),
+            audio: filled(&request.audio_path).map(Path::new),
+            channel_files: request.audio_channel_files.as_deref(),
             picture: filled(&request.video_path).map(Path::new),
             audio_map: filled(&request.audio_map),
             upmix,
@@ -387,9 +386,9 @@ pub struct JobConfig {
     // loudness normalize spec (leqm=<db> or lufs=<value>) applied to the audio
     loudness_target: Option<String>,
     true_peak_ceiling: Option<f64>,
-    // directory of mono channel WAVs (name_L.wav, name_Lfe.wav, ...) routed to
-    // one interleaved WAV, replacing audio_path
-    audio_channel_dir: Option<String>,
+    // mono channel WAVs (name_L.wav, name.Lfe.wav, ...) routed to one
+    // interleaved WAV, replacing audio_path
+    audio_channel_files: Option<Vec<PathBuf>>,
     audio_input_order: dcpwizard_core::mxf_wrap::AudioInputOrder,
     // how many channels the packaged sound track is filled to. None widens 5.1
     // to 16 and packages every other source at its own width
@@ -475,7 +474,7 @@ fn apply_package_name_to_job(
             content_kind: Some(job.content_kind.clone()),
             video_path: Some(job.video_path.to_string_lossy().into_owned()),
             audio_path: job.audio_path.clone(),
-            audio_channel_dir: job.audio_channel_dir.clone(),
+            audio_channel_files: job.audio_channel_files.clone(),
             audio_map: job.audio_map.clone(),
             subtitle: job.subtitle.clone(),
             subtitle_language: Some(job.subtitle_language.clone()),
@@ -675,7 +674,7 @@ pub async fn submit_job(
     ccap_language: Option<String>,
     loudness_target: Option<String>,
     true_peak_ceiling: Option<f64>,
-    audio_channel_dir: Option<String>,
+    audio_channel_files: Option<Vec<String>>,
     audio_input_order: Option<String>,
     audio_channels: Option<u32>,
     audio_map: Option<String>,
@@ -739,6 +738,12 @@ pub async fn submit_job(
     let composition_metadata = composition_metadata_of(&composition_metadata.unwrap_or_default())?;
 
     let audio_input_order = parse_audio_input_order(audio_input_order.as_deref())?;
+    let audio_channel_files = audio_channel_files
+        .filter(|files| !files.is_empty())
+        .map(|files| files.into_iter().map(PathBuf::from).collect::<Vec<_>>());
+    if let Some(files) = &audio_channel_files {
+        dcpwizard_core::audio_route::channel_lanes(files)?;
+    }
 
     let sign_language_video = sign_language_video.filter(|s| !s.is_empty());
     let sign_language_tag = sign_language_tag.filter(|s| !s.is_empty());
@@ -834,12 +839,7 @@ pub async fn submit_job(
                 "the six-channel input order",
             ),
             (upmix.is_some(), "the stereo upmix"),
-            (
-                audio_channel_dir
-                    .as_deref()
-                    .is_some_and(|dir| !dir.is_empty()),
-                "a channel WAV directory",
-            ),
+            (audio_channel_files.is_some(), "a channel set"),
         ];
         if let Some((_, name)) = competing.into_iter().find(|(set, _)| *set) {
             return Err(format!(
@@ -1043,7 +1043,7 @@ pub async fn submit_job(
         ccap_language: ccap_language.unwrap_or_else(|| DEFAULT_LANGUAGE.into()),
         loudness_target: loudness_target.filter(|s| !s.is_empty()),
         true_peak_ceiling,
-        audio_channel_dir: audio_channel_dir.filter(|s| !s.is_empty()),
+        audio_channel_files,
         audio_input_order,
         audio_channels,
         audio_map,
@@ -1184,11 +1184,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         forces_input_range: false,
         pad_head_frames: pad_frames(&job.pad_head),
         pad_tail_frames: pad_frames(&job.pad_tail),
-        audio: job
-            .audio_path
-            .as_ref()
-            .or(job.audio_channel_dir.as_ref())
-            .map(PathBuf::from),
+        audio: job.audio_path.as_ref().map(PathBuf::from),
+        channel_files: job.audio_channel_files.clone().unwrap_or_default(),
         audio_map: job.audio_map.clone(),
         upmix: job.upmix.is_some(),
         audio_channels: job.audio_channels,
@@ -1362,21 +1359,136 @@ pub async fn subtitle_file_for_preview(
 /// The audio mapping grid the panel draws: one row per source channel, one
 /// column per DCP lane.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioMapPanel {
     pub channels: usize,
     pub lanes: Vec<String>,
+    pub channel_names: Vec<String>,
+    // the lane each row lands on when no map is typed
+    pub auto_routes: Vec<Option<String>>,
 }
 
-/// How many channels the chosen WAV carries, and the lanes a map may name.
+/// The rows a channel set or an interleaved WAV gives the grid, and the lanes a
+/// map may name.
 #[tauri::command]
-pub async fn probe_audio_map(audio_path: String) -> Result<AudioMapPanel, String> {
+pub async fn probe_audio_map(
+    audio_path: Option<String>,
+    channel_files: Option<Vec<String>>,
+) -> Result<AudioMapPanel, String> {
+    audio_map_panel(audio_path, channel_files)
+}
+
+fn audio_map_panel(
+    audio_path: Option<String>,
+    channel_files: Option<Vec<String>>,
+) -> Result<AudioMapPanel, String> {
+    let lanes = dcpwizard_core::audio_map::DCP_LANE_NAMES
+        .iter()
+        .map(|lane| lane.to_string())
+        .collect();
+    if let Some(files) = channel_files {
+        let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+        let routed = dcpwizard_core::audio_route::channel_lanes(&files)?;
+        return Ok(AudioMapPanel {
+            channels: routed.len(),
+            lanes,
+            channel_names: routed.iter().map(|(_, path)| file_name_of(path)).collect(),
+            auto_routes: routed
+                .iter()
+                .map(|(lane, _)| dcp_lane_name(*lane).map(str::to_string))
+                .collect(),
+        });
+    }
+    let audio_path = audio_path.ok_or("no sound to map")?;
+    let channels = postkit::wav_io::channel_count(Path::new(&audio_path))?;
     Ok(AudioMapPanel {
-        channels: postkit::wav_io::channel_count(std::path::Path::new(&audio_path))?,
-        lanes: dcpwizard_core::audio_map::DCP_LANE_NAMES
-            .iter()
-            .map(|lane| lane.to_string())
+        channels,
+        lanes,
+        channel_names: (1..=channels).map(|n| format!("Channel {n}")).collect(),
+        auto_routes: (0..channels)
+            .map(|lane| dcp_lane_name(lane).map(str::to_string))
             .collect(),
     })
+}
+
+fn dcp_lane_name(lane: usize) -> Option<&'static str> {
+    dcpwizard_core::audio_map::DCP_LANE_NAMES
+        .into_iter()
+        .find(|name| dcpwizard_core::audio_route::channel_index(name) == Some(lane))
+}
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Mono WAVs that share a name up to a channel suffix, one per lane.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelGroup {
+    pub prefix: String,
+    pub files: Vec<ChannelFile>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelFile {
+    pub path: String,
+    pub lane: String,
+    pub lane_index: usize,
+}
+
+/// Group the paths that can join a channel set by their name before the
+/// channel suffix. A path that is not a mono WAV with a known suffix, or whose
+/// lane an earlier file of its group took, is left out.
+#[tauri::command]
+pub async fn group_channel_files(paths: Vec<String>) -> Vec<ChannelGroup> {
+    channel_groups(paths)
+}
+
+fn channel_groups(paths: Vec<String>) -> Vec<ChannelGroup> {
+    let mut groups: Vec<ChannelGroup> = Vec::new();
+    for path in paths {
+        let Some((prefix, lane_index, lane)) = channel_file_lane(Path::new(&path)) else {
+            continue;
+        };
+        let file = ChannelFile {
+            path,
+            lane: lane.to_string(),
+            lane_index,
+        };
+        match groups.iter_mut().find(|group| group.prefix == prefix) {
+            Some(group) if group.files.iter().any(|f| f.lane_index == lane_index) => {}
+            Some(group) => group.files.push(file),
+            None => groups.push(ChannelGroup {
+                prefix,
+                files: vec![file],
+            }),
+        }
+    }
+    for group in &mut groups {
+        group.files.sort_by_key(|file| file.lane_index);
+    }
+    groups
+}
+
+// the set name, lane and lane name of a mono WAV with a channel suffix
+fn channel_file_lane(path: &Path) -> Option<(String, usize, &'static str)> {
+    let is_wav = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"));
+    if !is_wav {
+        return None;
+    }
+    let (prefix, suffix) = dcpwizard_core::audio_route::channel_stem(path)?;
+    let lane_index = dcpwizard_core::audio_route::channel_index(&suffix)?;
+    let lane = dcp_lane_name(lane_index)?;
+    if dcpwizard_core::mxf_wrap::wav_channels(path).ok()? != 1 {
+        return None;
+    }
+    Some((prefix, lane_index, lane))
 }
 
 #[derive(Serialize)]
@@ -2043,9 +2155,9 @@ fn count_frames(j2k_dir: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// Create-time audio processing: filename channel routing from a directory of
-/// mono WAVs, then stereo-to-5.1 upmix, then the picture/sound delay, then
-/// loudness normalization, then the 23.976-to-24 pull-up the conform asks for.
+/// Create-time audio processing: filename channel routing of mono WAVs, then
+/// stereo-to-5.1 upmix, then the picture/sound delay, then loudness
+/// normalization, then the 23.976-to-24 pull-up the conform asks for.
 /// Same order as the CLI create path. Intermediates go under `<output>/audio_work`.
 fn prepare_audio(
     job: &JobConfig,
@@ -2062,7 +2174,7 @@ fn prepare_audio(
 
     // no sound named: the picture source's own track is the sound, and enters
     // here so everything below applies to it as it would to a named WAV
-    if audio_path.is_none() && job.audio_channel_dir.is_none() {
+    if audio_path.is_none() && job.audio_channel_files.is_none() {
         log("[AUDIO] No sound file named: extracting the source's own audio");
         if let Some(extracted) =
             dcpwizard_core::audio_fallback::extract_embedded_audio(&job.video_path, &work_dir)?
@@ -2098,14 +2210,14 @@ fn prepare_audio(
         audio_path = Some(mapped);
     }
 
-    if let Some(dir) = job.audio_channel_dir.as_deref() {
+    if let Some(files) = job.audio_channel_files.as_deref() {
         std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
         let routed = work_dir.join("routed.wav");
-        audio_path = Some(dcpwizard_core::audio_route::route_directory(
-            std::path::Path::new(dir),
+        audio_path = Some(dcpwizard_core::audio_route::route_files(
+            &dcpwizard_core::audio_route::channel_lanes(files)?,
             &routed,
         )?);
-        log("[AUDIO] Routed channel WAVs from the input directory by filename");
+        log("[AUDIO] Routed the channel set by filename");
     }
 
     if let (Some(variant), Some(input)) = (job.upmix, &audio_path) {
@@ -3279,7 +3391,7 @@ mod tests {
             ccap_language: "en".into(),
             loudness_target: None,
             true_peak_ceiling: None,
-            audio_channel_dir: None,
+            audio_channel_files: None,
             audio_input_order: AudioInputOrder::Canonical51,
             audio_channels: None,
             sign_language_video: None,
@@ -3908,20 +4020,28 @@ mod tests {
     }
 
     #[test]
-    fn channel_directory_is_routed_to_one_interleaved_wav() {
+    fn channel_set_is_routed_to_one_interleaved_wav() {
         let dir = tempfile::tempdir().unwrap();
         let channels = dir.path().join("channels");
         std::fs::create_dir_all(&channels).unwrap();
         let full_scale = 1i32 << 23;
-        write_mono(&channels.join("mix_L.wav"), full_scale / 10, 64);
-        write_mono(&channels.join("mix_R.wav"), full_scale / 5, 64);
-        write_mono(&channels.join("mix_C.wav"), full_scale / 4, 64);
-        write_mono(&channels.join("mix_Lfe.wav"), full_scale / 3, 64);
-        write_mono(&channels.join("mix_Ls.wav"), full_scale / 2, 64);
-        write_mono(&channels.join("mix_Rs.wav"), (full_scale / 3) * 2, 64);
+        let values = [
+            ("Rs", (full_scale / 3) * 2),
+            ("L", full_scale / 10),
+            ("Ls", full_scale / 2),
+            ("R", full_scale / 5),
+            ("LFE", full_scale / 3),
+            ("C", full_scale / 4),
+        ];
+        let mut files = Vec::new();
+        for (lane, value) in values {
+            let file = channels.join(format!("260810 DST_MIX_V2.3.2.{lane}.wav"));
+            write_mono(&file, value, 64);
+            files.push(file);
+        }
 
         let mut job = test_job();
-        job.audio_channel_dir = Some(channels.to_string_lossy().into_owned());
+        job.audio_channel_files = Some(files);
 
         let routed = prepare_audio(&job, SourceConform::default(), dir.path(), |_| {})
             .unwrap()
@@ -3942,6 +4062,76 @@ mod tests {
                 (full_scale / 3) * 2,
             ]
         );
+    }
+
+    #[test]
+    fn mono_wavs_with_one_name_and_a_channel_suffix_group_into_one_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for lane in ["Rs", "L", "LFE", "C", "Ls", "R"] {
+            let file = dir.path().join(format!("260810 DST_MIX_V2.3.2.{lane}.wav"));
+            write_mono(&file, 0, 4);
+            paths.push(file.to_string_lossy().into_owned());
+        }
+        let stereo = dir.path().join("260810 DST_MIX_V2.3.2.HI.wav");
+        let spec = WavSpec {
+            channels: 2,
+            sample_rate: 48000,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        WavWriter::create(&stereo, spec)
+            .unwrap()
+            .finalize()
+            .unwrap();
+        let unknown_suffix = dir.path().join("mix_X.wav");
+        write_mono(&unknown_suffix, 0, 4);
+        let second_left = dir.path().join("260810 DST_MIX_V2.3.2_L.wav");
+        write_mono(&second_left, 0, 4);
+        for extra in [&stereo, &unknown_suffix, &second_left] {
+            paths.push(extra.to_string_lossy().into_owned());
+        }
+
+        let groups = channel_groups(paths);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].prefix, "260810 DST_MIX_V2.3.2");
+        let lanes: Vec<&str> = groups[0].files.iter().map(|f| f.lane.as_str()).collect();
+        assert_eq!(lanes, ["L", "R", "C", "LFE", "Ls", "Rs"]);
+        assert!(groups[0].files[0].path.ends_with(".L.wav"));
+    }
+
+    #[test]
+    fn the_map_panel_names_a_set_by_its_files_and_a_wav_by_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let right = dir.path().join("mix_R.wav");
+        let left = dir.path().join("mix_L.wav");
+        write_mono(&right, 0, 4);
+        write_mono(&left, 0, 4);
+        let set = audio_map_panel(
+            None,
+            Some(vec![
+                right.to_string_lossy().into_owned(),
+                left.to_string_lossy().into_owned(),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(set.channels, 2);
+        assert_eq!(set.channel_names, ["mix_L.wav", "mix_R.wav"]);
+        assert_eq!(set.auto_routes, [Some("L".into()), Some("R".into())]);
+
+        let wide = dir.path().join("wide.wav");
+        let spec = WavSpec {
+            channels: 16,
+            sample_rate: 48000,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        WavWriter::create(&wide, spec).unwrap().finalize().unwrap();
+        let interleaved = audio_map_panel(Some(wide.to_string_lossy().into_owned()), None).unwrap();
+        assert_eq!(interleaved.channel_names[0], "Channel 1");
+        assert_eq!(interleaved.auto_routes[3], Some("LFE".into()));
+        assert_eq!(interleaved.auto_routes[10], None);
+        assert_eq!(interleaved.auto_routes[14], Some("HI".into()));
     }
 
     /// A short clip with a sine track, false when ffmpeg cannot build one.

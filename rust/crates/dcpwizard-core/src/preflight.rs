@@ -52,6 +52,9 @@ pub struct CreatePlan {
     /// The sound file, or the directory of channel WAVs the build routes into
     /// one. None packages whatever the picture carries.
     pub audio: Option<PathBuf>,
+    /// Mono WAVs the build routes into one sound file by their channel suffix,
+    /// in place of `audio`.
+    pub channel_files: Vec<PathBuf>,
     pub audio_map: Option<String>,
     /// Whether the stereo-to-5.1 upmix is in use.
     pub upmix: bool,
@@ -110,6 +113,7 @@ impl Default for CreatePlan {
             pad_head_frames: 0,
             pad_tail_frames: 0,
             audio: None,
+            channel_files: Vec::new(),
             audio_map: None,
             upmix: false,
             audio_channels: None,

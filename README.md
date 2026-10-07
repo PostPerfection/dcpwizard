@@ -97,7 +97,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Packaged channel count** via `create --audio-channels 2|6|8|16`: the sound track is filled with silent channels up to the count, so a stereo source ships in a 16-channel container without an upmix. Without the flag a 5.1 source is widened to 16 and everything else is packaged at its own width. A source wider than the count is refused, with `--audio-map` to fold channels instead
 - **Stereo→5.1 upmix** at create via `create --upmix a|b`
 - **Audio delay** via `create --audio-delay <ms>` (positive later, negative earlier), keeping the running time
-- **Filename channel auto-routing**: point `create --audio` at a directory of mono `name_L.wav`/`_R`/`_C`/`_Lfe`/`_Ls`/`_Rs`… files
+- **Filename channel auto-routing**: point `create --audio` at a directory of mono `name_L.wav`/`_R`/`_C`/`_Lfe`/`_Ls`/`_Rs`… files. The suffix follows the last `_`, `.`, `-` or space, so `name.L.wav` and `name-L.wav` work too. In the GUI, mono WAVs with one name and a channel suffix become one channel set on the Sound track when dropped on Assets
 - **Crossfade join** of two WAVs via `crossfade --a --b -o --overlap`
 - **Mid-side decode** via `mid-side-decode -i -o --mid --side`
 - **WAV audio** input

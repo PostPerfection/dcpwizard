@@ -1,10 +1,20 @@
 const VALUE = "value";
 const CHECKED = "checked";
 
-export const PROJECT_FILE_VERSION = 1;
+export const PROJECT_FILE_VERSION = 2;
+
+// what an upgrade dropped, reported by restoreFormState as not restored
+const DROPPED_ON_UPGRADE = "droppedOnUpgrade";
+
+function withoutChannelDirectory(form) {
+  const { audioChannelDir, ...rest } = form;
+  if (!audioChannelDir) return rest;
+  const dropped = `Channel WAV directory ${audioChannelDir}: drop the WAVs on Assets instead`;
+  return { ...rest, [DROPPED_ON_UPGRADE]: [...(rest[DROPPED_ON_UPGRADE] ?? []), dropped] };
+}
 
 // a rename or a meaning change gets a step and a version bump, a new field with a default does not
-export const PROJECT_FILE_MIGRATIONS = {};
+export const PROJECT_FILE_MIGRATIONS = { 2: withoutChannelDirectory };
 
 // [form key, control id, control property], keyed like the submit_job payload
 export const FORM_CONTROLS = [
@@ -51,7 +61,6 @@ export const FORM_CONTROLS = [
   ["ccapLanguage", "prop-ccap-language", VALUE],
   ["loudnessTarget", "prop-loudness", VALUE],
   ["truePeakCeiling", "prop-true-peak", VALUE],
-  ["audioChannelDir", "prop-audio-channel-dir", VALUE],
   ["audioInputOrder", "prop-audio-input-order", VALUE],
   ["audioChannels", "prop-audio-channels", VALUE],
   ["signLanguageVideo", "prop-sign-language-video", VALUE],
@@ -178,7 +187,7 @@ function offersOption(select, value) {
 // rows get fresh ids from 1, so the caller restarts its id counters after them
 export function restoreFormState(savedForm, defaults, { elementById, project, markerRows, ratings, joinedItems }) {
   const form = { ...defaults, ...savedForm, project: { ...defaults.project, ...savedForm.project } };
-  const notRestored = [];
+  const notRestored = [...(savedForm[DROPPED_ON_UPGRADE] ?? [])];
   for (const [key, id, property] of FORM_CONTROLS) {
     const element = elementById(id);
     const offered = !element.options || offersOption(element, form[key]);
