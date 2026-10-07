@@ -118,6 +118,30 @@ export const FORM_CONTROLS = [
 // the key output file is written by the build, so it need not exist yet
 export const OUTPUT_FIELDS = ["keyOut"];
 
+// form keys that belong to one title, which a saved preset leaves out
+export const PROJECT_ONLY_FORM_KEYS = [
+  "title",
+  "outputDir",
+  "keyOut",
+  "rightEye",
+  "atmos",
+  "ccap",
+  "signLanguageVideo",
+  "burnSubtitle",
+  "versions",
+  "splitAt",
+  "trimStart",
+  "trimEnd",
+  "stillLength",
+  "versionNumber",
+  "contentVersions",
+  "tempVersion",
+  "preRelease",
+  "redBand",
+  "twoDVersionOfThreeD",
+  "versionFile",
+];
+
 // free text that can start with a slash, matched at any depth
 export const TEXT_FIELDS = [
   "title",
@@ -185,7 +209,7 @@ export function serializeForm({ elementById, project, markerRows, ratings, joine
   };
 }
 
-function offersOption(select, value) {
+export function offersOption(select, value) {
   return [...select.options].some((option) => option.value === value);
 }
 

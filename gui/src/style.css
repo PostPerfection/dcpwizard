@@ -45,6 +45,13 @@
   display: none;
 }
 
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 /* a control whose value came from the selected delivery profile */
 .prop-field .profile-driven {
   border-left: 3px solid var(--primary);

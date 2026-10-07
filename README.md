@@ -357,6 +357,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 - Right-click context menus on assets (Preview, Remove, Show in Files)
 - Asset filter / search
 - The first imported video fills Frame Rate and Source colour space from its ffprobe tags, names the container Resolution's Auto option resolves to, and shows its size, rate, colour and bit rate under Picture. The fields it set are marked, and it never changes a field you edited or a delivery profile set
+- Saved presets: Save as preset… beside Delivery profile keeps every Properties field that is not tied to one film, with the channel map, under a name. Saved presets are listed after the built-in profiles and apply the way a profile does. Export… and Import… move them between machines, an import replacing presets of the same name. `create --preset <name>` reads the same file
 - Pre-build hints: a Before you build dialog lists what will package but is likely to be wrong on a cinema screen, with Build anyway or Go back. Turn it off from the dialog or in Settings ("Show hints before building"), and the hints still reach the job log
 - Output folder: a build writes the DCP to a new folder inside the chosen one, named after the title, the way DCP-o-matic does. With ISDCF naming on the folder takes the ISDCF name the CPL carries, as DCP-o-matic names it. With no folder chosen it goes in the default output folder from Settings, or Documents
 - Post-build actions: a finished build offers Play (the new DCP in the embedded preview), Inspect (the Verify view, already pointed at the output and running) and Reveal (the new DCP's folder in the file manager), beside the progress bar. Starting another build clears the row
@@ -443,6 +444,11 @@ dcpwizard create --title "My Feature Film" --video ./j2k --audio ./audio.wav --o
 
 # Create from video file (full pipeline: decode → J2K encode → MXF wrap → DCP)
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp
+
+# Build with a preset saved in the GUI (presets.json beside preferences.json). Its
+# values are defaults: a flag given here wins, and a preset field create has no flag
+# for is named in a warning. Not together with --profile
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Festival
 
 # Check the job before committing to the encode: every refusal, then every hint.
 # Nothing is encoded and nothing is written under --output. Exits 1 on a refusal.

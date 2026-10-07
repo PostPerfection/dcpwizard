@@ -24,6 +24,7 @@ mod export;
 mod library;
 mod pipeline;
 mod preferences;
+mod presets;
 mod timeline;
 
 #[tauri::command]
@@ -107,6 +108,11 @@ pub fn run() {
             preferences::export_recipient_certificate,
             preferences::find_dcpomatic_config,
             preferences::import_dcpomatic_identity,
+            presets::list_presets,
+            presets::save_preset,
+            presets::delete_preset,
+            presets::export_presets,
+            presets::import_presets,
             cpl_identities,
             nearest_named_container,
             pipeline::submit_job,
