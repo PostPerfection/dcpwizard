@@ -141,8 +141,13 @@
     </figure>
     <h3 id="picture-placement">Picture size and position</h3>
     <p>Under Source Picture, Scale sizes the picture against the container with its aspect kept: 100 fits the container, under 100 leaves wider black bands, and over 100 fills past it and cuts the edges off at the frame. Offset X and Y move the picture that many container pixels right and down, and negative values move it left and up. A picture smaller than the frame stops at the frame's edge, and a larger one stops where its own edge reaches the frame. The line under Auto-crop shows the size and position the build will use. From a terminal, <code>create --picture-scale 90 --picture-offset 0,-20</code> does the same.</p>
+    <h3 id="presets">Saved presets</h3>
+    <p>A preset keeps the Properties settings you reuse across films: picture, encode, packaging, audio with its channel map, the subtitle and burn-in look, and the naming metadata. It leaves out what belongs to one film: the title, the output folder, the key file, the right eye, Atmos, the closed caption and sign-language files, the burn-in subtitle file, versions, Split at, the trim, the still length and the version number, content version and version flags. Set Properties up, press Save as preset… beside Delivery profile and give it a name. Saving under a name you already have asks before it replaces that preset.</p>
+    <p>Saved presets are listed under Saved in the Delivery profile list, after the built-in profiles. Picking one sets every field it holds and marks them the way a profile does, with the hint Set by Festival: 75 settings. Edit any field to override. A field you then edit loses its mark and keeps your value. A choice the list no longer offers is named in the status line. Delete preset removes the one picked. Export… writes every preset to one file, and Import… on another machine adds the presets in that file, replacing any with the same name and naming them in the status line. Presets live in <code>presets.json</code> beside the settings file.</p>
     <h3>From a terminal</h3>
-<pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp</pre>
+<pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp
+dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Festival</pre>
+    <p><code>--preset</code> reads the same <code>presets.json</code>. A flag you give wins over the preset's value, and so does a flag that rules the preset's out, such as <code>--container-dims</code> over the preset's resolution. A preset field <code>create</code> has no flag for is named in a warning and left out. <code>--preset</code> and <code>--profile</code> are refused together.</p>
 
     <h2 id="encrypt">Encrypt it</h2>
     <h3>In the app</h3>

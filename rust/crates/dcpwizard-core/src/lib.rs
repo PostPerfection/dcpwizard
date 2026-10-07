@@ -59,6 +59,7 @@ pub mod pad;
 pub mod pkl;
 pub mod preferences;
 pub mod preflight;
+pub mod presets;
 pub mod preview;
 pub mod probe;
 pub mod profiles;
@@ -192,6 +193,13 @@ impl ContentType {
                 abbreviations.join(", ")
             )
         })
+    }
+
+    pub fn abbreviation_of_cpl_kind(kind: &str) -> Option<&'static str> {
+        CONTENT_TYPE_ABBREVIATIONS
+            .iter()
+            .find(|(_, content_type)| content_type.as_cpl_kind() == kind)
+            .map(|(abbreviation, _)| *abbreviation)
     }
 
     /// SMPTE content kind string for CPL.

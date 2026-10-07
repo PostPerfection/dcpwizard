@@ -153,6 +153,23 @@ TOOLBAR_PROJECT_LABEL = "#project-name"
 LUMINANCE_UNITS_TYPED = "candela"
 LUMINANCE_UNITS = "candela-per-square-metre"
 
+PROFILE_SELECT = "#prop-profile"
+# a click on the label focuses the select without opening its popup
+PROFILE_LABEL = 'label[for="prop-profile"]'
+PROFILE_HINT = "#prop-profile-hint"
+SAVE_PRESET_BUTTON = "#prop-preset-save"
+PRESET_NAME = "Festival"
+PRESET_FIELD = "#prop-studio"
+PRESET_FIELD_KEY = "studio"
+PRESET_VALUE = "ABCD"
+EDITED_VALUE = "WXYZ"
+PROFILE_DRIVEN = "profile-driven"
+NO_PROFILE_KEY = "Home"
+# End picks the last option, the newest saved preset
+LAST_SAVED_PRESET_KEY = "End"
+DELETE_PRESET_BUTTON = "#prop-preset-delete"
+TEXT_DIALOG_OK = f"{TEXT_DIALOG} button.primary"
+
 XDG_DIRECTORIES = {
     "XDG_CONFIG_HOME": "config",
     "XDG_DATA_HOME": "data",
@@ -666,6 +683,65 @@ def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window,
         STATUS_TIMEOUT_SECONDS,
     )
     assert json.loads(preferences_file.read_text())["gpu"] is False
+
+
+def field_classes(session, css):
+    return session.property(css, "className").split()
+
+
+def type_into_field(window, css, text):
+    window.click(css)
+    window.press(SELECT_ALL_CHORD)
+    window.type_text(text)
+
+
+def pick_profile(window, key, value):
+    window.click(PROFILE_LABEL)
+    window.press(key)
+    wait_until(
+        f"the profile select never took {value!r}",
+        lambda: window.session.property(PROFILE_SELECT, "value") == value,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def test_a_saved_preset_puts_back_the_values_it_holds(window, tmp_path):
+    session = window.session
+    type_into_field(window, PRESET_FIELD, PRESET_VALUE)
+    window.click(SAVE_PRESET_BUTTON)
+    wait_until(
+        "the preset name was never asked for",
+        lambda: text_dialog_open(session) is True,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.type_text(PRESET_NAME)
+    window.click(TEXT_DIALOG_OK)
+    wait_for_status(session, f"Saved preset {PRESET_NAME}", STATUS_TIMEOUT_SECONDS)
+
+    presets_file = tmp_path / XDG_DIRECTORIES["XDG_CONFIG_HOME"] / "dcpwizard/presets.json"
+    [saved] = json.loads(presets_file.read_text())["presets"]
+    assert saved["name"] == PRESET_NAME
+    assert saved["form"][PRESET_FIELD_KEY] == PRESET_VALUE
+    assert "title" not in saved["form"]
+
+    type_into_field(window, PRESET_FIELD, EDITED_VALUE)
+    assert session.property(PRESET_FIELD, "value") == EDITED_VALUE
+    assert PROFILE_DRIVEN not in field_classes(session, PRESET_FIELD)
+    pick_profile(window, NO_PROFILE_KEY, "")
+    assert session.property(PROFILE_HINT, "textContent") == ""
+
+    pick_profile(window, LAST_SAVED_PRESET_KEY, PRESET_NAME)
+    wait_until(
+        "the preset never put its value back",
+        lambda: session.property(PRESET_FIELD, "value") == PRESET_VALUE,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert PROFILE_DRIVEN in field_classes(session, PRESET_FIELD)
+    setting_count = len(saved["form"])
+    assert session.property(PROFILE_HINT, "textContent") == (
+        f"Set by {PRESET_NAME}: {setting_count} settings. Edit any field to override."
+    )
+    assert session.property(DELETE_PRESET_BUTTON, "disabled") is False
 
 
 def test_the_settings_page_lists_the_component_versions(window):

@@ -33,6 +33,7 @@ import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
+import { initPresets, savedPresetNamed, applySavedPreset, clearProfileDriven } from "./presets.js";
 import {
   chainPaths,
   describeSigner,
@@ -862,6 +863,19 @@ function audioMapSpec() {
   return audioMapSpecFrom(rows);
 }
 
+// the number of routes the drawn matrix has no cell for
+async function fillAudioMap(spec) {
+  await audioMapDrawn;
+  for (const cell of document.querySelectorAll("#prop-audio-map input")) cell.value = "";
+  let unroutedCells = 0;
+  for (const { input, lane, gain } of audioMapCells(spec)) {
+    const cell = document.querySelector(`#prop-audio-map input[data-input="${input}"][data-lane="${lane}"]`);
+    if (cell) cell.value = gain;
+    else unroutedCells += 1;
+  }
+  return unroutedCells;
+}
+
 // Add reel button
 document.getElementById("add-reel")?.addEventListener("click", () => {
   const maxId = project.reels.reduce((m, r) => Math.max(m, r.id), 0);
@@ -1037,10 +1051,13 @@ function updateProfileHint(profileName, drivenLabels) {
 }
 
 function applyProfile(profileName) {
-  const driven = [];
-  for (const [, elementId] of PROFILE_DRIVEN_FIELDS) {
-    document.getElementById(elementId)?.classList.remove("profile-driven");
+  clearProfileDriven();
+  const savedPreset = savedPresetNamed(profileName);
+  if (savedPreset) {
+    applySavedPreset(savedPreset);
+    return;
   }
+  const driven = [];
   const profile = profileSettings.find((p) => p.name === profileName);
   if (!profile) {
     updateProfileHint("", driven);
@@ -1075,11 +1092,17 @@ function applyProfile(profileName) {
     select.appendChild(option);
   }
   select.addEventListener("change", (e) => applyProfile(e.target.value));
-  for (const [, elementId] of PROFILE_DRIVEN_FIELDS) {
-    document.getElementById(elementId)?.addEventListener("input", (e) => {
-      e.target.classList.remove("profile-driven");
-    });
-  }
+  initPresets({
+    select,
+    hint: document.getElementById("prop-profile-hint"),
+    setStatus,
+    fillAudioMap,
+    audioMapSpec,
+    afterApply: () => {
+      refreshPreviewCrop();
+      refreshIsdcfPreview();
+    },
+  });
 })();
 
 // === Values detected from the source ===
@@ -2813,8 +2836,9 @@ async function restoreBuildPanel(saved) {
   nextCplId = Math.max(0, ...project.compositions.map((composition) => composition.id)) + 1;
   markerNextId = markerRows.length + 1;
   ratingNextId = ratings.length + 1;
-  document.getElementById("prop-profile").value = "";
-  applyProfile("");
+  const profileSelect = document.getElementById("prop-profile");
+  profileSelect.value = "";
+  profileSelect.dispatchEvent(new Event("change"));
   clearDetectedValues();
 
   const labels = await markerLabelsRequest;
@@ -2834,13 +2858,7 @@ async function restoreBuildPanel(saved) {
   refreshPreviewCrop();
   refreshDiskSpace();
 
-  await audioMapDrawn;
-  let unroutedCells = 0;
-  for (const { input, lane, gain } of audioMapCells(form.audioMap)) {
-    const cell = document.querySelector(`#prop-audio-map input[data-input="${input}"][data-lane="${lane}"]`);
-    if (cell) cell.value = gain;
-    else unroutedCells += 1;
-  }
+  const unroutedCells = await fillAudioMap(form.audioMap);
   if (unroutedCells) notRestored.push(`${unroutedCells} audio map routes`);
 
   const joined = [...joinedItems.head, ...joinedItems.tail];

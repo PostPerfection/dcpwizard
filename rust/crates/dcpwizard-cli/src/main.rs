@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use dcpwizard_core::job_log;
 
+mod preset_arguments;
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum AccessibilityStandardArg {
     Cvaa,
@@ -1046,6 +1048,10 @@ enum Commands {
         /// Delivery profile
         #[arg(long)]
         profile: Option<String>,
+        /// Saved preset from presets.json in the preferences folder: its values
+        /// are defaults, and a flag given here wins over the preset's value
+        #[arg(long, conflicts_with = "profile")]
+        preset: Option<String>,
         /// Encrypt the DCP
         #[arg(long)]
         encrypt: bool,
@@ -4103,7 +4109,11 @@ fn run() {
     job_log::install_crash_signal_handlers();
     // TODO: windows writes no crash line for an access violation, it needs SetUnhandledExceptionFilter
 
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let matches = preset_arguments::with_preset_arguments(
+        <Cli as clap::CommandFactory>::command().get_matches(),
+        <Cli as clap::CommandFactory>::command(),
+        CREATE_SUBCOMMAND,
+    );
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|error| {
         error
             .format(&mut <Cli as clap::CommandFactory>::command())
@@ -4201,6 +4211,7 @@ fn run() {
             quality_psnr,
             reel_length,
             profile,
+            preset: _,
             right_eye,
             atmos,
             hi_channel,
