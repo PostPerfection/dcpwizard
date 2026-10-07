@@ -53,6 +53,17 @@ PROJECT_FILE_VERSION = 2
 PROJECT_TITLE = "Film"
 SECOND_PROJECT_TITLE = "Second"
 CHANNEL_SET_NAME = "mix"
+AUDIO_GAIN_FIELD = "#prop-audio-gain"
+AUDIO_GAIN_TYPED = "-6"
+AUDIO_GAIN_RATIO = 10 ** (-6 / 20)
+AUDIO_GAIN_TOLERANCE = 0.005
+LOUDNESS_TOLERANCE_LU = 0.1
+MEASURE_BUTTON = "#prop-measure-sound"
+MEASURE_RESULT = "#prop-loudness-result"
+MEASURE_STEPS = "#prop-loudness-steps"
+MEASURE_RESULT_PREFIX = "Integrated "
+ROUTED_STEP = "Routed the channel set by filename"
+GAIN_STEP = "Applied gain/fades"
 NEW_PROJECT_CHORD = "ctrl+n"
 SAVE_PROJECT_CHORD = "ctrl+s"
 BUILD_COMPLETE_STATUS = "Build complete"
@@ -793,24 +804,57 @@ def write_mono_channel(path):
     )
 
 
+def packaged_sound_channels_of(mxf):
+    probed = subprocess.run(
+        (
+            "ffprobe", "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=channels",
+            "-of", "csv=p=0",
+            str(mxf),
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert probed.returncode == 0, probed.stderr
+    return [int(line) for line in probed.stdout.split()]
+
+
 # the channel count of every sound track in the package, read off its MXF
 def packaged_sound_channels(package):
-    counts = []
-    for mxf in sorted(package.glob("*.mxf")):
-        probed = subprocess.run(
-            (
-                "ffprobe", "-v", "error",
-                "-select_streams", "a",
-                "-show_entries", "stream=channels",
-                "-of", "csv=p=0",
-                str(mxf),
-            ),
-            capture_output=True,
-            text=True,
-        )
-        assert probed.returncode == 0, probed.stderr
-        counts.extend(int(line) for line in probed.stdout.split())
-    return counts
+    return [
+        count for mxf in sorted(package.glob("*.mxf")) for count in packaged_sound_channels_of(mxf)
+    ]
+
+
+# the largest sample of every sound track in a file, read back as PCM
+def sound_peak(path):
+    decoded = subprocess.run(
+        ("ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a", "-f", "s32le", "-c:a", "pcm_s32le", "-"),
+        capture_output=True,
+    )
+    assert decoded.returncode == 0, decoded.stderr.decode()
+    samples = memoryview(decoded.stdout).cast("i")
+    return max(abs(sample) for sample in samples)
+
+
+def packaged_sound_peak(package):
+    sound = [mxf for mxf in sorted(package.glob("*.mxf")) if packaged_sound_channels_of(mxf)]
+    assert len(sound) == 1, sorted(package.iterdir())
+    return sound_peak(sound[0])
+
+
+def measure_integrated_lufs(window, expected_steps):
+    session = window.session
+    window.click(MEASURE_BUTTON)
+    wait_until(
+        "the sound measurement never came back",
+        lambda: session.property(MEASURE_RESULT, "textContent").startswith(MEASURE_RESULT_PREFIX),
+        STATUS_TIMEOUT_SECONDS,
+    )
+    assert session.property(MEASURE_STEPS, "textContent").split(", ") == expected_steps
+    result = session.property(MEASURE_RESULT, "textContent")
+    return float(result.removeprefix(MEASURE_RESULT_PREFIX).split()[0])
 
 
 def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
@@ -865,6 +909,13 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
         REACTION_TIMEOUT_SECONDS,
     )
 
+    as_imported = measure_integrated_lufs(window, [ROUTED_STEP])
+    window.click(AUDIO_GAIN_FIELD)
+    window.type_text(AUDIO_GAIN_TYPED)
+    window.click(TOOLBAR_PROJECT_LABEL)
+    quieter = measure_integrated_lufs(window, [ROUTED_STEP, GAIN_STEP])
+    assert abs(as_imported - quieter - 6) < LOUDNESS_TOLERANCE_LU, (as_imported, quieter)
+
     wait_until(
         "the Build button stayed disabled",
         lambda: session.property("#btn-build", "disabled") is False,
@@ -884,6 +935,8 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     )
     assert status_text(session) == BUILD_COMPLETE_STATUS
     assert packaged_sound_channels(package) == [2]
+    ratio = packaged_sound_peak(package) / sound_peak(left)
+    assert abs(ratio - AUDIO_GAIN_RATIO) < AUDIO_GAIN_TOLERANCE, ratio
 
 
 def counted_video_frames(movie):

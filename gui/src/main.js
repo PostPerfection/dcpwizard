@@ -22,6 +22,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, appl
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
+import { gainToReachTarget, measurementSummary, measurementSteps } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -1404,6 +1405,175 @@ for (const id of ISDCF_PREVIEW_CONTROLS) {
 
 renderRatings();
 
+// Build and Measure both send this request
+function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
+  const { audioPath, audioChannelFiles } = soundSource(reel?.sound);
+  return {
+    videoPath: video,
+    title,
+    outputDir: output,
+    audioPath,
+    validate: document.getElementById("prop-validate")?.checked ?? true,
+    standard: document.getElementById("prop-standard")?.value || "smpte",
+    resolution: document.getElementById("prop-resolution")?.value || "auto",
+    framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
+    bandwidth: parseInt(document.getElementById("prop-bandwidth")?.value) || DEFAULT_BANDWIDTH_MBPS,
+    qualityPsnr: parseFloat(document.getElementById("prop-quality-psnr")?.value) || null,
+    contentKind: document.getElementById("prop-content-kind")?.value || "feature",
+    encrypt,
+    keyOut: keyOut || null,
+    signingCert: document.getElementById("set-signing-cert")?.value || null,
+    signingKey: document.getElementById("set-signing-key")?.value || null,
+    signingChain: signingChainFrom(getPrefs()),
+    rightEye: document.getElementById("prop-right-eye")?.value || null,
+    atmos: document.getElementById("prop-atmos")?.value || null,
+    subtitle: reel?.subtitle?.path || null,
+    subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
+    subtitleFontSize: document.getElementById("prop-subtitle-font-size")?.value || null,
+    subtitleColour: document.getElementById("prop-subtitle-colour")?.value || null,
+    subtitleEffect: document.getElementById("prop-subtitle-effect")?.value || null,
+    subtitleEffectColour: document.getElementById("prop-subtitle-effect-colour")?.value || null,
+    subtitleFadeUp: document.getElementById("prop-subtitle-fade-up")?.value || null,
+    subtitleFadeDown: document.getElementById("prop-subtitle-fade-down")?.value || null,
+    subtitleHalign: document.getElementById("prop-subtitle-halign")?.value || null,
+    subtitleValign: document.getElementById("prop-subtitle-valign")?.value || null,
+    subtitleVposition: document.getElementById("prop-subtitle-vposition")?.value || null,
+    subtitleZposition: document.getElementById("prop-subtitle-zposition")?.value || null,
+    subtitleRtl: document.getElementById("prop-subtitle-rtl")?.value || null,
+    subtitleWrap: document.getElementById("prop-subtitle-wrap")?.value || null,
+    subtitleFont: document.getElementById("prop-subtitle-font")?.value || null,
+    subtitleNoSubset: document.getElementById("prop-subtitle-no-subset")?.checked || false,
+    burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
+    burnSubtitleFont: document.getElementById("prop-burn-subtitle-font")?.value || null,
+    burnFontSize: document.getElementById("prop-burn-font-size")?.value || null,
+    burnColour: document.getElementById("prop-burn-colour")?.value || null,
+    burnEffect: document.getElementById("prop-burn-effect")?.value || null,
+    burnEffectColour: document.getElementById("prop-burn-effect-colour")?.value || null,
+    burnOutlineWidth: document.getElementById("prop-burn-outline-width")?.value || null,
+    burnLineHeight: document.getElementById("prop-burn-line-height")?.value || null,
+    burnMargin: document.getElementById("prop-burn-margin")?.value || null,
+    burnFadeUp: document.getElementById("prop-burn-fade-up")?.value || null,
+    burnFadeDown: document.getElementById("prop-burn-fade-down")?.value || null,
+    ccap: document.getElementById("prop-ccap")?.value || null,
+    ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
+    loudnessTarget: document.getElementById("prop-loudness")?.value || null,
+    truePeakCeiling: parseFloat(document.getElementById("prop-true-peak")?.value) || null,
+    audioGainDb: parseFloat(document.getElementById("prop-audio-gain")?.value) || null,
+    audioFadeInSeconds: parseFloat(document.getElementById("prop-audio-fade-in")?.value) || null,
+    audioFadeOutSeconds: parseFloat(document.getElementById("prop-audio-fade-out")?.value) || null,
+    audioChannelFiles,
+    audioMap: audioMapSpec(),
+    audioInputOrder: document.getElementById("prop-audio-input-order")?.value || "dcp",
+    audioChannels: parseInt(document.getElementById("prop-audio-channels")?.value) || null,
+    signLanguageVideo: document.getElementById("prop-sign-language-video")?.value || null,
+    signLanguageTag: document.getElementById("prop-sign-language-tag")?.value || null,
+    padHead: document.getElementById("prop-pad-head")?.value || null,
+    padTail: document.getElementById("prop-pad-tail")?.value || null,
+    padColor: document.getElementById("prop-pad-color")?.value || null,
+    audioDelayMs: parseInt(document.getElementById("prop-audio-delay")?.value) || 0,
+    trimStart: document.getElementById("prop-trim-start")?.value || null,
+    trimEnd: document.getElementById("prop-trim-end")?.value || null,
+    stillLength: document.getElementById("prop-still-length")?.value || null,
+    videoFadeInSeconds: parseFloat(document.getElementById("prop-video-fade-in")?.value) || null,
+    videoFadeOutSeconds: parseFloat(document.getElementById("prop-video-fade-out")?.value) || null,
+    sourceColourspace: document.getElementById("prop-source-colourspace")?.value || "rec709",
+    cropLeft: parseInt(document.getElementById("prop-crop-left")?.value) || 0,
+    cropRight: parseInt(document.getElementById("prop-crop-right")?.value) || 0,
+    cropTop: parseInt(document.getElementById("prop-crop-top")?.value) || 0,
+    cropBottom: parseInt(document.getElementById("prop-crop-bottom")?.value) || 0,
+    fillCrop: document.getElementById("prop-fill-crop")?.checked || false,
+    deinterlace: document.getElementById("prop-deinterlace")?.checked || false,
+    denoise: document.getElementById("prop-denoise")?.checked || false,
+    rotate: document.getElementById("prop-rotate")?.value || "none",
+    flip: document.getElementById("prop-flip")?.value || "none",
+    upmix: document.getElementById("prop-upmix")?.value || "none",
+    reelLengthMinutes: parseInt(document.getElementById("prop-reel-length")?.value) || 0,
+    splitAt: document.getElementById("prop-split-at")?.value || null,
+    splitChapters: document.getElementById("prop-split-chapters")?.checked || false,
+    versions: document.getElementById("prop-versions")?.value || null,
+    markers: markerSpecs(markerRows),
+    hdrDci: document.getElementById("prop-hdr-dci")?.checked || false,
+    hdrSource: document.getElementById("prop-hdr-source")?.value || "auto",
+    hdrPeakNits: parseFloat(document.getElementById("prop-hdr-peak-nits")?.value) || null,
+    hdrToDciLut: document.getElementById("prop-hdr-lut")?.value || null,
+    hdrAlreadyPq: document.getElementById("prop-hdr-already-pq")?.checked || false,
+    allowGenericHdrTonemap: document.getElementById("prop-hdr-generic-tonemap")?.checked || false,
+    facility: getPrefs().facility || null,
+    naming: namingMetadata(),
+    compositionMetadata: compositionMetadata(),
+    headItems: joinedItems.head,
+    tailItems: joinedItems.tail,
+  };
+}
+
+let lastSoundMeasurement = null;
+
+function loudnessPanelFields() {
+  return {
+    target: document.getElementById("prop-loudness"),
+    gain: document.getElementById("prop-audio-gain"),
+    measure: document.getElementById("prop-measure-sound"),
+    setGain: document.getElementById("prop-gain-to-target"),
+    result: document.getElementById("prop-loudness-result"),
+    steps: document.getElementById("prop-loudness-steps"),
+  };
+}
+
+function refreshGainToTarget() {
+  const fields = loudnessPanelFields();
+  if (!fields.setGain) return;
+  fields.setGain.disabled = gainToReachTarget(fields.target?.value, lastSoundMeasurement, fields.gain?.value) === null;
+}
+
+document.getElementById("prop-measure-sound")?.addEventListener("click", async () => {
+  const reel = project.reels[0];
+  if (!reel?.picture && !reel?.sound) { setStatus("Import a video or sound asset first"); return; }
+  const fields = loudnessPanelFields();
+  fields.measure.disabled = true;
+  fields.result.textContent = "Measuring…";
+  fields.steps.textContent = "";
+  lastSoundMeasurement = null;
+  refreshGainToTarget();
+  try {
+    lastSoundMeasurement = await invoke("measure_sound", {
+      request: jobRequest({
+        reel,
+        video: reel.picture?.path || "",
+        title: document.getElementById("prop-title")?.value?.trim() || "",
+        output: document.getElementById("prop-output")?.value || "",
+        encrypt: document.getElementById("prop-encrypt")?.checked || false,
+        keyOut: document.getElementById("prop-key-out")?.value || "",
+      }),
+    });
+    fields.result.textContent = measurementSummary(lastSoundMeasurement);
+    fields.steps.textContent = measurementSteps(lastSoundMeasurement);
+  } catch (e) {
+    fields.result.textContent = String(e);
+  } finally {
+    fields.measure.disabled = false;
+    refreshGainToTarget();
+  }
+});
+
+document.getElementById("prop-gain-to-target")?.addEventListener("click", () => {
+  const fields = loudnessPanelFields();
+  const gain = gainToReachTarget(fields.target.value, lastSoundMeasurement, fields.gain.value);
+  if (gain === null) return;
+  fields.gain.value = gain.toFixed(1);
+  fields.result.textContent = `${measurementSummary(lastSoundMeasurement)}. Measure again to confirm`;
+  // the measurement was taken at the old gain
+  lastSoundMeasurement = null;
+  refreshGainToTarget();
+});
+
+document.getElementById("prop-loudness")?.addEventListener("input", refreshGainToTarget);
+document.getElementById("prop-audio-gain")?.addEventListener("input", () => {
+  if (!lastSoundMeasurement) return;
+  loudnessPanelFields().result.textContent = `${measurementSummary(lastSoundMeasurement)}. Measure again to confirm`;
+  lastSoundMeasurement = null;
+  refreshGainToTarget();
+});
+
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   let title = document.getElementById("prop-title")?.value?.trim();
   if (!title) { tauriMessage("Enter a project title in Properties"); return; }
@@ -1426,7 +1596,6 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   }
 
   const video = reel.picture.path;
-  const { audioPath, audioChannelFiles } = soundSource(reel.sound);
   const outputEl = document.getElementById("prop-output");
   let output = outputEl?.value || await defaultOutputFolder();
   if (outputEl) outputEl.value = output;
@@ -1504,96 +1673,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   try {
     beginBuild(buildTitle);
     const submit = (hintsAccepted) => invoke("submit_job", {
-      hintsAccepted,
-      videoPath: video,
-      title,
-      outputDir: output,
-      audioPath,
-      validate: document.getElementById("prop-validate")?.checked ?? true,
-      standard: document.getElementById("prop-standard")?.value || "smpte",
-      resolution: document.getElementById("prop-resolution")?.value || "auto",
-      framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
-      bandwidth: parseInt(document.getElementById("prop-bandwidth")?.value) || DEFAULT_BANDWIDTH_MBPS,
-      qualityPsnr: parseFloat(document.getElementById("prop-quality-psnr")?.value) || null,
-      contentKind: document.getElementById("prop-content-kind")?.value || "feature",
-      encrypt,
-      keyOut: keyOut || null,
-      signingCert: document.getElementById("set-signing-cert")?.value || null,
-      signingKey: document.getElementById("set-signing-key")?.value || null,
-      signingChain: signingChainFrom(getPrefs()),
-      rightEye: document.getElementById("prop-right-eye")?.value || null,
-      atmos: document.getElementById("prop-atmos")?.value || null,
-      subtitle: reel.subtitle?.path || null,
-      subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
-      subtitleFontSize: document.getElementById("prop-subtitle-font-size")?.value || null,
-      subtitleColour: document.getElementById("prop-subtitle-colour")?.value || null,
-      subtitleEffect: document.getElementById("prop-subtitle-effect")?.value || null,
-      subtitleEffectColour: document.getElementById("prop-subtitle-effect-colour")?.value || null,
-      subtitleFadeUp: document.getElementById("prop-subtitle-fade-up")?.value || null,
-      subtitleFadeDown: document.getElementById("prop-subtitle-fade-down")?.value || null,
-      subtitleHalign: document.getElementById("prop-subtitle-halign")?.value || null,
-      subtitleValign: document.getElementById("prop-subtitle-valign")?.value || null,
-      subtitleVposition: document.getElementById("prop-subtitle-vposition")?.value || null,
-      subtitleZposition: document.getElementById("prop-subtitle-zposition")?.value || null,
-      subtitleRtl: document.getElementById("prop-subtitle-rtl")?.value || null,
-      subtitleWrap: document.getElementById("prop-subtitle-wrap")?.value || null,
-      subtitleFont: document.getElementById("prop-subtitle-font")?.value || null,
-      subtitleNoSubset: document.getElementById("prop-subtitle-no-subset")?.checked || false,
-      burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
-      burnSubtitleFont: document.getElementById("prop-burn-subtitle-font")?.value || null,
-      burnFontSize: document.getElementById("prop-burn-font-size")?.value || null,
-      burnColour: document.getElementById("prop-burn-colour")?.value || null,
-      burnEffect: document.getElementById("prop-burn-effect")?.value || null,
-      burnEffectColour: document.getElementById("prop-burn-effect-colour")?.value || null,
-      burnOutlineWidth: document.getElementById("prop-burn-outline-width")?.value || null,
-      burnLineHeight: document.getElementById("prop-burn-line-height")?.value || null,
-      burnMargin: document.getElementById("prop-burn-margin")?.value || null,
-      burnFadeUp: document.getElementById("prop-burn-fade-up")?.value || null,
-      burnFadeDown: document.getElementById("prop-burn-fade-down")?.value || null,
-      ccap: document.getElementById("prop-ccap")?.value || null,
-      ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
-      loudnessTarget: document.getElementById("prop-loudness")?.value || null,
-      truePeakCeiling: parseFloat(document.getElementById("prop-true-peak")?.value) || null,
-      audioChannelFiles,
-      audioMap: audioMapSpec(),
-      audioInputOrder: document.getElementById("prop-audio-input-order")?.value || "dcp",
-      audioChannels: parseInt(document.getElementById("prop-audio-channels")?.value) || null,
-      signLanguageVideo: document.getElementById("prop-sign-language-video")?.value || null,
-      signLanguageTag: document.getElementById("prop-sign-language-tag")?.value || null,
-      padHead: document.getElementById("prop-pad-head")?.value || null,
-      padTail: document.getElementById("prop-pad-tail")?.value || null,
-      padColor: document.getElementById("prop-pad-color")?.value || null,
-      audioDelayMs: parseInt(document.getElementById("prop-audio-delay")?.value) || 0,
-      trimStart: document.getElementById("prop-trim-start")?.value || null,
-      trimEnd: document.getElementById("prop-trim-end")?.value || null,
-      stillLength: document.getElementById("prop-still-length")?.value || null,
-      sourceColourspace: document.getElementById("prop-source-colourspace")?.value || "rec709",
-      cropLeft: parseInt(document.getElementById("prop-crop-left")?.value) || 0,
-      cropRight: parseInt(document.getElementById("prop-crop-right")?.value) || 0,
-      cropTop: parseInt(document.getElementById("prop-crop-top")?.value) || 0,
-      cropBottom: parseInt(document.getElementById("prop-crop-bottom")?.value) || 0,
-      fillCrop: document.getElementById("prop-fill-crop")?.checked || false,
-      deinterlace: document.getElementById("prop-deinterlace")?.checked || false,
-      denoise: document.getElementById("prop-denoise")?.checked || false,
-      rotate: document.getElementById("prop-rotate")?.value || "none",
-      flip: document.getElementById("prop-flip")?.value || "none",
-      upmix: document.getElementById("prop-upmix")?.value || "none",
-      reelLengthMinutes: parseInt(document.getElementById("prop-reel-length")?.value) || 0,
-      splitAt: document.getElementById("prop-split-at")?.value || null,
-      splitChapters: document.getElementById("prop-split-chapters")?.checked || false,
-      versions: document.getElementById("prop-versions")?.value || null,
-      markers: markerSpecs(markerRows),
-      hdrDci: document.getElementById("prop-hdr-dci")?.checked || false,
-      hdrSource: document.getElementById("prop-hdr-source")?.value || "auto",
-      hdrPeakNits: parseFloat(document.getElementById("prop-hdr-peak-nits")?.value) || null,
-      hdrToDciLut: document.getElementById("prop-hdr-lut")?.value || null,
-      hdrAlreadyPq: document.getElementById("prop-hdr-already-pq")?.checked || false,
-      allowGenericHdrTonemap: document.getElementById("prop-hdr-generic-tonemap")?.checked || false,
-      facility: getPrefs().facility || null,
-      naming: namingMetadata(),
-      compositionMetadata: compositionMetadata(),
-      headItems: joinedItems.head,
-      tailItems: joinedItems.tail,
+      request: { ...jobRequest({ reel, video, title, output, encrypt, keyOut }), hintsAccepted },
     });
     let result = await submit(!getPrefs().showHintsBeforeBuild);
     if (result.jobId === null) {

@@ -447,6 +447,32 @@ pub struct JobConfig {
     /// the order the panel put them in, and after it for the tail.
     head_items: Vec<dcpwizard_core::library::AttachedItem>,
     tail_items: Vec<dcpwizard_core::library::AttachedItem>,
+    // gain and fades on the finished sound, in kept time after any trim
+    #[serde(default)]
+    audio_gain_db: Option<f64>,
+    #[serde(default)]
+    audio_fade_in_seconds: Option<f64>,
+    #[serde(default)]
+    audio_fade_out_seconds: Option<f64>,
+    // fades on the picture, counted from the first kept frame
+    #[serde(default)]
+    video_fade_in_seconds: Option<f64>,
+    #[serde(default)]
+    video_fade_out_seconds: Option<f64>,
+}
+
+impl JobConfig {
+    fn audio_adjust(&self) -> dcpwizard_core::audio_adjust::AudioAdjust {
+        dcpwizard_core::audio_adjust::AudioAdjust {
+            gain_db: self.audio_gain_db,
+            fade_in_seconds: self.audio_fade_in_seconds,
+            fade_out_seconds: self.audio_fade_out_seconds,
+        }
+    }
+
+    fn fades_picture(&self) -> bool {
+        self.video_fade_in_seconds.is_some() || self.video_fade_out_seconds.is_some()
+    }
 }
 
 // the output folder name hint reads the package folder from the plan
@@ -617,12 +643,9 @@ fn verify_after_build(validate: Option<bool>) -> bool {
     validate.unwrap_or(true)
 }
 
-// ─── Tauri commands ────────────────────────────────────────────────────────
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn submit_job(
-    app: AppHandle,
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubmitRequest {
     video_path: String,
     title: String,
     output_dir: String,
@@ -715,9 +738,113 @@ pub async fn submit_job(
     head_items: Option<Vec<String>>,
     tail_items: Option<Vec<String>>,
     hints_accepted: Option<bool>,
-) -> Result<SubmitResult, String> {
-    let queue = app.state::<JobQueue>();
-    let id = queue.reserve_job_id();
+    audio_gain_db: Option<f64>,
+    audio_fade_in_seconds: Option<f64>,
+    audio_fade_out_seconds: Option<f64>,
+    video_fade_in_seconds: Option<f64>,
+    video_fade_out_seconds: Option<f64>,
+}
+
+fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
+    let SubmitRequest {
+        video_path,
+        title,
+        output_dir,
+        audio_path,
+        validate,
+        standard,
+        resolution,
+        framerate,
+        bandwidth,
+        quality_psnr,
+        colour,
+        content_kind,
+        encrypt,
+        key_out,
+        signing_cert,
+        signing_key,
+        signing_chain,
+        channels,
+        right_eye,
+        atmos,
+        subtitle,
+        subtitle_language,
+        subtitle_font_size,
+        subtitle_colour,
+        subtitle_effect,
+        subtitle_effect_colour,
+        subtitle_fade_up,
+        subtitle_fade_down,
+        subtitle_halign,
+        subtitle_valign,
+        subtitle_vposition,
+        subtitle_zposition,
+        subtitle_rtl,
+        subtitle_wrap,
+        subtitle_font,
+        subtitle_no_subset,
+        burn_subtitle,
+        burn_subtitle_font,
+        burn_font_size,
+        burn_colour,
+        burn_effect,
+        burn_effect_colour,
+        burn_outline_width,
+        burn_line_height,
+        burn_margin,
+        burn_fade_up,
+        burn_fade_down,
+        ccap,
+        ccap_language,
+        loudness_target,
+        true_peak_ceiling,
+        audio_channel_files,
+        audio_input_order,
+        audio_channels,
+        audio_map,
+        crop_left,
+        crop_right,
+        crop_top,
+        crop_bottom,
+        fill_crop,
+        deinterlace,
+        denoise,
+        rotate,
+        flip,
+        sign_language_video,
+        sign_language_tag,
+        pad_head,
+        pad_tail,
+        pad_color,
+        audio_delay_ms,
+        trim_start,
+        trim_end,
+        still_length,
+        source_colourspace,
+        upmix,
+        reel_length_minutes,
+        split_at,
+        split_chapters,
+        versions,
+        markers,
+        hdr_dci,
+        hdr_source,
+        hdr_peak_nits,
+        hdr_to_dci_lut,
+        hdr_already_pq,
+        allow_generic_hdr_tonemap,
+        facility,
+        naming,
+        composition_metadata,
+        head_items,
+        tail_items,
+        hints_accepted: _,
+        audio_gain_db,
+        audio_fade_in_seconds,
+        audio_fade_out_seconds,
+        video_fade_in_seconds,
+        video_fade_out_seconds,
+    } = request;
 
     // Never encrypt without an explicit key destination.
     if encrypt.unwrap_or(false) && key_out.as_deref().unwrap_or("").is_empty() {
@@ -792,6 +919,29 @@ pub async fn submit_job(
     if still_input && trim_start_frames + trim_end_frames > 0 {
         return Err(
             "A still is held for exactly its still length: shorten that instead of trimming".into(),
+        );
+    }
+    let fades = [
+        ("Sound fade in", audio_fade_in_seconds),
+        ("Sound fade out", audio_fade_out_seconds),
+        ("Picture fade in", video_fade_in_seconds),
+        ("Picture fade out", video_fade_out_seconds),
+    ];
+    for (name, seconds) in fades {
+        if let Some(seconds) = seconds.filter(|seconds| *seconds <= 0.0) {
+            return Err(format!("{name} of {seconds} s must be longer than zero"));
+        }
+    }
+    let fades_picture = video_fade_in_seconds.is_some() || video_fade_out_seconds.is_some();
+    if fades_picture && still_input {
+        return Err("Video fades are not applied to a still hold".into());
+    }
+    if fades_picture
+        && dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video))
+    {
+        return Err(
+            "Video fades are not applied to J2K input: it is already compressed, so there are no frames to fade"
+                .into(),
         );
     }
 
@@ -1009,7 +1159,7 @@ pub async fn submit_job(
         )?;
     }
 
-    let mut job = JobConfig {
+    Ok(JobConfig {
         id,
         video_path: PathBuf::from(&video_path),
         title: title.clone(),
@@ -1080,7 +1230,23 @@ pub async fn submit_job(
         hints: Vec::new(),
         head_items,
         tail_items,
-    };
+        audio_gain_db,
+        audio_fade_in_seconds,
+        audio_fade_out_seconds,
+        video_fade_in_seconds,
+        video_fade_out_seconds,
+    })
+}
+
+// ─── Tauri commands ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn submit_job(app: AppHandle, request: SubmitRequest) -> Result<SubmitResult, String> {
+    let queue = app.state::<JobQueue>();
+    let id = queue.reserve_job_id();
+
+    let hints_accepted = request.hints_accepted;
+    let mut job = job_config_of(id, request)?;
 
     let (mut plan, planned_picture) = checked_job_plan(&job)?;
     apply_package_name_to_job_and_plan(
@@ -1130,6 +1296,87 @@ pub async fn submit_job(
         hints,
         title: submitted_title,
         output_dir: submitted_output_dir,
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundMeasurement {
+    pub integrated_lufs: f64,
+    pub leq_m_db: f64,
+    pub true_peak_dbtp: f64,
+    pub range_lu: f64,
+    pub short_term_max_lufs: f64,
+    pub steps: Vec<String>,
+}
+
+const SOUND_MEASUREMENT_DIRECTORY: &str = "sound-measurement";
+
+#[tauri::command]
+pub async fn measure_sound(
+    app: AppHandle,
+    request: SubmitRequest,
+) -> Result<SoundMeasurement, String> {
+    let scratch_parent = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("no cache folder to build the sound in: {e}"))?
+        .join(SOUND_MEASUREMENT_DIRECTORY);
+    tokio::task::spawn_blocking(move || {
+        let job = job_config_of(0, request)?;
+        measure_job_sound(&job, &scratch_parent)
+    })
+    .await
+    .map_err(|e| format!("the sound measurement stopped: {e}"))?
+}
+
+// the same steps a build runs on the sound, in a scratch folder removed afterwards
+fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeasurement, String> {
+    std::fs::create_dir_all(scratch_parent).map_err(|e| e.to_string())?;
+    let scratch = tempfile::tempdir_in(scratch_parent).map_err(|e| e.to_string())?;
+    let steps = std::cell::RefCell::new(Vec::new());
+    let log = |line: &str| {
+        if let Some(step) = line.strip_prefix("[AUDIO] ") {
+            steps.borrow_mut().push(step.to_string());
+        }
+    };
+    let (fps_num, _) = frame_rate_of(&job.framerate);
+    let mut sound = prepare_audio(job, job_conform(job), scratch.path(), log)?;
+    let trimmed = job.trim_start_frames + job.trim_end_frames > 0;
+    if let (true, Some(input)) = (trimmed, &sound) {
+        let window = job_encode_window(job, &job.video_path)?.ok_or(
+            "The picture's length could not be read, so the trimmed sound cannot be measured",
+        )?;
+        sound = Some(trim_sound(
+            job,
+            input,
+            scratch.path(),
+            window.frame_count,
+            fps_num,
+        )?);
+        log(&format!(
+            "[AUDIO] Trimmed to the {} kept frames",
+            window.frame_count
+        ));
+    }
+    let sound = adjust_sound(job, sound, scratch.path(), log)?
+        .ok_or("There is no sound to measure: import a sound asset or a video that carries one")?;
+
+    let loudness = postkit::loudness::measure_loudness(&sound);
+    if !loudness.success {
+        return Err(format!("Cannot measure the loudness: {}", loudness.error));
+    }
+    let leq_m = postkit::loudness::measure_leq_m(&sound);
+    if !leq_m.success {
+        return Err(format!("Cannot measure Leq(m): {}", leq_m.error));
+    }
+    Ok(SoundMeasurement {
+        integrated_lufs: loudness.integrated_lufs,
+        leq_m_db: leq_m.leq_m_db,
+        true_peak_dbtp: loudness.true_peak_dbtp,
+        range_lu: loudness.range_lu,
+        short_term_max_lufs: loudness.short_term_max_lufs,
+        steps: steps.into_inner(),
     })
 }
 
@@ -1185,8 +1432,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         geometry: job_geometry(job),
         trim_start_frames: job.trim_start_frames,
         trim_end_frames: job.trim_end_frames,
-        video_fade_in_seconds: None,
-        video_fade_out_seconds: None,
+        video_fade_in_seconds: job.video_fade_in_seconds,
+        video_fade_out_seconds: job.video_fade_out_seconds,
         forces_input_range: false,
         pad_head_frames: pad_frames(&job.pad_head),
         pad_tail_frames: pad_frames(&job.pad_tail),
@@ -2292,6 +2539,39 @@ fn map_audio(
     Ok(mapped)
 }
 
+fn job_conform(job: &JobConfig) -> dcpwizard_core::hfr::SourceConform {
+    let (fps_num, _) = frame_rate_of(&job.framerate);
+    job.source
+        .as_ref()
+        .map(|info| dcpwizard_core::hfr::conform_source_to_dcp(info.fps_num, info.fps_den, fps_num))
+        .unwrap_or_default()
+}
+
+// the fade runs after the window cut, so it counts from the first kept frame
+fn job_video_fade_filter(
+    job: &JobConfig,
+    window: Option<postkit::encode::FrameRange>,
+    fps: postkit::encode::FrameRate,
+) -> Result<Option<String>, String> {
+    if !job.fades_picture() {
+        return Ok(None);
+    }
+    let faded_frames = match window {
+        Some(window) => window.frame_count,
+        None => job
+            .source
+            .as_ref()
+            .map(|info| u64::from(info.total_frames))
+            .filter(|total| *total > 0)
+            .ok_or("Video fades need the length of the picture, which could not be read")?,
+    };
+    dcpwizard_core::audio_adjust::video_fade_filter(
+        job.video_fade_in_seconds,
+        job.video_fade_out_seconds,
+        faded_frames as f64 / fps.as_f64(),
+    )
+}
+
 /// The burn a job asks for, rebuilt from the cue file. `submit_job` already
 /// proved the file parses, so a failure here is a file that changed underneath.
 fn job_subtitle_burn(
@@ -2407,16 +2687,50 @@ fn apply_trim(
             (trimmed, kept)
         }
     };
-    let audio = match audio {
-        Some(input) => {
-            let out = output.join("audio_work").join("trimmed.wav");
-            std::fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
-            dcpwizard_core::trim::trim_wav(&input, job.trim_start_frames, kept, fps, &out)?;
-            Some(out)
-        }
-        None => None,
-    };
+    let audio = audio
+        .map(|input| trim_sound(job, &input, output, kept, fps))
+        .transpose()?;
     Ok((picture, audio))
+}
+
+fn trim_sound(
+    job: &JobConfig,
+    input: &Path,
+    output: &Path,
+    kept: u64,
+    fps: u32,
+) -> Result<PathBuf, String> {
+    let out = output.join("audio_work").join("trimmed.wav");
+    std::fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
+    dcpwizard_core::trim::trim_wav(input, job.trim_start_frames, kept, fps, &out)?;
+    Ok(out)
+}
+
+// after the trim, so a fade lands on the first and last kept frames
+fn adjust_sound(
+    job: &JobConfig,
+    audio: Option<PathBuf>,
+    output: &Path,
+    log: impl Fn(&str),
+) -> Result<Option<PathBuf>, String> {
+    let adjust = job.audio_adjust();
+    let Some(input) = audio else {
+        return Ok(None);
+    };
+    if adjust.is_empty() {
+        return Ok(Some(input));
+    }
+    let work_dir = output.join("audio_work");
+    std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
+    let seconds = dcpwizard_core::audio_adjust::duration_seconds(&input)?;
+    let adjusted = dcpwizard_core::audio_adjust::apply(
+        &input,
+        &work_dir.join("adjusted.wav"),
+        &adjust,
+        seconds,
+    )?;
+    log("[AUDIO] Applied gain/fades");
+    Ok(Some(adjusted))
 }
 
 fn build_dcp_config(
@@ -2640,11 +2954,7 @@ fn run_logged_job(
 
     let (fps_num, fps_den) = frame_rate_of(&job.framerate);
     let encode_fps = postkit::encode::FrameRate::new(fps_num, fps_den);
-    let conform = job
-        .source
-        .as_ref()
-        .map(|info| dcpwizard_core::hfr::conform_source_to_dcp(info.fps_num, info.fps_den, fps_num))
-        .unwrap_or_default();
+    let conform = job_conform(job);
     let preflight_started = Instant::now();
 
     // reel boundaries before the encode: a source with no chapter marks should
@@ -2738,6 +3048,7 @@ fn run_logged_job(
         (None, None) => {}
     }
 
+    let video_fade_filter = job_video_fade_filter(job, encode_window, encode_fps)?;
     let encode_options = postkit::pipeline::EncodeRunOptions {
         compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
         target_codestream_bytes,
@@ -2749,6 +3060,7 @@ fn run_logged_job(
         codestream_byte_cap: Some(codestream_byte_cap),
         subtitle_burn: job_subtitle_burn(job, encode_fps)?,
         picture: resolved_picture.processing.clone(),
+        extra_picture_filter: video_fade_filter,
         rsiz: postkit::encode::default_rsiz(),
         encode_threads,
         detect_picture_findings,
@@ -2942,6 +3254,7 @@ fn run_logged_job(
         log_to(&log_file, &format!("[TRIM] {e}"));
         e
     })?;
+    let audio_path = adjust_sound(job, audio_path, output, |msg| log_to(&log_file, msg))?;
 
     // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15, replacing
     // the sound track with the combined 16-channel WAV.
@@ -3443,6 +3756,11 @@ mod tests {
             hints: Vec::new(),
             head_items: Vec::new(),
             tail_items: Vec::new(),
+            audio_gain_db: None,
+            audio_fade_in_seconds: None,
+            audio_fade_out_seconds: None,
+            video_fade_in_seconds: None,
+            video_fade_out_seconds: None,
         }
     }
 
@@ -5040,5 +5358,184 @@ mod tests {
         let saved = load::<JobConfig>(&path);
         assert_eq!(saved.jobs.len(), 1);
         assert_eq!(saved.jobs[0].state, JobState::Queued);
+    }
+
+    fn write_tone(path: &Path, amplitude: f64, seconds: f64) -> Vec<i32> {
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 48000,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        let full_scale = f64::from(1i32 << 23);
+        let frames = (seconds * 48000.0) as usize;
+        let samples: Vec<i32> = (0..frames)
+            .map(|frame| {
+                let phase = 2.0 * std::f64::consts::PI * 1000.0 * frame as f64 / 48000.0;
+                (amplitude * full_scale * phase.sin()).round() as i32
+            })
+            .collect();
+        let mut writer = WavWriter::create(path, spec).unwrap();
+        for sample in &samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
+        samples
+    }
+
+    fn read_samples(path: &Path) -> Vec<i32> {
+        WavReader::open(path)
+            .unwrap()
+            .samples::<i32>()
+            .map(|sample| sample.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_gain_of_minus_six_db_halves_the_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("tone.wav");
+        let source = write_tone(&wav, 0.9, 0.5);
+        let mut job = test_job();
+        job.audio_gain_db = Some(-20.0 * 2f64.log10());
+
+        let lines = std::sync::Mutex::new(Vec::new());
+        let adjusted = adjust_sound(&job, Some(wav), dir.path(), |line| {
+            lines.lock().unwrap().push(line.to_string())
+        })
+        .unwrap()
+        .unwrap();
+        let halved = read_samples(&adjusted);
+        assert_eq!(halved.len(), source.len());
+        for (index, (before, after)) in source.iter().zip(&halved).enumerate() {
+            let half = f64::from(*before) / 2.0;
+            assert!(
+                (f64::from(*after) - half).abs() <= 1.0,
+                "sample {index}: {before} became {after}, not half"
+            );
+        }
+        assert_eq!(
+            lines.into_inner().unwrap(),
+            vec!["[AUDIO] Applied gain/fades"]
+        );
+    }
+
+    #[test]
+    fn a_sound_fade_in_starts_silent_and_leaves_the_tail_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav = dir.path().join("tone.wav");
+        let source = write_tone(&wav, 0.5, 2.0);
+        let mut job = test_job();
+        job.audio_fade_in_seconds = Some(1.0);
+
+        let faded = adjust_sound(&job, Some(wav), dir.path(), |_| {})
+            .unwrap()
+            .unwrap();
+        let faded = read_samples(&faded);
+        assert_eq!(faded.len(), source.len());
+        assert_eq!(faded[0], 0, "the fade starts from silence");
+        let tail = source.len() - 4800;
+        assert_eq!(
+            &faded[tail..],
+            &source[tail..],
+            "the second after the fade is untouched"
+        );
+        assert!(faded[..4800].iter().all(|sample| sample.abs() < (1 << 21)));
+    }
+
+    #[test]
+    fn a_picture_fade_on_a_still_hold_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let still = dir.path().join("card.png");
+        std::fs::write(&still, b"").unwrap();
+        let request = SubmitRequest {
+            video_path: still.to_string_lossy().into_owned(),
+            still_length: Some("2s".into()),
+            video_fade_out_seconds: Some(1.0),
+            ..SubmitRequest::default()
+        };
+        let refusal = job_config_of(1, request).err().unwrap();
+        assert_eq!(refusal, "Video fades are not applied to a still hold");
+    }
+
+    #[test]
+    fn a_picture_fade_counts_from_the_first_kept_frame() {
+        let mut job = test_job();
+        job.video_fade_in_seconds = Some(1.0);
+        job.video_fade_out_seconds = Some(1.0);
+        job.source = Some(test_source());
+        let window = postkit::encode::FrameRange {
+            first_frame: 48,
+            frame_count: 96,
+        };
+        let fps = postkit::encode::FrameRate::whole(24);
+        assert_eq!(
+            job_video_fade_filter(&job, Some(window), fps)
+                .unwrap()
+                .as_deref(),
+            Some("fade=t=in:st=0:d=1,fade=t=out:st=3:d=1")
+        );
+        assert_eq!(
+            job_video_fade_filter(&job, None, fps).unwrap().as_deref(),
+            Some("fade=t=in:st=0:d=1,fade=t=out:st=1:d=1"),
+            "with no window the fade spans the 48 frames of the source"
+        );
+        job.video_fade_in_seconds = None;
+        job.video_fade_out_seconds = None;
+        assert_eq!(job_video_fade_filter(&job, Some(window), fps), Ok(None));
+    }
+
+    #[test]
+    fn a_channel_set_is_measured_after_routing() {
+        let dir = tempfile::tempdir().unwrap();
+        let channels = dir.path().join("channels");
+        std::fs::create_dir_all(&channels).unwrap();
+        let mut files = Vec::new();
+        for (lane, amplitude) in [
+            ("Rs", 0.1),
+            ("L", 0.5),
+            ("Ls", 0.1),
+            ("R", 0.5),
+            ("LFE", 0.05),
+            ("C", 0.3),
+        ] {
+            let file = channels.join(format!("260810 DST_MIX_V2.3.2.{lane}.wav"));
+            write_tone(&file, amplitude, 2.0);
+            files.push(file);
+        }
+        let routed_directly = dcpwizard_core::audio_route::route_files(
+            &dcpwizard_core::audio_route::channel_lanes(&files).unwrap(),
+            &dir.path().join("routed.wav"),
+        )
+        .unwrap();
+        let expected = postkit::loudness::measure_loudness(&routed_directly);
+        assert!(expected.success, "{}", expected.error);
+
+        let request = SubmitRequest {
+            audio_channel_files: Some(
+                files
+                    .iter()
+                    .map(|file| file.to_string_lossy().into_owned())
+                    .collect(),
+            ),
+            ..SubmitRequest::default()
+        };
+        let job = job_config_of(0, request).unwrap();
+        let scratch_parent = dir.path().join("scratch");
+        let measured = measure_job_sound(&job, &scratch_parent).unwrap();
+
+        assert!(
+            (measured.integrated_lufs - expected.integrated_lufs).abs() < 0.05,
+            "measured {} LUFS, the routed track is {} LUFS",
+            measured.integrated_lufs,
+            expected.integrated_lufs
+        );
+        assert!(measured.leq_m_db.is_finite() && measured.true_peak_dbtp < 0.0);
+        assert_eq!(measured.steps, vec!["Routed the channel set by filename"]);
+        assert_eq!(
+            std::fs::read_dir(&scratch_parent).unwrap().count(),
+            0,
+            "the scratch folder is removed"
+        );
     }
 }

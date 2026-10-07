@@ -104,6 +104,7 @@ pub fn run() {
             preferences::import_dcpomatic_identity,
             cpl_identities,
             pipeline::submit_job,
+            pipeline::measure_sound,
             pipeline::cancel_job,
             pipeline::move_job,
             pipeline::pause_job,
