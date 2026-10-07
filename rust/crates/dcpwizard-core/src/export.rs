@@ -109,10 +109,10 @@ fn image_sequence_frame_name(number: u32) -> String {
     format!("frame_{number:08}.png")
 }
 
-struct ExportSources {
+struct ExportReel {
     picture: PathBuf,
     sound: Option<PathBuf>,
-    reel_span: Option<ReelSpan>,
+    span: Option<ReelSpan>,
 }
 
 struct ReelSpan {
@@ -144,7 +144,7 @@ impl ReelSpan {
     }
 }
 
-fn resolve_sources(config: &ExportConfig) -> Result<ExportSources, String> {
+fn resolve_sources(config: &ExportConfig) -> Result<Vec<ExportReel>, String> {
     let input = &config.input;
     if !input.exists() {
         return Err(format!("input not found: {}", input.display()));
@@ -157,30 +157,62 @@ fn resolve_sources(config: &ExportConfig) -> Result<ExportSources, String> {
         None
     };
     let Some(cpl) = cpl else {
-        return Ok(ExportSources {
+        return Ok(vec![ExportReel {
             picture: input.clone(),
             sound: config.audio_mxf.clone(),
-            reel_span: None,
-        });
+            span: None,
+        }]);
     };
-    let reel = single_reel(&cpl)?;
-    if reel.picture_file.is_empty() {
+    let reels = crate::multi_cpl::get_timeline(&cpl);
+    if reels.is_empty() {
+        return Err(format!("{} has no reels", cpl.display()));
+    }
+    if reels.len() > 1 && config.audio_mxf.is_some() {
+        return Err("a sound override takes a picture MXF or a single-reel CPL".to_string());
+    }
+    reels
+        .into_iter()
+        .enumerate()
+        .map(|(index, reel)| {
+            if reel.picture_file.is_empty() {
+                return Err(format!(
+                    "{} reel {} names a picture asset the ASSETMAP does not list",
+                    cpl.display(),
+                    index + 1
+                ));
+            }
+            let cpl_sound = (!reel.sound_file.is_empty()).then(|| PathBuf::from(&reel.sound_file));
+            Ok(ExportReel {
+                picture: PathBuf::from(&reel.picture_file),
+                sound: config.audio_mxf.clone().or(cpl_sound),
+                span: Some(ReelSpan {
+                    cpl: cpl.clone(),
+                    entry_point: reel.entry_point,
+                    sound_entry_point: reel.sound_entry_point,
+                    duration: reel.duration_frames,
+                }),
+            })
+        })
+        .collect()
+}
+
+fn every_reel_sound(reels: &[ExportReel]) -> Result<Vec<PathBuf>, String> {
+    let first_has_sound = reels[0].sound.is_some();
+    if let Some(index) = reels
+        .iter()
+        .position(|reel| reel.sound.is_some() != first_has_sound)
+    {
+        let (without, with) = if first_has_sound {
+            (index + 1, 1)
+        } else {
+            (1, index + 1)
+        };
         return Err(format!(
-            "{} names a picture asset the ASSETMAP does not list",
-            cpl.display()
+            "reel {without} has no sound track while reel {with} does, \
+             export takes a composition with sound on every reel or on none"
         ));
     }
-    let cpl_sound = (!reel.sound_file.is_empty()).then(|| PathBuf::from(&reel.sound_file));
-    Ok(ExportSources {
-        picture: PathBuf::from(&reel.picture_file),
-        sound: config.audio_mxf.clone().or(cpl_sound),
-        reel_span: Some(ReelSpan {
-            cpl,
-            entry_point: reel.entry_point,
-            sound_entry_point: reel.sound_entry_point,
-            duration: reel.duration_frames,
-        }),
-    })
+    Ok(reels.iter().filter_map(|reel| reel.sound.clone()).collect())
 }
 
 fn is_cpl_path(path: &Path) -> bool {
@@ -209,18 +241,6 @@ fn only_cpl(directory: &Path) -> Result<PathBuf, String> {
     }
 }
 
-fn single_reel(cpl: &Path) -> Result<crate::multi_cpl::TimelineEntry, String> {
-    let mut reels = crate::multi_cpl::get_timeline(cpl);
-    match reels.len() {
-        1 => Ok(reels.remove(0)),
-        0 => Err(format!("{} has no reels", cpl.display())),
-        count => Err(format!(
-            "{} has {count} reels, export takes a single-reel CPL",
-            cpl.display()
-        )),
-    }
-}
-
 struct PictureSource {
     reader: jp2k::MxfReader,
     width: u32,
@@ -229,6 +249,24 @@ struct PictureSource {
     edit_rate_den: i32,
     frames: u32,
     writer_info: asdcplib::WriterInfo,
+}
+
+impl PictureSource {
+    fn raster(&self) -> (u32, u32, i32, i32) {
+        (
+            self.width,
+            self.height,
+            self.edit_rate_num,
+            self.edit_rate_den,
+        )
+    }
+
+    fn describe_raster(&self) -> String {
+        format!(
+            "{}x{} at {}/{}",
+            self.width, self.height, self.edit_rate_num, self.edit_rate_den
+        )
+    }
 }
 
 fn open_picture(mxf: &Path) -> Result<PictureSource, String> {
@@ -342,38 +380,63 @@ pub fn export_dcp(
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), String> {
-    let sources = resolve_sources(config)?;
-    if !sources.picture.exists() {
-        return Err(format!(
-            "picture MXF not found: {}",
-            sources.picture.display()
-        ));
+    let reels = resolve_sources(config)?;
+    let mut pictures: Vec<(PictureSource, Range<u32>)> = Vec::with_capacity(reels.len());
+    for (index, reel) in reels.iter().enumerate() {
+        if !reel.picture.exists() {
+            return Err(format!("picture MXF not found: {}", reel.picture.display()));
+        }
+        let picture = open_picture(&reel.picture)?;
+        if let Some((first, _)) = pictures.first()
+            && picture.raster() != first.raster()
+        {
+            return Err(format!(
+                "reel {} picture is {}, reel 1 is {}",
+                index + 1,
+                picture.describe_raster(),
+                first.describe_raster()
+            ));
+        }
+        let frames = match &reel.span {
+            Some(span) => span.frames_within(&reel.picture, picture.frames)?,
+            None => 0..picture.frames,
+        };
+        pictures.push((picture, frames));
     }
-    let picture = open_picture(&sources.picture)?;
-    let span = match &sources.reel_span {
-        Some(reel_span) => reel_span.frames_within(&sources.picture, picture.frames)?,
-        None => 0..picture.frames,
-    };
+    let (width, height, edit_rate_num, edit_rate_den) = pictures[0].0.raster();
+
     let movie = config.format.movie();
-    let sound = movie.and(sources.sound);
-    let encrypted_sound = match &sound {
-        Some(sound) => encrypted_sound_asset_id(sound)?,
-        None => None,
+    let sounds = match movie {
+        Some(_) => every_reel_sound(&reels)?,
+        None => Vec::new(),
     };
+    let sounds = sounds
+        .into_iter()
+        .map(|sound| encrypted_sound_asset_id(&sound).map(|asset_id| (sound, asset_id)))
+        .collect::<Result<Vec<_>, String>>()?;
 
     let key_source = postkit::content_keys::ContentKeys::from_options(
         config.kdm.as_deref(),
         config.recipient_key.as_deref(),
         config.keys.as_deref(),
     )?;
-    let picture_contexts = match (&key_source, picture.writer_info.encrypted_essence) {
-        (_, false) => None,
-        (Some(keys), true) => {
-            Some(keys.decrypt_and_hmac_contexts(&picture.writer_info, "picture")?)
-        }
-        (None, true) => return Err(encrypted_without_keys(&sources.picture)),
-    };
-    if let (Some(sound), Some(_), None) = (&sound, &encrypted_sound, &key_source) {
+    let mut reel_pictures = Vec::with_capacity(pictures.len());
+    for ((picture, frames), reel) in pictures.into_iter().zip(&reels) {
+        let contexts = match (&key_source, picture.writer_info.encrypted_essence) {
+            (_, false) => None,
+            (Some(keys), true) => {
+                Some(keys.decrypt_and_hmac_contexts(&picture.writer_info, "picture")?)
+            }
+            (None, true) => return Err(encrypted_without_keys(&reel.picture)),
+        };
+        reel_pictures.push(ReelPicture {
+            reader: picture.reader,
+            contexts,
+            frames,
+        });
+    }
+    let encrypted_sound = sounds.iter().find(|(_, asset_id)| asset_id.is_some());
+    if let (Some((sound, _)), None) = (encrypted_sound, &key_source) {
         return Err(encrypted_without_keys(sound));
     }
 
@@ -387,12 +450,9 @@ pub fn export_dcp(
     command
         .args(["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "xyz12le"])
         .arg("-s")
-        .arg(format!("{}x{}", picture.width, picture.height))
+        .arg(format!("{width}x{height}"))
         .arg("-r")
-        .arg(format!(
-            "{}/{}",
-            picture.edit_rate_num, picture.edit_rate_den
-        ))
+        .arg(format!("{edit_rate_num}/{edit_rate_den}"))
         .args(["-i", "pipe:0"]);
 
     // removed on drop, on every path out
@@ -404,34 +464,42 @@ pub fn export_dcp(
             } else {
                 config.output_path.clone()
             };
-            let sound_input = match (sound, encrypted_sound, &key_source) {
-                (Some(sound), Some(asset_id), Some(keys)) => {
-                    let work = sound_work_directory(&output)?;
-                    let fps = (f64::from(picture.edit_rate_num) / f64::from(picture.edit_rate_den))
-                        .round() as u32;
-                    let decrypted = crate::decrypt::process_sound(
-                        &sound.to_string_lossy(),
-                        &asset_id,
-                        keys,
-                        fps,
-                        work.path(),
-                    )?
-                    .expect("a sound path and asset id give a sound track");
-                    let decrypted = work.path().join(decrypted.filename);
-                    sound_work = Some(work);
-                    Some(decrypted)
-                }
-                (sound, _, _) => sound,
-            };
-            if let Some(sound) = &sound_input {
-                if let Some(reel_span) = &sources.reel_span {
-                    let seconds = |frames: u64| {
-                        exact_seconds(frames, picture.edit_rate_num, picture.edit_rate_den)
-                    };
-                    command.arg("-ss").arg(seconds(reel_span.sound_entry_point));
-                    command.arg("-t").arg(seconds(span.len() as u64));
+            if encrypted_sound.is_some() {
+                sound_work = Some(sound_work_directory(&output)?);
+            }
+            let fps = (f64::from(edit_rate_num) / f64::from(edit_rate_den)).round() as u32;
+            let sound_inputs = sounds
+                .into_iter()
+                .map(
+                    |(sound, asset_id)| match (asset_id, &key_source, &sound_work) {
+                        (Some(asset_id), Some(keys), Some(work)) => {
+                            let decrypted = crate::decrypt::process_sound(
+                                &sound.to_string_lossy(),
+                                &asset_id,
+                                keys,
+                                fps,
+                                work.path(),
+                            )?
+                            .expect("a sound path and asset id give a sound track");
+                            Ok(work.path().join(decrypted.filename))
+                        }
+                        _ => Ok(sound),
+                    },
+                )
+                .collect::<Result<Vec<_>, String>>()?;
+            let seconds = |frames: u64| exact_seconds(frames, edit_rate_num, edit_rate_den);
+            for ((sound, reel), reel_picture) in sound_inputs.iter().zip(&reels).zip(&reel_pictures)
+            {
+                if let Some(span) = &reel.span {
+                    command.arg("-ss").arg(seconds(span.sound_entry_point));
+                    command
+                        .arg("-t")
+                        .arg(seconds(reel_picture.frames.len() as u64));
                 }
                 command.arg("-i").arg(sound);
+            }
+            if sound_inputs.len() > 1 {
+                add_sound_concatenation(&mut command, sound_inputs.len());
             }
             add_movie_arguments(&mut command, movie, crf);
             command.arg(&output);
@@ -451,15 +519,12 @@ pub fn export_dcp(
     };
     drop(key_source);
 
-    let exported = run_export(
-        command,
-        picture,
-        span,
-        picture_contexts,
-        &target,
-        cancel,
-        on_progress,
-    );
+    let picture = ExportPicture {
+        reels: reel_pictures,
+        width,
+        height,
+    };
+    let exported = run_export(command, picture, &target, cancel, on_progress);
     drop(sound_work);
     exported?;
     match &target {
@@ -469,6 +534,17 @@ pub fn export_dcp(
         }
     }
     Ok(())
+}
+
+// the picture is input 0, each reel's sound follows in reel order
+fn add_sound_concatenation(command: &mut std::process::Command, sound_inputs: usize) {
+    let inputs: String = (1..=sound_inputs)
+        .map(|input| format!("[{input}:a]"))
+        .collect();
+    command
+        .arg("-filter_complex")
+        .arg(format!("{inputs}concat=n={sound_inputs}:v=0:a=1[sound]"));
+    command.args(["-map", "0:v", "-map", "[sound]"]);
 }
 
 // ffmpeg keeps time in microseconds
@@ -529,6 +605,25 @@ fn rec709_filter(movie: MovieFormat) -> String {
 }
 
 type PictureContexts = (AesDecContext, HmacContext);
+
+struct ReelPicture {
+    reader: jp2k::MxfReader,
+    contexts: Option<PictureContexts>,
+    frames: Range<u32>,
+}
+
+struct ExportPicture {
+    reels: Vec<ReelPicture>,
+    width: u32,
+    height: u32,
+}
+
+impl ExportPicture {
+    fn frames(&self) -> u32 {
+        self.reels.iter().map(|reel| reel.frames.len() as u32).sum()
+    }
+}
+
 struct ReadCodestream {
     position: u32,
     frame_index: u32,
@@ -548,9 +643,7 @@ enum PipelineStop {
 
 fn run_export(
     mut command: std::process::Command,
-    picture: PictureSource,
-    span: Range<u32>,
-    contexts: Option<PictureContexts>,
+    picture: ExportPicture,
     target: &ExportTarget,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(u64, u64),
@@ -562,8 +655,8 @@ fn run_export(
     let child = command
         .spawn()
         .map_err(|e| format!("could not run ffmpeg: {e}"))?;
-    let frames = span.len() as u32;
-    let exported = drive_ffmpeg(child, picture, span, contexts, target, cancel, on_progress);
+    let frames = picture.frames();
+    let exported = drive_ffmpeg(child, picture, target, cancel, on_progress);
     // the output path may hold the user's own file until ffmpeg has started
     if exported.is_err() {
         target.remove_partial(frames);
@@ -573,9 +666,7 @@ fn run_export(
 
 fn drive_ffmpeg(
     mut child: Child,
-    picture: PictureSource,
-    span: Range<u32>,
-    contexts: Option<PictureContexts>,
+    picture: ExportPicture,
     target: &ExportTarget,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(u64, u64),
@@ -589,17 +680,16 @@ fn drive_ffmpeg(
         text
     });
 
-    let every_frame_written =
-        match stream_frames(picture, span, contexts, stdin, cancel, on_progress) {
-            Ok(()) => true,
-            // a terminal's Ctrl+C reaches ffmpeg too
-            Err(PipelineStop::FfmpegClosedInput) if cancel.load(Ordering::Relaxed) => {
-                return Err(stop_ffmpeg(child, CANCELLED.to_string()));
-            }
-            Err(PipelineStop::FfmpegClosedInput) => false,
-            Err(PipelineStop::Cancelled) => return Err(stop_ffmpeg(child, CANCELLED.to_string())),
-            Err(PipelineStop::Failed(message)) => return Err(stop_ffmpeg(child, message)),
-        };
+    let every_frame_written = match stream_frames(picture, stdin, cancel, on_progress) {
+        Ok(()) => true,
+        // a terminal's Ctrl+C reaches ffmpeg too
+        Err(PipelineStop::FfmpegClosedInput) if cancel.load(Ordering::Relaxed) => {
+            return Err(stop_ffmpeg(child, CANCELLED.to_string()));
+        }
+        Err(PipelineStop::FfmpegClosedInput) => false,
+        Err(PipelineStop::Cancelled) => return Err(stop_ffmpeg(child, CANCELLED.to_string())),
+        Err(PipelineStop::Failed(message)) => return Err(stop_ffmpeg(child, message)),
+    };
 
     let status = child
         .wait()
@@ -625,20 +715,17 @@ fn stop_ffmpeg(mut child: Child, message: String) -> String {
 }
 
 fn stream_frames(
-    picture: PictureSource,
-    span: Range<u32>,
-    contexts: Option<PictureContexts>,
+    picture: ExportPicture,
     stdin: ChildStdin,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), PipelineStop> {
-    let PictureSource {
-        reader,
+    let frames = picture.frames();
+    let ExportPicture {
+        reels,
         width,
         height,
-        ..
     } = picture;
-    let frames = span.len() as u32;
     let workers = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let in_flight = workers * FRAMES_IN_FLIGHT_PER_DECODE_WORKER;
 
@@ -657,15 +744,7 @@ fn stream_frames(
         let stopped = &stopped;
         let codestream_receiver = &codestream_receiver;
         scope.spawn(move || {
-            read_codestreams(
-                reader,
-                contexts,
-                span,
-                codestream_sender,
-                slot_receiver,
-                cancel,
-                stopped,
-            )
+            read_codestreams(reels, codestream_sender, slot_receiver, cancel, stopped)
         });
         for _ in 0..workers {
             let decoded_sender = decoded_sender.clone();
@@ -688,41 +767,48 @@ fn stream_frames(
 }
 
 fn read_codestreams(
-    mut reader: jp2k::MxfReader,
-    mut contexts: Option<PictureContexts>,
-    span: Range<u32>,
+    reels: Vec<ReelPicture>,
     codestreams: SyncSender<ReadCodestream>,
     slots: Receiver<()>,
     cancel: &AtomicBool,
     stopped: &AtomicBool,
 ) {
     let mut buffer = vec![0u8; crate::decrypt::MAX_FRAME_BUF];
-    for (position, index) in (0u32..).zip(span) {
-        if cancel.load(Ordering::Relaxed) || stopped.load(Ordering::Relaxed) {
-            return;
-        }
-        if slots.recv().is_err() {
-            return;
-        }
-        let read = match &mut contexts {
-            Some((decrypt, integrity)) => reader
-                .read_frame(index, &mut buffer, Some(decrypt), Some(integrity))
-                .map_err(|e| {
-                    format!("decrypt picture frame {index} (wrong key or MIC mismatch): {e}")
-                }),
-            None => reader
-                .read_frame(index, &mut buffer, None, None)
-                .map_err(|e| format!("cannot read picture frame {index}: {e}")),
-        };
-        let failed = read.is_err();
-        let codestream = read.map(|size| buffer[..size].to_vec());
-        let read_codestream = ReadCodestream {
-            position,
-            frame_index: index,
-            codestream,
-        };
-        if codestreams.send(read_codestream).is_err() || failed {
-            return;
+    let mut position = 0u32;
+    for reel in reels {
+        let ReelPicture {
+            mut reader,
+            mut contexts,
+            frames,
+        } = reel;
+        for index in frames {
+            if cancel.load(Ordering::Relaxed) || stopped.load(Ordering::Relaxed) {
+                return;
+            }
+            if slots.recv().is_err() {
+                return;
+            }
+            let read = match &mut contexts {
+                Some((decrypt, integrity)) => reader
+                    .read_frame(index, &mut buffer, Some(decrypt), Some(integrity))
+                    .map_err(|e| {
+                        format!("decrypt picture frame {index} (wrong key or MIC mismatch): {e}")
+                    }),
+                None => reader
+                    .read_frame(index, &mut buffer, None, None)
+                    .map_err(|e| format!("cannot read picture frame {index}: {e}")),
+            };
+            let failed = read.is_err();
+            let codestream = read.map(|size| buffer[..size].to_vec());
+            let read_codestream = ReadCodestream {
+                position,
+                frame_index: index,
+                codestream,
+            };
+            if codestreams.send(read_codestream).is_err() || failed {
+                return;
+            }
+            position += 1;
         }
     }
 }

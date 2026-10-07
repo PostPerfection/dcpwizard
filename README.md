@@ -53,7 +53,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **CPU encoding** on all available cores. GPU encoding needs Grok's accelerator plugin, a commercial product sold separately, see [GPU builds](#gpu-builds)
 - **Video file import**, QuickTime (.mov), MP4, MXF, AVI, MKV
 - **Picture MXF import**: a JPEG 2000 picture MXF is accepted as the video, its codestreams are wrapped unchanged and the frame rate is its edit rate. Encrypted and stereoscopic picture MXFs are refused
-- **DCP export** via `export`: a single-reel DCP, encrypted with a KDM or KEYS.json or not, to ProRes, H.264, H.265, DNxHR or PNG. The JPEG 2000 decodes through grok and the decrypted picture stays in memory
+- **DCP export** via `export`: a DCP of any number of reels, written in reel order, encrypted with a KDM or KEYS.json or not, to ProRes, H.264, H.265, DNxHR or PNG. The JPEG 2000 decodes through grok and the decrypted picture stays in memory
 - **DCP export in the GUI**: the Tools view runs the same export with the same KDM, recipient key and KEYS.json options, and shows a progress bar with frames and fps
 - **Video transcoding**, ProRes, H.264, H.265 and DNxHR are decoded by ffmpeg straight into the J2K encode
 - **Image sequence input**, DPX, TIFF, EXR, PNG, JPEG, BMP

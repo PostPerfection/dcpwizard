@@ -933,30 +933,159 @@ fn write_flat_master(directory: &Path, seconds: u32) -> (PathBuf, PathBuf) {
     (master, wav)
 }
 
+const TWO_REEL_SECONDS: u32 = 2;
+const TWO_REEL_FRAMES: u32 = TWO_REEL_SECONDS * FRAME_RATE;
+
+struct TwoReelFixture {
+    _directory: TempDir,
+    package: PathBuf,
+}
+
+fn two_reel_fixture() -> &'static TwoReelFixture {
+    static FIXTURE: OnceLock<TwoReelFixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let directory = TempDir::new().unwrap();
+        let (master, wav) = write_flat_master(directory.path(), TWO_REEL_SECONDS);
+        let package = create_dcp(
+            dcp_fixture().config_home.path(),
+            &master,
+            &wav,
+            &directory.path().join("dcp"),
+            "Export Reels",
+            &["--split-at", "00:00:01"],
+        );
+        assert_eq!(
+            dcpwizard_core::multi_cpl::get_timeline(&only_cpl(&package).1).len(),
+            2,
+            "the split package has to hold two reels"
+        );
+        TwoReelFixture {
+            _directory: directory,
+            package,
+        }
+    })
+}
+
 #[test]
-fn a_two_reel_dcp_is_refused_naming_its_cpl() {
+fn a_two_reel_cpl_exports_both_reels_in_order() {
     let fixture = dcp_fixture();
     let directory = TempDir::new().unwrap();
-    let (master, wav) = write_flat_master(directory.path(), 2);
-    let package = create_dcp(
+    let output = directory.path().join("reels.mov");
+
+    export_command(
         fixture.config_home.path(),
-        &master,
-        &wav,
-        &directory.path().join("dcp"),
-        "Export Reels",
-        &["--split-at", "00:00:01"],
+        &two_reel_fixture().package,
+        &output,
+    )
+    .args(["--format", "prores"])
+    .assert()
+    .success();
+
+    assert_eq!(
+        probe(&output, "v:0", "nb_frames"),
+        [TWO_REEL_FRAMES.to_string()]
     );
-    let (_, cpl) = only_cpl(&package);
+    assert_eq!(probe(&output, "a:0", "codec_name"), ["pcm_s24le"]);
+    let sound_seconds: f64 = probe(&output, "a:0", "duration")[0].parse().unwrap();
+    assert!(
+        (sound_seconds - f64::from(TWO_REEL_SECONDS)).abs() <= 1.0 / f64::from(FRAME_RATE),
+        "the sound runs {sound_seconds} s against the {TWO_REEL_SECONDS} s both reels play"
+    );
+    assert_colour_within(
+        mean_rgb(&output),
+        mean_rgb(&fixture.master),
+        MASTER_TOLERANCE,
+        "the ProRes export of two reels against the master",
+    );
+}
+
+#[test]
+fn a_two_reel_cpl_exports_an_image_sequence_of_every_frame() {
+    let directory = TempDir::new().unwrap();
+    let output = directory.path().join("stills");
+
+    export_command(
+        dcp_fixture().config_home.path(),
+        &two_reel_fixture().package,
+        &output,
+    )
+    .args(["--format", "image-sequence"])
+    .assert()
+    .success();
+
+    let mut names: Vec<String> = std::fs::read_dir(&output)
+        .expect("the sequence directory has to be readable")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let expected: Vec<String> = (1..=TWO_REEL_FRAMES)
+        .map(|number| format!("frame_{number:08}.png"))
+        .collect();
+    assert_eq!(names, expected, "one still per frame of both reels");
+}
+
+#[test]
+fn a_sound_override_on_a_two_reel_cpl_is_refused() {
+    let fixture = dcp_fixture();
+    let directory = TempDir::new().unwrap();
     let output = directory.path().join("screener.mov");
 
-    export_command(fixture.config_home.path(), &package, &output)
+    export_command(
+        fixture.config_home.path(),
+        &two_reel_fixture().package,
+        &output,
+    )
+    .arg("--audio")
+    .arg(&fixture.sound_mxf)
+    .args(["--format", "prores"])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains(
+        "a sound override takes a picture MXF or a single-reel CPL",
+    ));
+    assert_only_entries(directory.path(), &[]);
+}
+
+#[test]
+fn a_cpl_with_sound_on_one_reel_only_is_refused() {
+    let directory = TempDir::new().unwrap();
+    let package = directory.path().join("package");
+    std::fs::create_dir(&package).unwrap();
+    for entry in std::fs::read_dir(&two_reel_fixture().package).unwrap() {
+        let source = entry.unwrap().path();
+        assert!(
+            source.is_file(),
+            "the package is flat: {}",
+            source.display()
+        );
+        std::fs::copy(&source, package.join(source.file_name().unwrap())).unwrap();
+    }
+    let (_, cpl) = only_cpl(&package);
+    let xml = std::fs::read_to_string(&cpl).unwrap();
+    let second_reel_sound = xml.rfind("<MainSound>").unwrap();
+    assert_ne!(
+        xml.find("<MainSound>").unwrap(),
+        second_reel_sound,
+        "both reels have to carry sound before the second loses it"
+    );
+    let sound_end = second_reel_sound + xml[second_reel_sound..].find("</MainSound>").unwrap();
+    let xml = format!(
+        "{}{}",
+        &xml[..second_reel_sound],
+        &xml[sound_end + "</MainSound>".len()..]
+    );
+    std::fs::write(&cpl, xml).unwrap();
+    let output = directory.path().join("screener.mov");
+
+    export_command(dcp_fixture().config_home.path(), &cpl, &output)
         .args(["--format", "prores"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(format!(
-            "{} has 2 reels, export takes a single-reel CPL",
-            cpl.display()
-        )));
+        .stderr(predicate::str::contains(
+            "reel 2 has no sound track while reel 1 does, \
+             export takes a composition with sound on every reel or on none",
+        ));
     assert!(
         !output.exists(),
         "the refused export wrote {}",

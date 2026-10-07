@@ -303,7 +303,7 @@ dcpwizard ingest-package ./pkg \
 
     <h2 id="export">Export a DCP</h2>
     <h3>In the app</h3>
-    <p>Under Export DCP, press DCP folder or CPL or MXF, choose Format, press Save as for the Output and press Export. Only a one-reel composition exports. For a longer one, export each reel's picture MXF and give its sound MXF as the Sound override, since a picture MXF on its own exports silent. An encrypted DCP needs its KDM with the Recipient private key it was issued to, or the KEYS.json from the build.</p>
+    <p>Under Export DCP, press DCP folder or CPL or MXF, choose Format, press Save as for the Output and press Export. A composition exports with all its reels in order as one file. A picture MXF on its own exports silent unless a Sound override is given. An encrypted DCP needs its KDM with the Recipient private key it was issued to, or the KEYS.json from the build.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard export --input "./dcp/My Film" -o my-film.mp4 --format h264
 dcpwizard export --input ./dcp/Locked --keys ~/keys/locked.json -o locked.mp4</pre>
