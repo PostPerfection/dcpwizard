@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -744,6 +744,7 @@ function renderReels() {
   audioMapDrawn = refreshAudioMapMatrix();
   refreshIsdcfPreview();
   refreshMarkerFromPlayerButtons();
+  refreshContainerViewAvailability();
 }
 
 // === Source picture ===
@@ -776,30 +777,72 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
 const PICTURE_PLACEMENT_CONTROLS = [
   "prop-picture-scale", "prop-picture-offset-x", "prop-picture-offset-y",
   "prop-crop-left", "prop-crop-right", "prop-crop-top", "prop-crop-bottom",
-  "prop-fill-crop", "prop-rotate", "prop-flip", "prop-resolution",
+  "prop-fill-crop", "prop-rotate", "prop-flip", "prop-resolution", "prop-deinterlace", "prop-denoise",
 ];
 // a slow answer must not overwrite the one for a later edit
 let picturePlacementRequest = 0;
+const containerViewToggle = document.getElementById("prop-preview-in-container");
+const containerViewHint = document.getElementById("prop-preview-in-container-hint");
+// the reel whose picture the preview plays, null for any other file
+let previewedJobReel = null;
+// the build's filters for that reel's picture, null until a placement answer is in
+let previewedPictureFilters = null;
+// the picture path the container view was last checked against
+let containerViewCheckedPath;
+
+function picturePlacementOf(reel) {
+  return invoke("picture_placement", {
+    request: jobRequest({ reel, video: reel.picture.path, title: "", output: "", encrypt: false, keyOut: "" }),
+  });
+}
 
 async function refreshPicturePlacement() {
   const plan = document.getElementById("prop-crop-plan");
   const reel = project.reels[0];
   if (!plan || !reel?.picture) return;
   const requestNumber = ++picturePlacementRequest;
-  let text;
-  try {
-    const placement = await invoke("picture_placement", {
-      request: jobRequest({ reel, video: reel.picture.path, title: "", output: "", encrypt: false, keyOut: "" }),
-    });
-    text = placement.description;
-  } catch (e) {
-    text = String(e);
+  const resolvesAuto = resolutionSelect.value === "auto";
+  const previewedReel = previewedJobReel?.picture ? previewedJobReel : reel;
+  const placesPreviewedReel = containerViewToggle.checked && previewedReel !== reel;
+  const [placement, previewedPlacement] = await Promise.allSettled([
+    picturePlacementOf(reel),
+    placesPreviewedReel ? picturePlacementOf(previewedReel) : null,
+  ]);
+  if (requestNumber !== picturePlacementRequest) return;
+  const placed = placement.status === "fulfilled";
+  plan.textContent = placed ? placement.value.description : String(placement.reason);
+  if (placed && resolvesAuto) {
+    autoResolutionOption.textContent = autoResolutionLabel([placement.value.containerWidth, placement.value.containerHeight]);
   }
-  if (requestNumber === picturePlacementRequest) plan.textContent = text;
+  const shown = placesPreviewedReel ? previewedPlacement : placement;
+  previewedPictureFilters = shown.status === "fulfilled" ? shown.value.filters : null;
+  sendContainerViewFilters();
 }
 
 for (const id of PICTURE_PLACEMENT_CONTROLS) {
   document.getElementById(id)?.addEventListener("input", refreshPicturePlacement);
+}
+
+function sendContainerViewFilters() {
+  if (!isPreviewVisible()) return;
+  const showsContainer = containerViewToggle.checked && !containerViewToggle.disabled && previewedJobReel !== null;
+  setPreviewPictureFilters(showsContainer ? previewedPictureFilters : null);
+}
+
+containerViewToggle.addEventListener("change", () => {
+  if (containerViewToggle.checked) refreshPicturePlacement();
+  else sendContainerViewFilters();
+});
+
+async function refreshContainerViewAvailability() {
+  const path = project.reels[0]?.picture?.path ?? null;
+  if (path === containerViewCheckedPath) return;
+  containerViewCheckedPath = path;
+  const takesFilters = path === null || (await previewTakesPictureFilters(path));
+  if (path !== containerViewCheckedPath) return;
+  containerViewToggle.disabled = !takesFilters;
+  containerViewHint.hidden = takesFilters;
+  sendContainerViewFilters();
 }
 
 // === Audio channel mapping matrix ===
@@ -1117,8 +1160,7 @@ async function showDetectedValues(info) {
   }
   detectedHint.textContent = detected.hint;
   detectedHint.hidden = false;
-  const container = await invoke("nearest_named_container", { width: info.width, height: info.height });
-  autoResolutionOption.textContent = autoResolutionLabel(container);
+  refreshPicturePlacement();
   const resolvesFromSource = resolutionSelect.value === "auto" && probeMayFillField("resolution", resolutionSelect);
   resolutionSelect.classList.toggle("detected", resolvesFromSource);
 }
@@ -1958,13 +2000,17 @@ async function previewSourcePicture(path) {
   if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
-  forgetContentKeysIfRefused(path, previewFile(path, contentKeys));
+  const loaded = previewFile(path, contentKeys);
+  forgetContentKeysIfRefused(path, loaded);
   const reel = project.reels.find(r => r.picture?.path === path);
   previewShowsJobPicture = Boolean(reel);
+  previewedJobReel = reel ?? null;
   setPreviewCrop(reel ? currentCrop() : null);
   if (!reel) return;
   showPreviewTrack(reel.subtitle?.path, "subtitle", generation);
   showPreviewTrack(document.getElementById("prop-ccap")?.value, "closed-caption", generation);
+  // the load takes the container view's filters off
+  if (containerViewToggle.checked && (await loaded) && generation === previewGeneration) refreshPicturePlacement();
 }
 
 // A built DCP carries the crop in its pictures already, and its timed text is
@@ -1975,6 +2021,7 @@ async function previewPackage(dirPath) {
   previewGeneration += 1;
   const generation = previewGeneration;
   previewShowsJobPicture = false;
+  previewedJobReel = null;
   forgetContentKeysIfRefused(dirPath, previewDcp(dirPath, contentKeys));
   setPreviewCrop(null);
   showPreviewTrack(dirPath, "subtitle", generation);

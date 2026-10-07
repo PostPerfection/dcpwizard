@@ -141,6 +141,7 @@
     </figure>
     <h3 id="picture-placement">Picture size and position</h3>
     <p>Under Source Picture, Scale sizes the picture against the container with its aspect kept: 100 fits the container, under 100 leaves wider black bands, and over 100 fills past it and cuts the edges off at the frame. Offset X and Y move the picture that many container pixels right and down, and negative values move it left and up. A picture smaller than the frame stops at the frame's edge, and a larger one stops where its own edge reaches the frame. The line under Auto-crop shows the size and position the build will use. From a terminal, <code>create --picture-scale 90 --picture-offset 0,-20</code> does the same.</p>
+    <p>Preview in container, at the end of Source Picture, plays the preview through the build's own picture filters, so it shows the frame the build writes: the crop, rotation, flip, scale and offset, on the container with its black bands. The safe area, aspect mask, centre cross and thirds are then measured against that frame, and the crop overlay is off since the frame has the crop taken off already. The view follows the fields as you edit them. It is off by default and not saved in the project. A JPEG 2000 source plays through the grok player, which has no picture filters, so the box is greyed out for one.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp</pre>
 

@@ -19,8 +19,8 @@ register('../../extern/guikit/test/tauri-plugins-hooks.mjs', import.meta.url);
 
 const { readProjectFile } = await import('../../extern/guikit/src/project.js');
 
-// the profile only fills other controls, the threshold only drives Auto-crop
-const CONTROLS_NOT_SAVED = ['prop-profile', 'prop-auto-crop-threshold'];
+// the profile only fills other controls, the threshold only drives Auto-crop, the container view only changes the preview
+const CONTROLS_NOT_SAVED = ['prop-profile', 'prop-auto-crop-threshold', 'prop-preview-in-container'];
 
 const CONTROL_TAG = /<(?:input|select|textarea)\b[^>]*\bid="(prop-[^"]+)"/g;
 

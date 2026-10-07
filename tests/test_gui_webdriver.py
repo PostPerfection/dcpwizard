@@ -84,6 +84,13 @@ MOVED_HALF_SCALE_PLAN = (
     "crop 0/0/0/0 to 1998x1080, rotate none, scale to 998x540 at 50%, "
     "pad to 1998x1080 at (600,270), offset (100,0)"
 )
+CONTAINER_VIEW_TOGGLE = "#prop-preview-in-container"
+# a source off the 2K flat raster, so the filtered frame differs from it
+CONTAINER_VIEW_SOURCE_SIZE = [1920, 1080]
+CONTAINER_VIEW_RASTER = [1998, 1080]
+CONTAINER_VIEW_AUTO_RESOLUTION = "Auto (1998\u00d71080)"
+# long enough to still be playing when the last filter change lands
+CONTAINER_VIEW_CLIP_SECONDS = 60
 NEW_PROJECT_CHORD = "ctrl+n"
 SAVE_PROJECT_CHORD = "ctrl+s"
 BUILD_COMPLETE_STATUS = "Build complete"
@@ -199,6 +206,13 @@ return [...document.querySelectorAll("#view-project .detected")].map((field) => 
 # guikit stores the recent list only once it knows the form a New would discard
 RECENT_LIST_STORED = """
 return localStorage.getItem("dcpwizard-recent-projects") !== null;
+"""
+
+SHOWN_FRAME_SIZE = """
+return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => {
+  const metadata = JSON.parse(text);
+  return [metadata.shown_frame_width, metadata.shown_frame_height];
+});
 """
 
 RECENT_ROWS = """
@@ -1058,6 +1072,52 @@ def test_the_picture_scale_and_offset_move_the_planned_picture(window, tmp_path)
         lambda: session.text(PICTURE_PLAN) == MOVED_HALF_SCALE_PLAN,
         REACTION_TIMEOUT_SECONDS,
     )
+
+
+def wait_for_shown_frame_size(session, size, what):
+    wait_until(what, lambda: session.execute(SHOWN_FRAME_SIZE) == size, PREVIEW_TIMEOUT_SECONDS)
+
+
+def test_the_preview_in_container_shows_the_frame_the_build_writes(window, tmp_path):
+    session = window.session
+    picture = tmp_path / "source.mov"
+    width, height = CONTAINER_VIEW_SOURCE_SIZE
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"testsrc2=size={width}x{height}:rate={FIXTURE_FPS}:duration={CONTAINER_VIEW_CLIP_SECONDS}",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        str(picture),
+    )
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", picture)
+    wait_until(
+        "the Auto resolution never named the container the build resolves to",
+        lambda: session.property(AUTO_RESOLUTION_OPTION, "textContent") == CONTAINER_VIEW_AUTO_RESOLUTION,
+        OPEN_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-preview")
+    wait_for_shown_frame_size(session, CONTAINER_VIEW_SOURCE_SIZE, "the preview never showed the source")
+
+    assert session.execute(INSIDE_PROPERTIES_PANEL, CONTAINER_VIEW_TOGGLE)
+    assert session.property(CONTAINER_VIEW_TOGGLE, "disabled") is False
+    window.click(CONTAINER_VIEW_TOGGLE)
+    wait_for_shown_frame_size(session, CONTAINER_VIEW_RASTER, "the container view never showed the raster")
+    replace_field_text(window, PICTURE_SCALE_FIELD, "50")
+    wait_until(
+        "the picture plan never took the half scale",
+        lambda: "at 50%" in session.text(PICTURE_PLAN),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    wait_for_shown_frame_size(session, CONTAINER_VIEW_RASTER, "the half scale left the raster")
+
+    assert session.execute(INSIDE_PROPERTIES_PANEL, CONTAINER_VIEW_TOGGLE)
+    window.click(CONTAINER_VIEW_TOGGLE)
+    wait_for_shown_frame_size(session, CONTAINER_VIEW_SOURCE_SIZE, "turning the view off never brought the source back")
 
 
 def counted_video_frames(movie):
