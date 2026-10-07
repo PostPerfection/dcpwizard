@@ -22,7 +22,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, appl
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
-import { gainToReachTarget, measurementSummary, measurementSteps } from "./loudness-panel.js";
+import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -1458,7 +1458,7 @@ function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
     ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
     loudnessTarget: document.getElementById("prop-loudness")?.value || null,
     truePeakCeiling: parseFloat(document.getElementById("prop-true-peak")?.value) || null,
-    audioGainDb: parseFloat(document.getElementById("prop-audio-gain")?.value) || null,
+    audioGainDb: optionalNumber(document.getElementById("prop-audio-gain")?.value),
     audioFadeInSeconds: parseFloat(document.getElementById("prop-audio-fade-in")?.value) || null,
     audioFadeOutSeconds: parseFloat(document.getElementById("prop-audio-fade-out")?.value) || null,
     audioChannelFiles,
@@ -1511,10 +1511,10 @@ let lastSoundMeasurement = null;
 function loudnessPanelFields() {
   return {
     target: document.getElementById("prop-loudness"),
-    gain: document.getElementById("prop-audio-gain"),
     measure: document.getElementById("prop-measure-sound"),
     setGain: document.getElementById("prop-gain-to-target"),
-    result: document.getElementById("prop-loudness-result"),
+    source: document.getElementById("prop-loudness-source"),
+    delivered: document.getElementById("prop-loudness-delivered"),
     steps: document.getElementById("prop-loudness-steps"),
   };
 }
@@ -1522,7 +1522,12 @@ function loudnessPanelFields() {
 function refreshGainToTarget() {
   const fields = loudnessPanelFields();
   if (!fields.setGain) return;
-  fields.setGain.disabled = gainToReachTarget(fields.target?.value, lastSoundMeasurement, fields.gain?.value) === null;
+  fields.setGain.disabled = gainToReachTarget(fields.target?.value, lastSoundMeasurement) === null;
+}
+
+function markDeliveredStale() {
+  if (!lastSoundMeasurement) return;
+  loudnessPanelFields().delivered.textContent = deliveredLine(lastSoundMeasurement, true);
 }
 
 document.getElementById("prop-measure-sound")?.addEventListener("click", async () => {
@@ -1530,7 +1535,8 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
   if (!reel?.picture && !reel?.sound) { setStatus("Import a video or sound asset first"); return; }
   const fields = loudnessPanelFields();
   fields.measure.disabled = true;
-  fields.result.textContent = "Measuring…";
+  fields.source.textContent = "Measuring…";
+  fields.delivered.textContent = "";
   fields.steps.textContent = "";
   lastSoundMeasurement = null;
   refreshGainToTarget();
@@ -1545,10 +1551,11 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
         keyOut: document.getElementById("prop-key-out")?.value || "",
       }),
     });
-    fields.result.textContent = measurementSummary(lastSoundMeasurement);
+    fields.source.textContent = sourceLine(lastSoundMeasurement);
+    fields.delivered.textContent = deliveredLine(lastSoundMeasurement);
     fields.steps.textContent = measurementSteps(lastSoundMeasurement);
   } catch (e) {
-    fields.result.textContent = String(e);
+    fields.source.textContent = String(e);
   } finally {
     fields.measure.disabled = false;
     refreshGainToTarget();
@@ -1556,23 +1563,14 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
 });
 
 document.getElementById("prop-gain-to-target")?.addEventListener("click", () => {
-  const fields = loudnessPanelFields();
-  const gain = gainToReachTarget(fields.target.value, lastSoundMeasurement, fields.gain.value);
+  const gain = gainToReachTarget(loudnessPanelFields().target.value, lastSoundMeasurement);
   if (gain === null) return;
-  fields.gain.value = gain.toFixed(1);
-  fields.result.textContent = `${measurementSummary(lastSoundMeasurement)}. Measure again to confirm`;
-  // the measurement was taken at the old gain
-  lastSoundMeasurement = null;
-  refreshGainToTarget();
+  document.getElementById("prop-audio-gain").value = gain.toFixed(1);
+  markDeliveredStale();
 });
 
 document.getElementById("prop-loudness")?.addEventListener("input", refreshGainToTarget);
-document.getElementById("prop-audio-gain")?.addEventListener("input", () => {
-  if (!lastSoundMeasurement) return;
-  loudnessPanelFields().result.textContent = `${measurementSummary(lastSoundMeasurement)}. Measure again to confirm`;
-  lastSoundMeasurement = null;
-  refreshGainToTarget();
-});
+document.getElementById("prop-audio-gain")?.addEventListener("input", markDeliveredStale);
 
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   let title = document.getElementById("prop-title")?.value?.trim();

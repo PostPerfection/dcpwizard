@@ -55,15 +55,23 @@ SECOND_PROJECT_TITLE = "Second"
 CHANNEL_SET_NAME = "mix"
 AUDIO_GAIN_FIELD = "#prop-audio-gain"
 AUDIO_GAIN_TYPED = "-6"
-AUDIO_GAIN_RATIO = 10 ** (-6 / 20)
+AUDIO_GAIN_TYPED_DB = -6
 AUDIO_GAIN_TOLERANCE = 0.005
 LOUDNESS_TOLERANCE_LU = 0.1
+LOUDNESS_TARGET_FIELD = "#prop-loudness"
+LOUDNESS_TARGET = "lufs=-20"
+LOUDNESS_TARGET_LUFS = -20
+TARGET_TOLERANCE_LU = 0.2
+SET_GAIN_BUTTON = "#prop-gain-to-target"
 MEASURE_BUTTON = "#prop-measure-sound"
-MEASURE_RESULT = "#prop-loudness-result"
+MEASURE_SOURCE = "#prop-loudness-source"
+MEASURE_DELIVERED = "#prop-loudness-delivered"
 MEASURE_STEPS = "#prop-loudness-steps"
-MEASURE_RESULT_PREFIX = "Integrated "
+SOURCE_PREFIX = "Source: Integrated "
+DELIVERED_PREFIX = "Delivered: Integrated "
 ROUTED_STEP = "Routed the channel set by filename"
 GAIN_STEP = "Applied gain/fades"
+UNAPPLIED_TARGET_STEP = f"Loudness target {LOUDNESS_TARGET} not applied: the gain sets the level"
 NEW_PROJECT_CHORD = "ctrl+n"
 SAVE_PROJECT_CHORD = "ctrl+s"
 BUILD_COMPLETE_STATUS = "Build complete"
@@ -844,17 +852,34 @@ def packaged_sound_peak(package):
     return sound_peak(sound[0])
 
 
+def integrated_lufs_after(session, css, prefix):
+    return float(session.property(css, "textContent").removeprefix(prefix).split()[0])
+
+
+# the source and delivered integrated loudness of one press of Measure
 def measure_integrated_lufs(window, expected_steps):
     session = window.session
     window.click(MEASURE_BUTTON)
     wait_until(
         "the sound measurement never came back",
-        lambda: session.property(MEASURE_RESULT, "textContent").startswith(MEASURE_RESULT_PREFIX),
+        lambda: session.property(MEASURE_SOURCE, "textContent").startswith(SOURCE_PREFIX)
+        and session.property(MEASURE_DELIVERED, "textContent").startswith(DELIVERED_PREFIX),
         STATUS_TIMEOUT_SECONDS,
     )
     assert session.property(MEASURE_STEPS, "textContent").split(", ") == expected_steps
-    result = session.property(MEASURE_RESULT, "textContent")
-    return float(result.removeprefix(MEASURE_RESULT_PREFIX).split()[0])
+    return (
+        integrated_lufs_after(session, MEASURE_SOURCE, SOURCE_PREFIX),
+        integrated_lufs_after(session, MEASURE_DELIVERED, DELIVERED_PREFIX),
+    )
+
+
+INSIDE_PROPERTIES_PANEL = """
+const panel = document.querySelector("#properties").getBoundingClientRect();
+const element = document.querySelector(arguments[0]);
+element.scrollIntoView({ block: "center" });
+const box = element.getBoundingClientRect();
+return box.left >= panel.left && box.right <= panel.right && box.width > 0;
+"""
 
 
 def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
@@ -909,12 +934,29 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
         REACTION_TIMEOUT_SECONDS,
     )
 
-    as_imported = measure_integrated_lufs(window, [ROUTED_STEP])
+    assert session.execute(INSIDE_PROPERTIES_PANEL, MEASURE_BUTTON)
+    source, delivered = measure_integrated_lufs(window, [ROUTED_STEP])
+    assert source == delivered
     window.click(AUDIO_GAIN_FIELD)
     window.type_text(AUDIO_GAIN_TYPED)
     window.click(TOOLBAR_PROJECT_LABEL)
-    quieter = measure_integrated_lufs(window, [ROUTED_STEP, GAIN_STEP])
-    assert abs(as_imported - quieter - 6) < LOUDNESS_TOLERANCE_LU, (as_imported, quieter)
+    _, quieter = measure_integrated_lufs(window, [ROUTED_STEP, GAIN_STEP])
+    assert abs(source + AUDIO_GAIN_TYPED_DB - quieter) < LOUDNESS_TOLERANCE_LU, (source, quieter)
+
+    window.click(LOUDNESS_TARGET_FIELD)
+    window.type_text(LOUDNESS_TARGET)
+    window.click(TOOLBAR_PROJECT_LABEL)
+    wait_until(
+        "Set gain to reach target stayed disabled",
+        lambda: session.property(SET_GAIN_BUTTON, "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(SET_GAIN_BUTTON)
+    gain_db = float(session.property(AUDIO_GAIN_FIELD, "value"))
+    _, on_target = measure_integrated_lufs(
+        window, [ROUTED_STEP, UNAPPLIED_TARGET_STEP, GAIN_STEP]
+    )
+    assert abs(on_target - LOUDNESS_TARGET_LUFS) < TARGET_TOLERANCE_LU, (gain_db, on_target)
 
     wait_until(
         "the Build button stayed disabled",
@@ -936,7 +978,7 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert status_text(session) == BUILD_COMPLETE_STATUS
     assert packaged_sound_channels(package) == [2]
     ratio = packaged_sound_peak(package) / sound_peak(left)
-    assert abs(ratio - AUDIO_GAIN_RATIO) < AUDIO_GAIN_TOLERANCE, ratio
+    assert abs(ratio - 10 ** (gain_db / 20)) < AUDIO_GAIN_TOLERANCE, (ratio, gain_db)
 
 
 def counted_video_frames(movie):

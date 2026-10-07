@@ -249,8 +249,9 @@ fn parse_packaged_channels(value: &str) -> Result<u32, String> {
 /// W5 create-time audio + encode QoL options, boxed into the Create variant.
 #[derive(Args)]
 struct CreateAudioQol {
-    /// Normalize audio to a loudness target before wrapping (dom#1382):
+    /// Normalize the trimmed audio to a loudness target before wrapping (dom#1382):
     /// leqm=<db> (ISO 21727 Leq(m)) or lufs=<value> (EBU R128 integrated).
+    /// Not applied when --audio-gain is given.
     #[arg(long)]
     loudness_target: Option<String>,
     /// True-peak ceiling in dBTP for --loudness-target (default -1.0). The
@@ -272,8 +273,9 @@ struct CreateAudioQol {
     /// decibels. Runs before every other audio step.
     #[arg(long)]
     audio_map: Option<String>,
-    /// Audio gain in dB, applied after any upmix and loudness pass.
-    #[arg(long)]
+    /// Audio gain in dB, applied to the trimmed sound before the fades. With a
+    /// gain given, the loudness target is not applied.
+    #[arg(long, allow_negative_numbers = true)]
     audio_gain: Option<f64>,
     /// Shift the sound against the picture by this many milliseconds: positive
     /// arrives later, negative earlier. The running time is unchanged, so the
@@ -3082,18 +3084,14 @@ fn resolve_trim(
 
 /// Create-time audio processing (W5): the mix matrix, then filename channel
 /// routing when `audio` is a directory (dom#2134), then stereo->5.1 upmix
-/// (dom#921/#1080), then the
-/// picture/sound delay, then loudness normalization (dom#1382). The delay comes
-/// before loudness so normalisation measures the silence that actually ships.
-/// Intermediates go under `work_dir` (a scratch dir). Runs before sign-language
-/// packing, any pull-up and the trim, which [`adjust_kept_audio`] follows.
+/// (dom#921/#1080), then the picture/sound delay. Intermediates go under
+/// `work_dir` (a scratch dir). Runs before sign-language packing, any pull-up
+/// and the trim, which [`finish_kept_audio`] follows with the level and fades.
 fn prepare_create_audio(
     audio: Option<PathBuf>,
     audio_map: Option<&str>,
     upmix: Option<&str>,
     delay_ms: Option<i64>,
-    loudness_target: Option<&str>,
-    true_peak_ceiling: Option<f64>,
     work_dir: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let Some(mut path) = audio else {
@@ -3153,42 +3151,34 @@ fn prepare_create_audio(
         tracing::info!("Delayed the sound by {delay_ms}ms against the picture");
     }
 
-    if let Some(spec) = loudness_target {
-        let target = dcpwizard_core::loudness::parse_loudness_target(spec)?;
-        let ceiling =
-            true_peak_ceiling.unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP);
-        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
-        let out = work_dir.join("loudness.wav");
-        let plan = dcpwizard_core::loudness::adjust_loudness(&path, &out, target, ceiling)
-            .map_err(|e| e.to_string())?;
-        tracing::info!(
-            "Loudness adjusted {:.1} -> {:.1} dB (gain {:+.2} dB, peak {:.2} dBTP)",
-            plan.measured_db,
-            plan.target_db,
-            plan.gain_db,
-            plan.resulting_true_peak_dbtp,
-        );
-        path = out;
-    }
-
     Ok(Some(path))
 }
 
-// gain and fades on the trimmed sound, so the fades land on the kept frames
-fn adjust_kept_audio(
+// the loudness target or the gain, then the fades, on the trimmed sound
+fn finish_kept_audio(
     audio: Option<PathBuf>,
     adjust: &dcpwizard_core::audio_adjust::AudioAdjust,
+    loudness_target: Option<&str>,
+    true_peak_ceiling: Option<f64>,
     work_dir: &Path,
 ) -> Option<PathBuf> {
     let sound = audio?;
-    if adjust.is_empty() {
-        return Some(sound);
-    }
-    match dcpwizard_core::audio_adjust::apply_to_kept_sound(&sound, work_dir, adjust) {
-        Ok(adjusted) => {
-            tracing::info!("Applied audio gain/fades");
-            Some(adjusted)
-        }
+    let target = match loudness_target
+        .map(dcpwizard_core::loudness::parse_loudness_target)
+        .transpose()
+    {
+        Ok(target) => target,
+        Err(e) => exit_failed(e),
+    };
+    match dcpwizard_core::audio_adjust::finish_kept_sound(
+        &sound,
+        work_dir,
+        adjust,
+        target,
+        true_peak_ceiling.unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP),
+        |line| tracing::info!("{line}"),
+    ) {
+        Ok(finished) => Some(finished),
         Err(e) => exit_failed(e),
     }
 }
@@ -5441,8 +5431,6 @@ fn run() {
                     audio_map.as_deref(),
                     upmix.as_deref(),
                     audio_delay,
-                    loudness_target.as_deref(),
-                    true_peak_ceiling,
                     &output_dir.join("audio_work"),
                 ) {
                     Ok(p) => p,
@@ -5479,8 +5467,13 @@ fn run() {
                         exit_failed(e);
                     }
                 };
-                let audio_path =
-                    adjust_kept_audio(audio_path, &audio_adjust, &output_dir.join("audio_work"));
+                let audio_path = finish_kept_audio(
+                    audio_path,
+                    &audio_adjust,
+                    loudness_target.as_deref(),
+                    true_peak_ceiling,
+                    &output_dir.join("audio_work"),
+                );
                 let packaged_right_eye_dir = match right_eye_dir.as_ref() {
                     Some(dir) => match trim.apply(
                         dir,
@@ -5746,8 +5739,6 @@ fn run() {
                     audio_map.as_deref(),
                     upmix.as_deref(),
                     audio_delay,
-                    loudness_target.as_deref(),
-                    true_peak_ceiling,
                     &work_dir,
                 ) {
                     Ok(p) => p,
@@ -5770,7 +5761,13 @@ fn run() {
                         exit_failed(e);
                     }
                 };
-                let prepared_audio = adjust_kept_audio(prepared_audio, &audio_adjust, &work_dir);
+                let prepared_audio = finish_kept_audio(
+                    prepared_audio,
+                    &audio_adjust,
+                    loudness_target.as_deref(),
+                    true_peak_ceiling,
+                    &work_dir,
+                );
 
                 // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15.
                 // Cover at least the J2K frame count so the sound spans the picture.

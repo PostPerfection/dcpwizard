@@ -6,6 +6,7 @@
 //! the length belongs with the head/tail padding instead, which moves picture
 //! and sound together.
 
+use crate::loudness::LoudnessTarget;
 use std::path::{Path, PathBuf};
 
 /// What to do to the audio, in the order ffmpeg applies it.
@@ -108,23 +109,88 @@ pub fn apply(
     Ok(output.to_path_buf())
 }
 
-// called on the trimmed sound, so the fades land on the first and last kept frames
-pub fn apply_to_kept_sound(
+// how the level of the kept sound is set
+#[derive(Debug, Clone, Copy)]
+pub enum LevelStep {
+    // a typed gain sets the level, and a loudness target beside it is only a reference
+    Gain {
+        gain_db: f64,
+        unapplied_target: Option<LoudnessTarget>,
+    },
+    Normalise(LoudnessTarget),
+    Unchanged,
+}
+
+pub fn level_step(gain_db: Option<f64>, target: Option<LoudnessTarget>) -> LevelStep {
+    match (gain_db, target) {
+        (Some(gain_db), unapplied_target) => LevelStep::Gain {
+            gain_db,
+            unapplied_target,
+        },
+        (None, Some(target)) => LevelStep::Normalise(target),
+        (None, None) => LevelStep::Unchanged,
+    }
+}
+
+// runs on the trimmed sound, so a loudness target measures what ships
+pub fn finish_kept_sound(
     input: &Path,
     work_dir: &Path,
     adjust: &AudioAdjust,
+    target: Option<LoudnessTarget>,
+    true_peak_ceiling_dbtp: f64,
+    log: impl Fn(&str),
 ) -> Result<PathBuf, String> {
+    let mut path = input.to_path_buf();
+    let gain_db = match level_step(adjust.gain_db, target) {
+        LevelStep::Gain {
+            gain_db,
+            unapplied_target,
+        } => {
+            if let Some(target) = unapplied_target {
+                log(&format!(
+                    "Loudness target {} not applied: the gain sets the level",
+                    crate::loudness::loudness_target_spec(target)
+                ));
+            }
+            Some(gain_db)
+        }
+        LevelStep::Normalise(target) => {
+            create_work_dir(work_dir)?;
+            let out = work_dir.join("loudness.wav");
+            let plan =
+                crate::loudness::adjust_loudness(&path, &out, target, true_peak_ceiling_dbtp)
+                    .map_err(|e| e.to_string())?;
+            log(&format!(
+                "Loudness {:.1} -> {:.1} dB (gain {:+.2} dB, peak {:.2} dBTP)",
+                plan.measured_db, plan.target_db, plan.gain_db, plan.resulting_true_peak_dbtp
+            ));
+            path = out;
+            None
+        }
+        LevelStep::Unchanged => None,
+    };
+    let adjust = AudioAdjust {
+        gain_db,
+        ..adjust.clone()
+    };
     if adjust.is_empty() {
-        return Ok(input.to_path_buf());
+        return Ok(path);
     }
-    std::fs::create_dir_all(work_dir)
-        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
-    apply(
-        input,
+    create_work_dir(work_dir)?;
+    let adjusted = apply(
+        &path,
         &work_dir.join("adjusted.wav"),
-        adjust,
-        duration_seconds(input)?,
-    )
+        &adjust,
+        duration_seconds(&path)?,
+    )?;
+    log("Applied gain/fades");
+    Ok(adjusted)
+}
+
+fn create_work_dir(work_dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))
 }
 
 /// Shift the sound against the picture by `delay_ms`, keeping the running time.
@@ -378,6 +444,58 @@ mod tests {
             .is_err(),
             "a trim that keeps nothing has no frames to fade"
         );
+    }
+
+    #[test]
+    fn a_typed_gain_sets_the_level_and_leaves_the_target_unapplied() {
+        let target = LoudnessTarget::IntegratedLufs(-20.0);
+        assert!(matches!(
+            level_step(Some(-3.0), Some(target)),
+            LevelStep::Gain {
+                gain_db,
+                unapplied_target: Some(LoudnessTarget::IntegratedLufs(lufs)),
+            } if gain_db == -3.0 && lufs == -20.0
+        ));
+        assert!(matches!(
+            level_step(Some(0.0), None),
+            LevelStep::Gain {
+                unapplied_target: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            level_step(None, Some(target)),
+            LevelStep::Normalise(LoudnessTarget::IntegratedLufs(lufs)) if lufs == -20.0
+        ));
+        assert!(matches!(level_step(None, None), LevelStep::Unchanged));
+    }
+
+    #[test]
+    fn a_gain_beside_a_target_is_applied_alone_and_the_target_logged() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = ramp(dir.path(), "in.wav", 48_000);
+        let lines = std::cell::RefCell::new(Vec::new());
+        let finished = finish_kept_sound(
+            &input,
+            &dir.path().join("work"),
+            &AudioAdjust {
+                gain_db: Some(-6.0),
+                ..Default::default()
+            },
+            Some(LoudnessTarget::LeqM(85.0)),
+            crate::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP,
+            |line| lines.borrow_mut().push(line.to_string()),
+        )
+        .unwrap();
+        assert_eq!(finished, dir.path().join("work").join("adjusted.wav"));
+        assert_eq!(
+            lines.into_inner(),
+            vec![
+                "Loudness target leqm=85 not applied: the gain sets the level",
+                "Applied gain/fades",
+            ]
+        );
+        assert!(!dir.path().join("work").join("loudness.wav").exists());
     }
 
     /// A 48 kHz mono ramp of `samples`, and the sample count of a WAV.

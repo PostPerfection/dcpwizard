@@ -25,6 +25,14 @@ pub fn parse_loudness_target(spec: &str) -> Result<LoudnessTarget, String> {
     }
 }
 
+// the spec `parse_loudness_target` reads back as the same target
+pub fn loudness_target_spec(target: LoudnessTarget) -> String {
+    match target {
+        LoudnessTarget::LeqM(db) => format!("leqm={db}"),
+        LoudnessTarget::IntegratedLufs(lufs) => format!("lufs={lufs}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

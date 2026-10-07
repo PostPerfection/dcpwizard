@@ -1299,15 +1299,41 @@ pub async fn submit_job(app: AppHandle, request: SubmitRequest) -> Result<Submit
     })
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SoundMeasurement {
+pub struct SoundLevels {
     pub integrated_lufs: f64,
     pub leq_m_db: f64,
     pub true_peak_dbtp: f64,
     pub range_lu: f64,
     pub short_term_max_lufs: f64,
+}
+
+// before is the trimmed sound ahead of the level step and the fades, delivered is what ships
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundMeasurement {
+    pub before: SoundLevels,
+    pub delivered: SoundLevels,
     pub steps: Vec<String>,
+}
+
+fn sound_levels(sound: &Path) -> Result<SoundLevels, String> {
+    let loudness = postkit::loudness::measure_loudness(sound);
+    if !loudness.success {
+        return Err(format!("Cannot measure the loudness: {}", loudness.error));
+    }
+    let leq_m = postkit::loudness::measure_leq_m(sound);
+    if !leq_m.success {
+        return Err(format!("Cannot measure Leq(m): {}", leq_m.error));
+    }
+    Ok(SoundLevels {
+        integrated_lufs: loudness.integrated_lufs,
+        leq_m_db: leq_m.leq_m_db,
+        true_peak_dbtp: loudness.true_peak_dbtp,
+        range_lu: loudness.range_lu,
+        short_term_max_lufs: loudness.short_term_max_lufs,
+    })
 }
 
 const SOUND_MEASUREMENT_DIRECTORY: &str = "sound-measurement";
@@ -1359,23 +1385,18 @@ fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeas
             window.frame_count
         ));
     }
-    let sound = adjust_sound(job, sound, scratch.path(), log)?
+    let before_sound = sound
         .ok_or("There is no sound to measure: import a sound asset or a video that carries one")?;
-
-    let loudness = postkit::loudness::measure_loudness(&sound);
-    if !loudness.success {
-        return Err(format!("Cannot measure the loudness: {}", loudness.error));
-    }
-    let leq_m = postkit::loudness::measure_leq_m(&sound);
-    if !leq_m.success {
-        return Err(format!("Cannot measure Leq(m): {}", leq_m.error));
-    }
+    let before = sound_levels(&before_sound)?;
+    let delivered_sound = finish_sound(job, &before_sound, scratch.path(), log)?;
+    let delivered = if delivered_sound == before_sound {
+        before.clone()
+    } else {
+        sound_levels(&delivered_sound)?
+    };
     Ok(SoundMeasurement {
-        integrated_lufs: loudness.integrated_lufs,
-        leq_m_db: leq_m.leq_m_db,
-        true_peak_dbtp: loudness.true_peak_dbtp,
-        range_lu: loudness.range_lu,
-        short_term_max_lufs: loudness.short_term_max_lufs,
+        before,
+        delivered,
         steps: steps.into_inner(),
     })
 }
@@ -2483,22 +2504,6 @@ fn prepare_audio(
         ));
     }
 
-    if let (Some(spec), Some(input)) = (job.loudness_target.as_deref(), &audio_path) {
-        let target = dcpwizard_core::loudness::parse_loudness_target(spec)?;
-        let ceiling = job
-            .true_peak_ceiling
-            .unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP);
-        std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-        let out = work_dir.join("loudness.wav");
-        let plan = dcpwizard_core::loudness::adjust_loudness(input, &out, target, ceiling)
-            .map_err(|e| e.to_string())?;
-        log(&format!(
-            "[AUDIO] loudness {:.1} -> {:.1} dB (gain {:+.2} dB, peak {:.2} dBTP)",
-            plan.measured_db, plan.target_db, plan.gain_db, plan.resulting_true_peak_dbtp
-        ));
-        audio_path = Some(out);
-    }
-
     if let (true, Some(input)) = (conform.audio_pull_up, &audio_path) {
         std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
         let out = work_dir.join("pullup.wav");
@@ -2713,27 +2718,27 @@ fn trim_sound(
     Ok(out)
 }
 
-// after the trim, so a fade lands on the first and last kept frames
-fn adjust_sound(
+// the loudness target or the gain, then the fades, after the trim
+fn finish_sound(
     job: &JobConfig,
-    audio: Option<PathBuf>,
+    input: &Path,
     output: &Path,
     log: impl Fn(&str),
-) -> Result<Option<PathBuf>, String> {
-    let adjust = job.audio_adjust();
-    let Some(input) = audio else {
-        return Ok(None);
-    };
-    if adjust.is_empty() {
-        return Ok(Some(input));
-    }
-    let adjusted = dcpwizard_core::audio_adjust::apply_to_kept_sound(
-        &input,
+) -> Result<PathBuf, String> {
+    let target = job
+        .loudness_target
+        .as_deref()
+        .map(dcpwizard_core::loudness::parse_loudness_target)
+        .transpose()?;
+    dcpwizard_core::audio_adjust::finish_kept_sound(
+        input,
         &output.join("audio_work"),
-        &adjust,
-    )?;
-    log("[AUDIO] Applied gain/fades");
-    Ok(Some(adjusted))
+        &job.audio_adjust(),
+        target,
+        job.true_peak_ceiling
+            .unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP),
+        |line| log(&format!("[AUDIO] {line}")),
+    )
 }
 
 fn build_dcp_config(
@@ -3257,7 +3262,9 @@ fn run_logged_job(
         log_to(&log_file, &format!("[TRIM] {e}"));
         e
     })?;
-    let audio_path = adjust_sound(job, audio_path, output, |msg| log_to(&log_file, msg))?;
+    let audio_path = audio_path
+        .map(|sound| finish_sound(job, &sound, output, |msg| log_to(&log_file, msg)))
+        .transpose()?;
 
     // sign-language video (ISDCF Doc 13): pack VP9 onto channel 15, replacing
     // the sound track with the combined 16-channel WAV.
@@ -5395,18 +5402,18 @@ mod tests {
     }
 
     #[test]
-    fn a_gain_of_minus_six_db_halves_the_samples() {
+    fn a_gain_beside_a_loudness_target_is_applied_alone() {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("tone.wav");
         let source = write_tone(&wav, 0.9, 0.5);
         let mut job = test_job();
         job.audio_gain_db = Some(-20.0 * 2f64.log10());
+        job.loudness_target = Some("lufs=-20".into());
 
         let lines = std::sync::Mutex::new(Vec::new());
-        let adjusted = adjust_sound(&job, Some(wav), dir.path(), |line| {
+        let adjusted = finish_sound(&job, &wav, dir.path(), |line| {
             lines.lock().unwrap().push(line.to_string())
         })
-        .unwrap()
         .unwrap();
         let halved = read_samples(&adjusted);
         assert_eq!(halved.len(), source.len());
@@ -5419,7 +5426,10 @@ mod tests {
         }
         assert_eq!(
             lines.into_inner().unwrap(),
-            vec!["[AUDIO] Applied gain/fades"]
+            vec![
+                "[AUDIO] Loudness target lufs=-20 not applied: the gain sets the level",
+                "[AUDIO] Applied gain/fades",
+            ]
         );
     }
 
@@ -5431,9 +5441,7 @@ mod tests {
         let mut job = test_job();
         job.audio_fade_in_seconds = Some(1.0);
 
-        let faded = adjust_sound(&job, Some(wav), dir.path(), |_| {})
-            .unwrap()
-            .unwrap();
+        let faded = finish_sound(&job, &wav, dir.path(), |_| {}).unwrap();
         let faded = read_samples(&faded);
         assert_eq!(faded.len(), source.len());
         assert_eq!(faded[0], 0, "the fade starts from silence");
@@ -5494,7 +5502,8 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_set_is_measured_after_routing() {
+    fn a_channel_set_is_measured_after_routing_and_after_the_gain() {
+        const GAIN_DB: f64 = -6.0;
         let dir = tempfile::tempdir().unwrap();
         let channels = dir.path().join("channels");
         std::fs::create_dir_all(&channels).unwrap();
@@ -5526,6 +5535,7 @@ mod tests {
                     .map(|file| file.to_string_lossy().into_owned())
                     .collect(),
             ),
+            audio_gain_db: Some(GAIN_DB),
             ..SubmitRequest::default()
         };
         let job = job_config_of(0, request).unwrap();
@@ -5533,13 +5543,23 @@ mod tests {
         let measured = measure_job_sound(&job, &scratch_parent).unwrap();
 
         assert!(
-            (measured.integrated_lufs - expected.integrated_lufs).abs() < 0.05,
+            (measured.before.integrated_lufs - expected.integrated_lufs).abs() < 0.05,
             "measured {} LUFS, the routed track is {} LUFS",
-            measured.integrated_lufs,
+            measured.before.integrated_lufs,
             expected.integrated_lufs
         );
-        assert!(measured.leq_m_db.is_finite() && measured.true_peak_dbtp < 0.0);
-        assert_eq!(measured.steps, vec!["Routed the channel set by filename"]);
+        assert!(
+            (measured.delivered.integrated_lufs - measured.before.integrated_lufs - GAIN_DB).abs()
+                < 0.05,
+            "delivered {} LUFS against {} LUFS before a {GAIN_DB} dB gain",
+            measured.delivered.integrated_lufs,
+            measured.before.integrated_lufs
+        );
+        assert!(measured.delivered.leq_m_db.is_finite() && measured.delivered.true_peak_dbtp < 0.0);
+        assert_eq!(
+            measured.steps,
+            vec!["Routed the channel set by filename", "Applied gain/fades"]
+        );
         assert_eq!(
             std::fs::read_dir(&scratch_parent).unwrap().count(),
             0,

@@ -73,6 +73,25 @@
   width: 70px;
 }
 
+/* a fieldset is at least as wide as the matrix table by default */
+.properties-content fieldset {
+  min-width: 0;
+}
+
+/* the loudness buttons wrap under the field together on a narrow panel */
+.input-with-btn.loudness-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.input-with-btn.loudness-row input {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+.loudness-actions {
+  display: flex;
+  gap: 4px;
+}
+
 /* Audio channel mapping matrix: one row per source channel, one column per lane */
 .audio-map {
   overflow-x: auto;

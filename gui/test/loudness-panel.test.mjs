@@ -3,43 +3,54 @@ import assert from 'node:assert/strict';
 import {
   parseLoudnessTarget,
   gainToReachTarget,
-  measurementSummary,
+  optionalNumber,
+  sourceLine,
+  deliveredLine,
   measurementSteps,
 } from '../src/loudness-panel.js';
 
-const measurement = {
+const levels = {
   integratedLufs: -27.34,
   leqMDb: 71.42,
   truePeakDbtp: -1.956,
   rangeLu: 19.21,
   shortTermMaxLufs: -15.2,
+};
+
+// the delivered levels carry a -3 dB gain the before levels exclude
+const measurement = {
+  before: levels,
+  delivered: { ...levels, integratedLufs: levels.integratedLufs - 3, leqMDb: levels.leqMDb - 3 },
   steps: ['Routed the channel set by filename', 'Applied gain/fades'],
 };
 
-test('a lufs target adds the distance from the integrated loudness to the gain', () => {
-  assert.equal(gainToReachTarget('lufs=-20', measurement, ''), 7.3);
-  assert.equal(gainToReachTarget('LUFS = -20', measurement, '-1.5'), 5.8);
+test('a lufs target sets the gain from the integrated loudness before the level step', () => {
+  assert.equal(gainToReachTarget('lufs=-20', measurement), 7.3);
+  assert.equal(gainToReachTarget('LUFS = -30', measurement), -2.7);
 });
 
-test('a leqm target adds the distance from the Leq(m) to the gain', () => {
-  assert.equal(gainToReachTarget('leqm=85', measurement, '0'), 13.6);
-  assert.equal(gainToReachTarget('Leq(m)=82', measurement, '-2'), 8.6);
+test('a leqm target sets the gain from the Leq(m) before the level step', () => {
+  assert.equal(gainToReachTarget('leqm=85', measurement), 13.6);
+  assert.equal(gainToReachTarget('Leq(m)=82', measurement), 10.6);
 });
 
 test('no usable target or no measurement leaves the button disabled', () => {
-  assert.equal(gainToReachTarget('', measurement, '0'), null);
-  assert.equal(gainToReachTarget('lufs=', measurement, '0'), null);
-  assert.equal(gainToReachTarget('loud=3', measurement, '0'), null);
-  assert.equal(gainToReachTarget('lufs=-20', null, '0'), null);
+  assert.equal(gainToReachTarget('', measurement), null);
+  assert.equal(gainToReachTarget('lufs=', measurement), null);
+  assert.equal(gainToReachTarget('loud=3', measurement), null);
+  assert.equal(gainToReachTarget('lufs=-20', null), null);
 });
 
-test('a second press after measuring again keeps the gain', () => {
-  const gain = gainToReachTarget('lufs=-20', measurement, '0');
-  const remeasured = { ...measurement, integratedLufs: measurement.integratedLufs + gain };
-  const again = gainToReachTarget('lufs=-20', remeasured, String(gain));
-  assert.equal(again, gain);
-  assert.equal((again - gain).toFixed(1), '0.0');
-  assert.ok(Object.is(gainToReachTarget('lufs=-20', { ...measurement, integratedLufs: -20.04 }, '0'), 0));
+test('one press reaches the target and a second press after measuring again keeps it', () => {
+  const gain = gainToReachTarget('lufs=-20', measurement);
+  const remeasured = {
+    before: levels,
+    delivered: { ...levels, integratedLufs: levels.integratedLufs + gain },
+    steps: [],
+  };
+  assert.ok(Math.abs(remeasured.delivered.integratedLufs + 20) < 0.05);
+  assert.equal(gainToReachTarget('lufs=-20', remeasured), gain);
+  assert.ok(Object.is(gainToReachTarget('lufs=-20', { ...measurement, before: { ...levels, integratedLufs: -20.04 } }), 0));
 });
 
 test('the target parses the way the build parses it', () => {
@@ -48,10 +59,21 @@ test('the target parses the way the build parses it', () => {
   assert.equal(parseLoudnessTarget('lufs=abc'), null);
 });
 
+test('a typed zero gain is a gain and an empty field is none', () => {
+  assert.equal(optionalNumber('0'), 0);
+  assert.equal(optionalNumber(' -6.5 '), -6.5);
+  assert.equal(optionalNumber(''), null);
+  assert.equal(optionalNumber(undefined), null);
+});
+
 test('the results lines read as the panel shows them', () => {
   assert.equal(
-    measurementSummary(measurement),
-    'Integrated -27.3 LUFS, Leq(m) 71.4 dB, true peak -1.96 dBTP, range 19.2 LU',
+    sourceLine(measurement),
+    'Source: Integrated -27.3 LUFS, Leq(m) 71.4 dB, true peak -1.96 dBTP, range 19.2 LU',
+  );
+  assert.equal(
+    deliveredLine(measurement, true),
+    'Delivered: Integrated -30.3 LUFS, Leq(m) 68.4 dB, true peak -1.96 dBTP, range 19.2 LU. Measure again to confirm',
   );
   assert.equal(measurementSteps(measurement), 'Routed the channel set by filename, Applied gain/fades');
   assert.equal(measurementSteps({ ...measurement, steps: [] }), 'Source track as is');
