@@ -1,7 +1,10 @@
+import html
 import json
 import os
+import re
 import subprocess
 import tomllib
+import unicodedata
 import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,6 +128,19 @@ NEXT_FIELD_KEY = "Tab"
 MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
 NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
 
+VERIFY_CHORD = "ctrl+3"
+VERIFY_VIEW = "view-verify"
+VERIFY_STATUS_VERDICTS = {"Verification passed": "PASSED", "Verification failed": "FAILED"}
+VERIFY_TIMEOUT_SECONDS = 300
+PDF_TIMEOUT_SECONDS = 60
+SAVE_REPORT_BUTTON = "#verify-save-report"
+SAVE_PDF_BUTTON = "#verify-save-pdf"
+SAVED_REPORT_PREFIX = "Saved the report to "
+REPORT_VERDICT_PREFIX = "DCP Verification: "
+BV21_SECTION_HEADING = "<h2>Bv2.1 profile check: "
+REPORT_FINDING = re.compile(r'<li class="\w+">(.*?)</li>')
+PDF_MAGIC = b"%PDF-"
+
 TOOLS_CHORD = "ctrl+5"
 TOOLS_VIEW = "view-tools"
 EXPORT_FINISHED_PREFIX = "Exported to "
@@ -143,6 +159,23 @@ TOOLBAR_PROJECT_LABEL = "#project-name"
 # typing this into the select picks the unit after it
 LUMINANCE_UNITS_TYPED = "candela"
 LUMINANCE_UNITS = "candela-per-square-metre"
+
+PROFILE_SELECT = "#prop-profile"
+# a click on the label focuses the select without opening its popup
+PROFILE_LABEL = 'label[for="prop-profile"]'
+PROFILE_HINT = "#prop-profile-hint"
+SAVE_PRESET_BUTTON = "#prop-preset-save"
+PRESET_NAME = "Festival"
+PRESET_FIELD = "#prop-studio"
+PRESET_FIELD_KEY = "studio"
+PRESET_VALUE = "ABCD"
+EDITED_VALUE = "WXYZ"
+PROFILE_DRIVEN = "profile-driven"
+NO_PROFILE_KEY = "Home"
+# End picks the last option, the newest saved preset
+LAST_SAVED_PRESET_KEY = "End"
+DELETE_PRESET_BUTTON = "#prop-preset-delete"
+TEXT_DIALOG_OK = f"{TEXT_DIALOG} button.primary"
 
 XDG_DIRECTORIES = {
     "XDG_CONFIG_HOME": "config",
@@ -666,6 +699,65 @@ def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window,
     assert json.loads(preferences_file.read_text())["gpu"] is False
 
 
+def field_classes(session, css):
+    return session.property(css, "className").split()
+
+
+def type_into_field(window, css, text):
+    window.click(css)
+    window.press(SELECT_ALL_CHORD)
+    window.type_text(text)
+
+
+def pick_profile(window, key, value):
+    window.click(PROFILE_LABEL)
+    window.press(key)
+    wait_until(
+        f"the profile select never took {value!r}",
+        lambda: window.session.property(PROFILE_SELECT, "value") == value,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def test_a_saved_preset_puts_back_the_values_it_holds(window, tmp_path):
+    session = window.session
+    type_into_field(window, PRESET_FIELD, PRESET_VALUE)
+    window.click(SAVE_PRESET_BUTTON)
+    wait_until(
+        "the preset name was never asked for",
+        lambda: text_dialog_open(session) is True,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.type_text(PRESET_NAME)
+    window.click(TEXT_DIALOG_OK)
+    wait_for_status(session, f"Saved preset {PRESET_NAME}", STATUS_TIMEOUT_SECONDS)
+
+    presets_file = tmp_path / XDG_DIRECTORIES["XDG_CONFIG_HOME"] / "dcpwizard/presets.json"
+    [saved] = json.loads(presets_file.read_text())["presets"]
+    assert saved["name"] == PRESET_NAME
+    assert saved["form"][PRESET_FIELD_KEY] == PRESET_VALUE
+    assert "title" not in saved["form"]
+
+    type_into_field(window, PRESET_FIELD, EDITED_VALUE)
+    assert session.property(PRESET_FIELD, "value") == EDITED_VALUE
+    assert PROFILE_DRIVEN not in field_classes(session, PRESET_FIELD)
+    pick_profile(window, NO_PROFILE_KEY, "")
+    assert session.property(PROFILE_HINT, "textContent") == ""
+
+    pick_profile(window, LAST_SAVED_PRESET_KEY, PRESET_NAME)
+    wait_until(
+        "the preset never put its value back",
+        lambda: session.property(PRESET_FIELD, "value") == PRESET_VALUE,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert PROFILE_DRIVEN in field_classes(session, PRESET_FIELD)
+    setting_count = len(saved["form"])
+    assert session.property(PROFILE_HINT, "textContent") == (
+        f"Set by {PRESET_NAME}: {setting_count} settings. Edit any field to override."
+    )
+    assert session.property(DELETE_PRESET_BUTTON, "disabled") is False
+
+
 def test_the_settings_page_lists_the_component_versions(window):
     session = window.session
     window.press("ctrl+7")
@@ -1179,3 +1271,60 @@ def test_the_export_tool_writes_a_prores_from_a_dcp(window, one_reel_cpl, tmp_pa
         REACTION_TIMEOUT_SECONDS,
     )
     assert counted_video_frames(output) == frames
+
+
+def verify_status(session):
+    return status_text(session) in VERIFY_STATUS_VERDICTS and status_text(session)
+
+
+def first_bv21_finding(report_html):
+    _, bv21_section = report_html.split(BV21_SECTION_HEADING, 1)
+    return html.unescape(REPORT_FINDING.search(bv21_section).group(1))
+
+
+# pdftotext splits wrapped lines, drops the hyphen it wrapped at and keeps the font's fi ligature
+def comparable_text(text):
+    return re.sub(r"[\s-]", "", unicodedata.normalize("NFKC", text))
+
+
+def pdf_text(pdf):
+    extracted = subprocess.run(
+        ("pdftotext", str(pdf), "-"), capture_output=True, text=True, check=True
+    )
+    return comparable_text(extracted.stdout)
+
+
+def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_cpl, tmp_path):
+    session = window.session
+    package = one_reel_cpl.parent
+    report = tmp_path / "report.html"
+    pdf = tmp_path / "report.pdf"
+
+    window.press(VERIFY_CHORD)
+    wait_for_view(session, VERIFY_VIEW)
+    assert session.property(SAVE_REPORT_BUTTON, "disabled") is True
+    assert session.property(SAVE_PDF_BUTTON, "hidden") is False
+    choose_in_dialog(window, "#verify-browse", package)
+    wait_until(
+        "the chosen package never reached the Verify view",
+        lambda: session.property("#verify-path", "textContent") == str(package),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#verify-run")
+    status = wait_until("the validation never finished", lambda: verify_status(session), VERIFY_TIMEOUT_SECONDS)
+    verdict_line = f"{REPORT_VERDICT_PREFIX}{VERIFY_STATUS_VERDICTS[status]}"
+    assert session.property(SAVE_REPORT_BUTTON, "disabled") is False
+
+    save_in_dialog(window, SAVE_REPORT_BUTTON, report)
+    wait_for_status(session, f"{SAVED_REPORT_PREFIX}{report}", REACTION_TIMEOUT_SECONDS)
+    report_html = report.read_text()
+    assert f"<h1>{verdict_line}</h1>" in report_html
+    finding = first_bv21_finding(report_html)
+    assert finding in session.property("#verify-results", "textContent")
+
+    save_in_dialog(window, SAVE_PDF_BUTTON, pdf)
+    wait_for_status(session, f"{SAVED_REPORT_PREFIX}{pdf}", PDF_TIMEOUT_SECONDS)
+    assert pdf.read_bytes().startswith(PDF_MAGIC)
+    printed = pdf_text(pdf)
+    assert comparable_text(verdict_line) in printed, printed
+    assert comparable_text(finding) in printed, printed

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use dcpwizard_core::job_log;
 
+mod preset_arguments;
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum AccessibilityStandardArg {
     Cvaa,
@@ -1046,6 +1048,10 @@ enum Commands {
         /// Delivery profile
         #[arg(long)]
         profile: Option<String>,
+        /// Saved preset from presets.json in the preferences folder: its values
+        /// are defaults, and a flag given here wins over the preset's value
+        #[arg(long, conflicts_with = "profile")]
+        preset: Option<String>,
         /// Encrypt the DCP
         #[arg(long)]
         encrypt: bool,
@@ -4103,7 +4109,11 @@ fn run() {
     job_log::install_crash_signal_handlers();
     // TODO: windows writes no crash line for an access violation, it needs SetUnhandledExceptionFilter
 
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let matches = preset_arguments::with_preset_arguments(
+        <Cli as clap::CommandFactory>::command().get_matches(),
+        <Cli as clap::CommandFactory>::command(),
+        CREATE_SUBCOMMAND,
+    );
     let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|error| {
         error
             .format(&mut <Cli as clap::CommandFactory>::command())
@@ -4201,6 +4211,7 @@ fn run() {
             quality_psnr,
             reel_length,
             profile,
+            preset: _,
             right_eye,
             atmos,
             hi_channel,
@@ -6256,9 +6267,15 @@ fn run() {
                 },
             );
 
+            let bv21 =
+                strict.then(|| dcpwizard_core::verify::check_bv21_profile(Path::new(&dcp_dir)));
+
             if let Some(ref out_path) = output
-                && let Err(e) =
-                    dcpwizard_core::verify::write_verify_report(&result, Path::new(out_path))
+                && let Err(e) = dcpwizard_core::verify::write_verify_report(
+                    &result,
+                    bv21.as_ref(),
+                    Path::new(out_path),
+                )
             {
                 tracing::error!("Failed to write report: {e}");
                 std::process::exit(1);
@@ -6266,16 +6283,12 @@ fn run() {
 
             if !quiet {
                 print_verify_findings(&result);
+                if let Some(ref bv21) = bv21 {
+                    print_bv21_findings(bv21);
+                }
             }
 
-            let bv21_valid = !strict || {
-                let bv21 = dcpwizard_core::verify::check_bv21_profile(Path::new(&dcp_dir));
-                if !quiet {
-                    print_bv21_findings(&bv21);
-                }
-                bv21.valid
-            };
-
+            let bv21_valid = bv21.is_none_or(|bv21| bv21.valid);
             if result.valid && bv21_valid { 0 } else { 1 }
         }
 

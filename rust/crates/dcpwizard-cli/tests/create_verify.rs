@@ -130,11 +130,15 @@ fn verify_strict_runs_the_bv21_profile_check() {
             .expect("dcpwizard has to run")
     };
 
-    let strict = verify(&["--strict"]);
+    let report = directory.path().join("report.html");
+    let strict = verify(&["--strict", "--output", report.to_str().unwrap()]);
     let printed = everything_printed(&strict);
     assert!(strict.status.success(), "{printed}");
     assert!(printed.contains(BV21_SECTION_LINE), "{printed}");
     assert!(printed.contains(BV21_EXTENSION_METADATA_NOTE), "{printed}");
+    let written = std::fs::read_to_string(&report).unwrap();
+    assert!(written.contains(BV21_SECTION_LINE), "{written}");
+    assert!(written.contains(BV21_EXTENSION_METADATA_NOTE), "{written}");
 
     let plain = everything_printed(&verify(&[]));
     assert!(!plain.contains(BV21_SECTION_LINE), "{plain}");

@@ -224,6 +224,12 @@
                     <select id="prop-profile">
                       <option value="">Manual (no profile)</option>
                     </select>
+                    <div class="preset-actions">
+                      <button id="prop-preset-save" class="btn-sm" type="button">Save as preset…</button>
+                      <button id="prop-preset-delete" class="btn-sm" type="button" disabled>Delete preset</button>
+                      <button id="prop-preset-export" class="btn-sm" type="button">Export…</button>
+                      <button id="prop-preset-import" class="btn-sm" type="button">Import…</button>
+                    </div>
                     <p class="field-hint" id="prop-profile-hint"></p>
                   </div>
                 </fieldset>
@@ -875,6 +881,8 @@
               <div class="panel-actions">
                 <button id="verify-browse" class="btn-sm">Select DCP…</button>
                 <button id="verify-run" class="btn-sm primary" disabled>Validate</button>
+                <button id="verify-save-report" class="btn-sm" disabled>Save report…</button>
+                <button id="verify-save-pdf" class="btn-sm" hidden disabled>Save PDF…</button>
               </div>
             </div>
             <div class="prop-field">
