@@ -770,6 +770,7 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
     refreshPreviewCrop();
     refreshIsdcfPreview();
     if (plan) plan.textContent = crop.description;
+    refreshPicturePlacement();
   } catch (e) {
     if (plan) plan.textContent = "";
     tauriMessage(String(e), { title: "Auto-crop failed", kind: "error" });
@@ -1117,6 +1118,7 @@ function applyProfile(profileName) {
   }
   updateProfileHint(profileName, driven);
   setStatus(`Profile ${profileName}: ${profile.description}`);
+  refreshPicturePlacement();
 }
 
 (async () => {
@@ -1144,6 +1146,7 @@ function applyProfile(profileName) {
     afterApply: () => {
       refreshPreviewCrop();
       refreshIsdcfPreview();
+      refreshPicturePlacement();
     },
   });
 })();
