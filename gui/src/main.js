@@ -22,7 +22,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, appl
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
-import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps } from "./loudness-panel.js";
+import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
@@ -32,6 +32,7 @@ import { contentKeysFrom } from "./content-keys-form.js";
 import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
+import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
 import {
   chainPaths,
   describeSigner,
@@ -618,24 +619,7 @@ function importAssetFromPath(path, type) {
       asset.meta = `${info.width}×${info.height} ${info.fps}`;
       asset.width = info.width;
       asset.height = info.height;
-      if (project.assets.filter(a => a.type === 'video').length === 1) {
-        // Pre-fill resolution from first video
-        const resEl = document.getElementById("prop-resolution");
-        if (resEl && resEl.value === "auto") {
-          // Keep auto — the backend will handle it
-        }
-        // Pre-fill framerate
-        const fpsMatch = info.fps?.match(/^(\d+)\/1$/);
-        if (fpsMatch) {
-          const fpsEl = document.getElementById("prop-framerate");
-          if (fpsEl) {
-            const fps = parseInt(fpsMatch[1]);
-            for (const opt of fpsEl.options) {
-              if (parseInt(opt.value) === fps) { fpsEl.value = opt.value; break; }
-            }
-          }
-        }
-      }
+      if (project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(info);
       refreshIsdcfPreview();
       renderAssets();
     });
@@ -1067,6 +1051,7 @@ function applyProfile(profileName) {
     const element = document.getElementById(elementId);
     if (value === null || value === undefined || !element) continue;
     element.value = value;
+    element.classList.remove("detected");
     element.classList.add("profile-driven");
     driven.push(label);
   }
@@ -1096,6 +1081,62 @@ function applyProfile(profileName) {
     });
   }
 })();
+
+// === Values detected from the source ===
+// [form key, control id] of the controls a probe of the first video sets
+const DETECTED_FIELDS = [
+  ["framerate", "prop-framerate"],
+  ["sourceColourspace", "prop-source-colourspace"],
+];
+const resolutionSelect = document.getElementById("prop-resolution");
+const autoResolutionOption = resolutionSelect.querySelector('option[value="auto"]');
+const UNRESOLVED_AUTO_RESOLUTION_LABEL = autoResolutionOption.textContent;
+const detectedHint = document.getElementById("prop-detected-hint");
+const userEditedFieldIds = new Set();
+
+function detectableElements() {
+  return [resolutionSelect, ...DETECTED_FIELDS.map(([, elementId]) => document.getElementById(elementId))];
+}
+
+function probeMayFillField(key, element) {
+  return probeMayFill({
+    detected: element.classList.contains("detected"),
+    profileDriven: element.classList.contains("profile-driven"),
+    edited: userEditedFieldIds.has(element.id),
+    atDefault: element.value === buildPanelDefaults[key],
+  });
+}
+
+async function showDetectedValues(info) {
+  const framerateOptions = [...document.getElementById("prop-framerate").options].map((option) => option.value);
+  const detected = detectedValues(info, framerateOptions);
+  for (const [key, elementId] of DETECTED_FIELDS) {
+    const element = document.getElementById(elementId);
+    if (!probeMayFillField(key, element)) continue;
+    element.value = detected[key] ?? buildPanelDefaults[key];
+    element.classList.toggle("detected", detected[key] !== null);
+  }
+  detectedHint.textContent = detected.hint;
+  detectedHint.hidden = false;
+  const container = await invoke("nearest_named_container", { width: info.width, height: info.height });
+  autoResolutionOption.textContent = autoResolutionLabel(container);
+  const resolvesFromSource = resolutionSelect.value === "auto" && probeMayFillField("resolution", resolutionSelect);
+  resolutionSelect.classList.toggle("detected", resolvesFromSource);
+}
+
+function clearDetectedValues() {
+  for (const element of detectableElements()) element.classList.remove("detected");
+  userEditedFieldIds.clear();
+  autoResolutionOption.textContent = UNRESOLVED_AUTO_RESOLUTION_LABEL;
+  detectedHint.hidden = true;
+}
+
+for (const element of detectableElements()) {
+  element.addEventListener("input", () => {
+    element.classList.remove("detected");
+    userEditedFieldIds.add(element.id);
+  });
+}
 
 document.getElementById("prop-browse-versions")?.addEventListener("click", async () => {
   const path = await open({
@@ -1549,6 +1590,7 @@ function loudnessPanelFields() {
     source: document.getElementById("prop-loudness-source"),
     delivered: document.getElementById("prop-loudness-delivered"),
     steps: document.getElementById("prop-loudness-steps"),
+    chart: document.getElementById("prop-loudness-chart"),
   };
 }
 
@@ -1571,6 +1613,7 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
   fields.source.textContent = "Measuring…";
   fields.delivered.textContent = "";
   fields.steps.textContent = "";
+  fields.chart.innerHTML = "";
   lastSoundMeasurement = null;
   refreshGainToTarget();
   try {
@@ -1587,6 +1630,7 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
     fields.source.textContent = sourceLine(lastSoundMeasurement);
     fields.delivered.textContent = deliveredLine(lastSoundMeasurement);
     fields.steps.textContent = measurementSteps(lastSoundMeasurement);
+    fields.chart.innerHTML = deliveredChart(lastSoundMeasurement, fields.target.value);
   } catch (e) {
     fields.source.textContent = String(e);
   } finally {
@@ -2771,6 +2815,7 @@ async function restoreBuildPanel(saved) {
   ratingNextId = ratings.length + 1;
   document.getElementById("prop-profile").value = "";
   applyProfile("");
+  clearDetectedValues();
 
   const labels = await markerLabelsRequest;
   document.getElementById("prop-markers").replaceChildren(...markerRows.map((row) => markerRowElement(row, labels)));
@@ -3001,6 +3046,10 @@ async function probeVideo(path) {
       height: vs.height,
       fps: vs.r_frame_rate,
       duration: parseFloat(info.format?.duration || vs.duration || "0"),
+      colorPrimaries: vs.color_primaries,
+      colorTransfer: vs.color_transfer,
+      colorSpace: vs.color_space,
+      bitRate: parseInt(vs.bit_rate ?? info.format?.bit_rate) || null,
     };
   } catch { return null; }
 }

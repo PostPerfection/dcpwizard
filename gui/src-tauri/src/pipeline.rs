@@ -1319,6 +1319,10 @@ pub struct SoundLevels {
     pub true_peak_dbtp: f64,
     pub range_lu: f64,
     pub short_term_max_lufs: f64,
+    pub short_term_lufs: Vec<Option<f32>>,
+    pub short_term_first_seconds: f64,
+    pub short_term_step_seconds: f64,
+    pub true_peak_at_seconds: f64,
 }
 
 // before is the trimmed sound ahead of the level step and the fades, delivered is what ships
@@ -1345,6 +1349,10 @@ fn sound_levels(sound: &Path) -> Result<SoundLevels, String> {
         true_peak_dbtp: loudness.true_peak_dbtp,
         range_lu: loudness.range_lu,
         short_term_max_lufs: loudness.short_term_max_lufs,
+        short_term_lufs: loudness.short_term_lufs,
+        short_term_first_seconds: loudness.short_term_first_seconds,
+        short_term_step_seconds: loudness.short_term_step_seconds,
+        true_peak_at_seconds: loudness.true_peak_at_seconds,
     })
 }
 
