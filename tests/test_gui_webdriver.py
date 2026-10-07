@@ -67,6 +67,7 @@ MEASURE_BUTTON = "#prop-measure-sound"
 MEASURE_SOURCE = "#prop-loudness-source"
 MEASURE_DELIVERED = "#prop-loudness-delivered"
 MEASURE_STEPS = "#prop-loudness-steps"
+LOUDNESS_CHART_CURVE = "#prop-loudness-chart svg.loudness-chart path.loudness-chart-curve"
 SOURCE_PREFIX = "Source: Integrated "
 DELIVERED_PREFIX = "Delivered: Integrated "
 ROUTED_STEP = "Routed the channel set by filename"
@@ -867,6 +868,8 @@ def measure_integrated_lufs(window, expected_steps):
         STATUS_TIMEOUT_SECONDS,
     )
     assert session.property(MEASURE_STEPS, "textContent").split(", ") == expected_steps
+    curve = session.attribute(LOUDNESS_CHART_CURVE, "d")
+    assert curve.startswith("M") and "L" in curve, curve
     return (
         integrated_lufs_after(session, MEASURE_SOURCE, SOURCE_PREFIX),
         integrated_lufs_after(session, MEASURE_DELIVERED, DELIVERED_PREFIX),

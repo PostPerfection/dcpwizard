@@ -22,7 +22,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, appl
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
-import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps } from "./loudness-panel.js";
+import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -1516,6 +1516,7 @@ function loudnessPanelFields() {
     source: document.getElementById("prop-loudness-source"),
     delivered: document.getElementById("prop-loudness-delivered"),
     steps: document.getElementById("prop-loudness-steps"),
+    chart: document.getElementById("prop-loudness-chart"),
   };
 }
 
@@ -1538,6 +1539,7 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
   fields.source.textContent = "Measuring…";
   fields.delivered.textContent = "";
   fields.steps.textContent = "";
+  fields.chart.innerHTML = "";
   lastSoundMeasurement = null;
   refreshGainToTarget();
   try {
@@ -1554,6 +1556,7 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
     fields.source.textContent = sourceLine(lastSoundMeasurement);
     fields.delivered.textContent = deliveredLine(lastSoundMeasurement);
     fields.steps.textContent = measurementSteps(lastSoundMeasurement);
+    fields.chart.innerHTML = deliveredChart(lastSoundMeasurement, fields.target.value);
   } catch (e) {
     fields.source.textContent = String(e);
   } finally {

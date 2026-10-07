@@ -1,3 +1,5 @@
+import { loudnessChartSvg } from "./loudness-chart.js";
+
 const DECIBEL_STEPS = 10;
 const STALE_NOTE = ". Measure again to confirm";
 
@@ -49,4 +51,8 @@ export function deliveredLine(measurement, stale = false) {
 
 export function measurementSteps(measurement) {
   return measurement.steps.length ? measurement.steps.join(", ") : "Source track as is";
+}
+
+export function deliveredChart(measurement, targetSpec) {
+  return loudnessChartSvg(measurement.delivered, parseLoudnessTarget(targetSpec));
 }

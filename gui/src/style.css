@@ -92,6 +92,49 @@
   gap: 4px;
 }
 
+.loudness-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.loudness-chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+/* the surface coloured outline keeps a label readable where the curve crosses it */
+.loudness-chart-label {
+  fill: var(--text-muted);
+  font-size: 10px;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.loudness-chart-curve {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.loudness-chart-integrated {
+  stroke: var(--text);
+  stroke-width: 1;
+}
+.loudness-chart-target {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.loudness-chart-peak {
+  stroke: var(--text);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.loudness-chart-peak-label {
+  fill: var(--text);
+}
+
 /* Audio channel mapping matrix: one row per source channel, one column per lane */
 .audio-map {
   overflow-x: auto;
