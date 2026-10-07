@@ -97,6 +97,7 @@ pub fn run() {
             guikit::preview::player_controls::preview_sound_devices,
             guikit::preview::player_controls::preview_set_display_profile,
             guikit::preview::player_controls::preview_set_stereo_output,
+            guikit::preview::player_controls::preview_set_level_meter,
             guikit::preview::player_controls::preview_loaded_picture,
             guikit::gpu::set_gpu,
             component_versions,
