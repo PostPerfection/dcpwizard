@@ -2547,7 +2547,7 @@ fn job_conform(job: &JobConfig) -> dcpwizard_core::hfr::SourceConform {
         .unwrap_or_default()
 }
 
-// the fade runs after the window cut, so it counts from the first kept frame
+// with a window the fade runs after its cut, without one the codestreams are trimmed afterwards
 fn job_video_fade_filter(
     job: &JobConfig,
     window: Option<postkit::encode::FrameRange>,
@@ -2556,19 +2556,26 @@ fn job_video_fade_filter(
     if !job.fades_picture() {
         return Ok(None);
     }
-    let faded_frames = match window {
-        Some(window) => window.frame_count,
-        None => job
-            .source
-            .as_ref()
-            .map(|info| u64::from(info.total_frames))
-            .filter(|total| *total > 0)
-            .ok_or("Video fades need the length of the picture, which could not be read")?,
+    let source_frames = job
+        .source
+        .as_ref()
+        .map(|info| u64::from(info.total_frames))
+        .filter(|total| *total > 0)
+        .ok_or("Video fades need the length of the picture, which could not be read")?;
+    let position = match window {
+        Some(_) => dcpwizard_core::audio_adjust::FadeFilterPosition::AfterTrim,
+        None => dcpwizard_core::audio_adjust::FadeFilterPosition::BeforeTrim,
     };
     dcpwizard_core::audio_adjust::video_fade_filter(
         job.video_fade_in_seconds,
         job.video_fade_out_seconds,
-        faded_frames as f64 / fps.as_f64(),
+        &dcpwizard_core::audio_adjust::TrimmedPicture {
+            source_frames,
+            trim_start_frames: job.trim_start_frames,
+            trim_end_frames: job.trim_end_frames,
+            fps: fps.as_f64(),
+        },
+        position,
     )
 }
 
@@ -2720,14 +2727,10 @@ fn adjust_sound(
     if adjust.is_empty() {
         return Ok(Some(input));
     }
-    let work_dir = output.join("audio_work");
-    std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-    let seconds = dcpwizard_core::audio_adjust::duration_seconds(&input)?;
-    let adjusted = dcpwizard_core::audio_adjust::apply(
+    let adjusted = dcpwizard_core::audio_adjust::apply_to_kept_sound(
         &input,
-        &work_dir.join("adjusted.wav"),
+        &output.join("audio_work"),
         &adjust,
-        seconds,
     )?;
     log("[AUDIO] Applied gain/fades");
     Ok(Some(adjusted))
@@ -5463,7 +5466,12 @@ mod tests {
         let mut job = test_job();
         job.video_fade_in_seconds = Some(1.0);
         job.video_fade_out_seconds = Some(1.0);
-        job.source = Some(test_source());
+        job.source = Some(postkit::probe::VideoInfo {
+            total_frames: 240,
+            ..test_source()
+        });
+        job.trim_start_frames = 48;
+        job.trim_end_frames = 96;
         let window = postkit::encode::FrameRange {
             first_frame: 48,
             frame_count: 96,
@@ -5477,8 +5485,8 @@ mod tests {
         );
         assert_eq!(
             job_video_fade_filter(&job, None, fps).unwrap().as_deref(),
-            Some("fade=t=in:st=0:d=1,fade=t=out:st=1:d=1"),
-            "with no window the fade spans the 48 frames of the source"
+            Some("fade=t=in:st=2:d=1,fade=t=out:st=5:d=1"),
+            "codestreams trimmed after the encode take the fade in source time"
         );
         job.video_fade_in_seconds = None;
         job.video_fade_out_seconds = None;

@@ -36,11 +36,11 @@ fn filter_chain(adjust: &AudioAdjust, duration_seconds: f64) -> Result<String, S
         filters.push(format!("volume={gain}dB"));
     }
     if let Some(seconds) = adjust.fade_in_seconds {
-        check_fade("fade-in", seconds, duration_seconds)?;
+        check_fade("audio fade-in", seconds, duration_seconds)?;
         filters.push(format!("afade=t=in:st=0:d={seconds}"));
     }
     if let Some(seconds) = adjust.fade_out_seconds {
-        check_fade("fade-out", seconds, duration_seconds)?;
+        check_fade("audio fade-out", seconds, duration_seconds)?;
         // ffmpeg wants the moment the fade starts, not its length from the end
         let start = duration_seconds - seconds;
         filters.push(format!("afade=t=out:st={start}:d={seconds}"));
@@ -50,13 +50,11 @@ fn filter_chain(adjust: &AudioAdjust, duration_seconds: f64) -> Result<String, S
 
 fn check_fade(name: &str, seconds: f64, duration_seconds: f64) -> Result<(), String> {
     if !seconds.is_finite() || seconds <= 0.0 {
-        return Err(format!(
-            "audio {name} of {seconds}s must be greater than zero"
-        ));
+        return Err(format!("{name} of {seconds}s must be greater than zero"));
     }
     if seconds > duration_seconds {
         return Err(format!(
-            "audio {name} of {seconds}s is longer than the {duration_seconds}s of audio"
+            "{name} of {seconds}s is longer than the {duration_seconds}s it fades"
         ));
     }
     Ok(())
@@ -110,6 +108,25 @@ pub fn apply(
     Ok(output.to_path_buf())
 }
 
+// called on the trimmed sound, so the fades land on the first and last kept frames
+pub fn apply_to_kept_sound(
+    input: &Path,
+    work_dir: &Path,
+    adjust: &AudioAdjust,
+) -> Result<PathBuf, String> {
+    if adjust.is_empty() {
+        return Ok(input.to_path_buf());
+    }
+    std::fs::create_dir_all(work_dir)
+        .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
+    apply(
+        input,
+        &work_dir.join("adjusted.wav"),
+        adjust,
+        duration_seconds(input)?,
+    )
+}
+
 /// Shift the sound against the picture by `delay_ms`, keeping the running time.
 /// A positive delay prepends that much silence and drops the same from the tail
 /// (the sound arrives later); a negative delay drops from the head and appends
@@ -144,26 +161,58 @@ pub fn apply_delay(input: &Path, output: &Path, delay_ms: i64) -> Result<PathBuf
     Ok(output.to_path_buf())
 }
 
+// where a picture fade filter runs against the trim, which decides the clock it reads
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeFilterPosition {
+    // on the source's clock, ahead of the cut
+    BeforeTrim,
+    // on the trimmed picture, whose clock starts at the first kept frame
+    AfterTrim,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrimmedPicture {
+    pub source_frames: u64,
+    pub trim_start_frames: u64,
+    pub trim_end_frames: u64,
+    pub fps: f64,
+}
+
 /// ffmpeg `-vf` fade chain for the picture, or `None` when neither fade is
-/// asked for. Fades darken frames in place, so the frame count the CPL declares
-/// is unchanged.
+/// asked for. The fades start at the first kept frame and end at the last, and
+/// are checked against the kept length. Fades darken frames in place, so the
+/// frame count the CPL declares is unchanged.
 pub fn video_fade_filter(
     fade_in_seconds: Option<f64>,
     fade_out_seconds: Option<f64>,
-    duration_seconds: f64,
+    picture: &TrimmedPicture,
+    position: FadeFilterPosition,
 ) -> Result<Option<String>, String> {
+    if fade_in_seconds.is_none() && fade_out_seconds.is_none() {
+        return Ok(None);
+    }
+    let kept_frames = match picture.trim_start_frames + picture.trim_end_frames {
+        0 => picture.source_frames,
+        _ => crate::trim::kept_frames(
+            picture.source_frames,
+            picture.trim_start_frames,
+            picture.trim_end_frames,
+        )?,
+    };
+    let kept_seconds = kept_frames as f64 / picture.fps;
+    let first_kept_second = match position {
+        FadeFilterPosition::BeforeTrim => picture.trim_start_frames as f64 / picture.fps,
+        FadeFilterPosition::AfterTrim => 0.0,
+    };
     let mut filters = Vec::new();
     if let Some(seconds) = fade_in_seconds {
-        check_fade("video fade-in", seconds, duration_seconds)?;
-        filters.push(format!("fade=t=in:st=0:d={seconds}"));
+        check_fade("video fade-in", seconds, kept_seconds)?;
+        filters.push(format!("fade=t=in:st={first_kept_second}:d={seconds}"));
     }
     if let Some(seconds) = fade_out_seconds {
-        check_fade("video fade-out", seconds, duration_seconds)?;
-        let start = duration_seconds - seconds;
+        check_fade("video fade-out", seconds, kept_seconds)?;
+        let start = first_kept_second + kept_seconds - seconds;
         filters.push(format!("fade=t=out:st={start}:d={seconds}"));
-    }
-    if filters.is_empty() {
-        return Ok(None);
     }
     Ok(Some(filters.join(",")))
 }
@@ -251,15 +300,84 @@ mod tests {
         }
     }
 
+    const UNTRIMMED: TrimmedPicture = TrimmedPicture {
+        source_frames: 240,
+        trim_start_frames: 0,
+        trim_end_frames: 0,
+        fps: 24.0,
+    };
+
     #[test]
     fn video_fades_build_a_chain_and_none_when_unasked() {
-        assert_eq!(video_fade_filter(None, None, DURATION).unwrap(), None);
-        assert_eq!(
-            video_fade_filter(Some(1.0), Some(2.0), DURATION).unwrap(),
-            Some("fade=t=in:st=0:d=1,fade=t=out:st=8:d=2".to_string())
-        );
-        let err = video_fade_filter(Some(DURATION + 1.0), None, DURATION).unwrap_err();
+        for position in [
+            FadeFilterPosition::BeforeTrim,
+            FadeFilterPosition::AfterTrim,
+        ] {
+            assert_eq!(
+                video_fade_filter(None, None, &UNTRIMMED, position).unwrap(),
+                None
+            );
+            assert_eq!(
+                video_fade_filter(Some(1.0), Some(2.0), &UNTRIMMED, position).unwrap(),
+                Some("fade=t=in:st=0:d=1,fade=t=out:st=8:d=2".to_string())
+            );
+        }
+        let err = video_fade_filter(
+            Some(DURATION + 1.0),
+            None,
+            &UNTRIMMED,
+            FadeFilterPosition::AfterTrim,
+        )
+        .unwrap_err();
         assert!(err.contains("longer than"), "got: {err}");
+    }
+
+    // 10 s of source with 2 s trimmed off the head and 3 s off the tail keeps 5 s
+    #[test]
+    fn video_fades_start_and_end_on_the_kept_frames() {
+        let trimmed = TrimmedPicture {
+            trim_start_frames: 48,
+            trim_end_frames: 72,
+            ..UNTRIMMED
+        };
+        assert_eq!(
+            video_fade_filter(
+                Some(1.0),
+                Some(1.0),
+                &trimmed,
+                FadeFilterPosition::BeforeTrim
+            )
+            .unwrap()
+            .as_deref(),
+            Some("fade=t=in:st=2:d=1,fade=t=out:st=6:d=1")
+        );
+        assert_eq!(
+            video_fade_filter(
+                Some(1.0),
+                Some(1.0),
+                &trimmed,
+                FadeFilterPosition::AfterTrim
+            )
+            .unwrap()
+            .as_deref(),
+            Some("fade=t=in:st=0:d=1,fade=t=out:st=4:d=1")
+        );
+        let err = video_fade_filter(Some(6.0), None, &trimmed, FadeFilterPosition::BeforeTrim)
+            .unwrap_err();
+        assert!(err.contains("longer than the 5s"), "got: {err}");
+        assert!(
+            video_fade_filter(
+                Some(1.0),
+                None,
+                &TrimmedPicture {
+                    trim_end_frames: 192,
+                    ..trimmed
+                },
+                FadeFilterPosition::AfterTrim
+            )
+            .is_err(),
+            "a trim that keeps nothing has no frames to fade"
+        );
     }
 
     /// A 48 kHz mono ramp of `samples`, and the sample count of a WAV.

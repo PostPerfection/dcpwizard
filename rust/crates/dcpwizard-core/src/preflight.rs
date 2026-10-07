@@ -393,21 +393,29 @@ fn video_encode_window(
     crate::trim::encode_window(&plan.picture, plan.trim_start_frames, kept_frames)
 }
 
-// the fade-out ends where the encode window ends
 fn check_video_fades(plan: &CreatePlan) -> Result<(), String> {
-    if plan.video_fade_in_seconds.is_none() && plan.video_fade_out_seconds.is_none() {
-        return Ok(());
-    }
     let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
         return Ok(());
     };
     let source_frames = u64::from(source.total_frames);
-    let faded_frames =
-        video_encode_window(plan, source_frames).map_or(source_frames, |window| window.end_frame());
+    // a trim that keeps nothing is check_trim's refusal
+    if plan.trims()
+        && crate::trim::kept_frames(source_frames, plan.trim_start_frames, plan.trim_end_frames)
+            .is_err()
+    {
+        return Ok(());
+    }
+    // the position moves the fades on the clock, not their lengths
     crate::audio_adjust::video_fade_filter(
         plan.video_fade_in_seconds,
         plan.video_fade_out_seconds,
-        faded_frames as f64 / plan.fps.max(1) as f64,
+        &crate::audio_adjust::TrimmedPicture {
+            source_frames,
+            trim_start_frames: plan.trim_start_frames,
+            trim_end_frames: plan.trim_end_frames,
+            fps: f64::from(plan.fps.max(1)),
+        },
+        crate::audio_adjust::FadeFilterPosition::AfterTrim,
     )
     .map(|_| ())
 }
