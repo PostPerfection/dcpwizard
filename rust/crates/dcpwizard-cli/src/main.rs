@@ -792,6 +792,31 @@ struct CreatePictureOpts {
     /// Flip the picture, after any rotation
     #[arg(long, value_parser = ["horizontal", "vertical", "both"])]
     flip: Option<String>,
+    /// Scale the fitted picture by this percentage, 25 to 400. 100 fits the
+    /// container, over 100 fills past it and the edges are cut
+    #[arg(long, value_parser = parse_picture_scale)]
+    picture_scale: Option<f64>,
+    /// Move the picture X pixels right and Y pixels down on the raster, as X,Y
+    /// (negative moves left or up)
+    #[arg(long, allow_hyphen_values = true, value_parser = parse_picture_offset)]
+    picture_offset: Option<(i32, i32)>,
+}
+
+fn parse_picture_scale(value: &str) -> Result<f64, String> {
+    let scale_percent: f64 = value
+        .parse()
+        .map_err(|_| format!("'{value}' is not a percentage"))?;
+    dcpwizard_core::source_picture::check_scale_percent(scale_percent)?;
+    Ok(scale_percent)
+}
+
+fn parse_picture_offset(value: &str) -> Result<(i32, i32), String> {
+    let bad = || format!("'{value}' is not X,Y in whole pixels, e.g. 20,-10");
+    let (x, y) = value.split_once(',').ok_or_else(bad)?;
+    Ok((
+        x.trim().parse().map_err(|_| bad())?,
+        y.trim().parse().map_err(|_| bad())?,
+    ))
 }
 
 impl CreatePictureOpts {
@@ -819,6 +844,13 @@ impl CreatePictureOpts {
             rotation: parse_rotation(self.rotate.as_deref().unwrap_or_default())?,
             flip_horizontal,
             flip_vertical,
+            placement: postkit::picture_processing::Placement {
+                scale_percent: self
+                    .picture_scale
+                    .unwrap_or(postkit::picture_processing::Placement::default().scale_percent),
+                offset_x: self.picture_offset.unwrap_or_default().0,
+                offset_y: self.picture_offset.unwrap_or_default().1,
+            },
         })
     }
 }

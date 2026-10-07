@@ -949,6 +949,8 @@ fn create_lists_every_picture_processing_flag() {
         .stdout(predicate::str::contains("--denoise"))
         .stdout(predicate::str::contains("--rotate"))
         .stdout(predicate::str::contains("--flip"))
+        .stdout(predicate::str::contains("--picture-scale"))
+        .stdout(predicate::str::contains("--picture-offset"))
         .stdout(predicate::str::contains("--audio-map"))
         .stdout(predicate::str::contains("before any rotation"));
 }
@@ -990,6 +992,24 @@ fn create_fits_a_source_with_nothing_named_onto_the_nearest_container() {
         .assert()
         .success()
         .stdout(predicate::str::contains("pad to 1998x1080 at (0,0)"));
+}
+
+#[test]
+fn create_scales_and_moves_the_picture_on_its_container() {
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("hd.mp4");
+    write_test_video(&video, 1920, 1080);
+
+    create_with(
+        &dir,
+        &video,
+        &["--picture-scale", "50", "--picture-offset", "-100,20"],
+    )
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "scale to 960x540 at 50%, pad to 1998x1080 at (418,290), offset (-100,20)",
+    ));
 }
 
 #[test]

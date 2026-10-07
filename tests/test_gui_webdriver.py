@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tauri_webdriver import Window, visible_windows, wait_until
+from tauri_webdriver import SELECT_ALL_CHORD, Window, visible_windows, wait_until
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GUI_BINARY = REPOSITORY_ROOT / "gui/src-tauri/target/release/dcpwizard-gui"
@@ -73,6 +73,17 @@ DELIVERED_PREFIX = "Delivered: Integrated "
 ROUTED_STEP = "Routed the channel set by filename"
 GAIN_STEP = "Applied gain/fades"
 UNAPPLIED_TARGET_STEP = f"Loudness target {LOUDNESS_TARGET} not applied: the gain sets the level"
+PICTURE_SCALE_FIELD = "#prop-picture-scale"
+PICTURE_OFFSET_X_FIELD = "#prop-picture-offset-x"
+PICTURE_PLAN = "#prop-crop-plan"
+# the fixture fills the flat container, so half scale leaves a 998x540 picture centred on it
+HALF_SCALE_PLAN = (
+    "crop 0/0/0/0 to 1998x1080, rotate none, scale to 998x540 at 50%, pad to 1998x1080 at (500,270)"
+)
+MOVED_HALF_SCALE_PLAN = (
+    "crop 0/0/0/0 to 1998x1080, rotate none, scale to 998x540 at 50%, "
+    "pad to 1998x1080 at (600,270), offset (100,0)"
+)
 NEW_PROJECT_CHORD = "ctrl+n"
 SAVE_PROJECT_CHORD = "ctrl+s"
 BUILD_COMPLETE_STATUS = "Build complete"
@@ -80,6 +91,13 @@ FINISHED_BUILD_STAGES = {"Done", "Error", "Cancelled"}
 WINDOW_TITLE_SEPARATOR = " - "
 # the probe writes this into the video's asset row
 FIXTURE_ASSET_SIZE = FIXTURE_SIZE.replace("x", "\u00d7")
+# the fixture's x264 stream carries no colour tags
+DETECTED_HINT_PREFIX = f"From the source: {FIXTURE_SIZE}, {FIXTURE_FPS} fps, colour space not declared, "
+# the bit rate between the two varies by encoder build
+DETECTED_HINT_SUFFIX = " Mbit/s. Edit any field to override."
+DETECTED_HINT = "#prop-detected-hint"
+AUTO_RESOLUTION_OPTION = '#prop-resolution option[value="auto"]'
+FIXTURE_AUTO_RESOLUTION = f"Auto ({FIXTURE_ASSET_SIZE})"
 
 # crossing the first reel takes longer than the reel lasts when decoding lags
 REEL_CROSSING_TIMEOUT_MULTIPLE = 3
@@ -172,6 +190,10 @@ return [...document.querySelectorAll("#prop-audio-map tbody tr")].map((row) => (
   name: row.querySelector("th").title,
   autoRouted: [...row.querySelectorAll("input.auto-routed")].map((cell) => cell.dataset.lane),
 }));
+"""
+
+DETECTED_FIELDS = """
+return [...document.querySelectorAll("#view-project .detected")].map((field) => field.id);
 """
 
 # guikit stores the recent list only once it knows the form a New would discard
@@ -733,6 +755,16 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
         lambda: any(FIXTURE_ASSET_SIZE in meta for meta in session.execute(ASSET_METAS)),
         OPEN_TIMEOUT_SECONDS,
     )
+    wait_until(
+        "auto resolution never named the fixture's container",
+        lambda: session.property(AUTO_RESOLUTION_OPTION, "textContent") == FIXTURE_AUTO_RESOLUTION,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.execute(DETECTED_FIELDS) == ["prop-resolution", "prop-framerate"]
+    assert session.property("#prop-framerate", "value") == str(FIXTURE_FPS)
+    detected_hint = session.property(DETECTED_HINT, "textContent")
+    assert detected_hint.startswith(DETECTED_HINT_PREFIX), detected_hint
+    assert detected_hint.endswith(DETECTED_HINT_SUFFIX), detected_hint
     choose_in_dialog(window, "#import-audio", sound)
     wait_until(
         "the sound never reached the asset list",
@@ -791,6 +823,8 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     assert session.property("#prop-title", "value") == SECOND_PROJECT_TITLE
     assert session.execute(ASSET_PATHS) == []
     assert saved_asset_paths(saved_project(second_path)) == []
+    assert session.execute(DETECTED_FIELDS) == []
+    assert session.property(DETECTED_HINT, "hidden") is True
 
     choose_in_dialog(window, "#btn-project-open", project_path)
     wait_for_status(session, f"Opened {project_path.name}", REACTION_TIMEOUT_SECONDS)
@@ -982,6 +1016,48 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert packaged_sound_channels(package) == [2]
     ratio = packaged_sound_peak(package) / sound_peak(left)
     assert abs(ratio - 10 ** (gain_db / 20)) < AUDIO_GAIN_TOLERANCE, (ratio, gain_db)
+
+
+def replace_field_text(window, css, text):
+    window.click(css)
+    window.press(SELECT_ALL_CHORD)
+    window.type_text(text)
+
+
+def test_the_picture_scale_and_offset_move_the_planned_picture(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    picture, _ = write_media(media)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    choose_in_dialog(window, "#import-video", picture)
+    wait_until(
+        "the video's size was never probed",
+        lambda: any(FIXTURE_ASSET_SIZE in meta for meta in session.execute(ASSET_METAS)),
+        OPEN_TIMEOUT_SECONDS,
+    )
+
+    assert session.execute(INSIDE_PROPERTIES_PANEL, PICTURE_SCALE_FIELD)
+    replace_field_text(window, PICTURE_SCALE_FIELD, "50")
+    wait_until(
+        "the picture plan never showed the half scale",
+        lambda: session.text(PICTURE_PLAN) == HALF_SCALE_PLAN,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    replace_field_text(window, PICTURE_OFFSET_X_FIELD, "100")
+    wait_until(
+        "the picture plan never moved with the offset",
+        lambda: session.text(PICTURE_PLAN) == MOVED_HALF_SCALE_PLAN,
+        REACTION_TIMEOUT_SECONDS,
+    )
 
 
 def counted_video_frames(movie):

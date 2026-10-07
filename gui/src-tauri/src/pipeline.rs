@@ -710,6 +710,9 @@ pub struct SubmitRequest {
     denoise: Option<bool>,
     rotate: Option<String>,
     flip: Option<String>,
+    picture_scale_percent: Option<f64>,
+    picture_offset_x: Option<i32>,
+    picture_offset_y: Option<i32>,
     sign_language_video: Option<String>,
     sign_language_tag: Option<String>,
     pad_head: Option<String>,
@@ -811,6 +814,9 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         denoise,
         rotate,
         flip,
+        picture_scale_percent,
+        picture_offset_x,
+        picture_offset_y,
         sign_language_video,
         sign_language_tag,
         pad_head,
@@ -974,6 +980,12 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         )?,
         flip_horizontal,
         flip_vertical,
+        placement: postkit::picture_processing::Placement {
+            scale_percent: picture_scale_percent
+                .unwrap_or(postkit::picture_processing::Placement::default().scale_percent),
+            offset_x: picture_offset_x.unwrap_or(0),
+            offset_y: picture_offset_y.unwrap_or(0),
+        },
         ..dcpwizard_core::source_picture::SourcePictureOptions::default()
     };
     if dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video)) {
@@ -1609,6 +1621,67 @@ pub async fn detect_source_crop(
         bottom: resolved.processing.crop.bottom,
         description: resolved.plan.describe(),
     })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PicturePlacement {
+    pub raster_width: u32,
+    pub raster_height: u32,
+    pub container_width: u32,
+    pub container_height: u32,
+    // the part of the scaled picture that lands on the raster, in raster pixels
+    pub picture_x: u32,
+    pub picture_y: u32,
+    pub picture_width: u32,
+    pub picture_height: u32,
+    pub crop_left: u32,
+    pub crop_right: u32,
+    pub crop_top: u32,
+    pub crop_bottom: u32,
+    pub filters: Vec<String>,
+    pub description: String,
+}
+
+fn picture_placement_of(
+    resolved: &dcpwizard_core::source_picture::ResolvedPicture,
+) -> PicturePlacement {
+    let plan = &resolved.plan;
+    let (container_width, container_height) = resolved
+        .processing
+        .fit
+        .map(|fit| (fit.box_width, fit.box_height))
+        .unwrap_or((plan.output_width, plan.output_height));
+    PicturePlacement {
+        raster_width: plan.output_width,
+        raster_height: plan.output_height,
+        container_width,
+        container_height,
+        picture_x: plan.pad_left,
+        picture_y: plan.pad_top,
+        picture_width: plan.visible_width,
+        picture_height: plan.visible_height,
+        crop_left: plan.crop.left,
+        crop_right: plan.crop.right,
+        crop_top: plan.crop.top,
+        crop_bottom: plan.crop.bottom,
+        filters: plan.filters.clone(),
+        description: plan.describe(),
+    }
+}
+
+/// Where the job's picture lands on the raster the build writes.
+#[tauri::command]
+pub async fn picture_placement(request: SubmitRequest) -> Result<PicturePlacement, String> {
+    tokio::task::spawn_blocking(move || job_picture_placement(request))
+        .await
+        .map_err(|e| format!("the picture placement stopped: {e}"))?
+}
+
+fn job_picture_placement(request: SubmitRequest) -> Result<PicturePlacement, String> {
+    let job = job_config_of(0, request)?;
+    let resolved = resolve_job_picture(&job, &job.video_path)?;
+    Ok(picture_placement_of(&resolved))
 }
 
 /// Where the preview's SRT copies of the timed text are written, inside the
@@ -4096,6 +4169,48 @@ mod tests {
             String::from_utf8_lossy(&made.stderr)
         );
         path
+    }
+
+    #[test]
+    fn the_picture_placement_follows_the_scale_and_offset_in_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = source_with_five_one_sound(dir.path());
+        let placement = job_picture_placement(SubmitRequest {
+            video_path: source.to_string_lossy().into_owned(),
+            resolution: Some("2k-flat".into()),
+            picture_scale_percent: Some(50.0),
+            picture_offset_x: Some(100),
+            picture_offset_y: Some(-20),
+            ..SubmitRequest::default()
+        })
+        .unwrap();
+        assert_eq!(
+            (placement.raster_width, placement.raster_height),
+            (1998, 1080)
+        );
+        assert_eq!(
+            (placement.container_width, placement.container_height),
+            (1998, 1080)
+        );
+        assert_eq!(
+            (
+                placement.picture_x,
+                placement.picture_y,
+                placement.picture_width,
+                placement.picture_height
+            ),
+            (738, 250, 720, 540)
+        );
+        assert_eq!(
+            placement.filters.last().unwrap(),
+            "pad=w=1998:h=1080:x=738:y=250:color=black"
+        );
+        assert!(
+            placement.description.contains("at 50%, ")
+                && placement.description.ends_with("offset (100,-20)"),
+            "{}",
+            placement.description
+        );
     }
 
     #[test]

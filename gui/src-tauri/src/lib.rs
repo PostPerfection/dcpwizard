@@ -32,6 +32,11 @@ fn cpl_identities(dcp_dir: String) -> Result<Vec<dcpwizard_core::info::CplIdenti
 }
 
 #[tauri::command]
+fn nearest_named_container(width: u32, height: u32) -> (u32, u32) {
+    dcpwizard_core::source_picture::nearest_named_container(width, height)
+}
+
+#[tauri::command]
 fn component_versions(
     preview_player: tauri::State<'_, guikit::preview::PreviewPlayer>,
 ) -> Vec<postkit::component_versions::ComponentVersion> {
@@ -103,6 +108,7 @@ pub fn run() {
             preferences::find_dcpomatic_config,
             preferences::import_dcpomatic_identity,
             cpl_identities,
+            nearest_named_container,
             pipeline::submit_job,
             pipeline::measure_sound,
             pipeline::cancel_job,
@@ -116,6 +122,7 @@ pub fn run() {
             pipeline::list_profiles,
             pipeline::marker_labels,
             pipeline::detect_source_crop,
+            pipeline::picture_placement,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,
             pipeline::group_channel_files,
