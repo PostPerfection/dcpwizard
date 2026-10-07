@@ -137,6 +137,8 @@
     <figure class="shot">
         <img src="manual/project.png" width="2400" height="1720" alt="Project, with movie.mov and mix.wav on Reel 1, the title My Film, and Build DCP.">
     </figure>
+    <h3 id="picture-placement">Picture size and position</h3>
+    <p>Under Source Picture, Scale sizes the picture against the container with its aspect kept: 100 fits the container, under 100 leaves wider black bands, and over 100 fills past it and cuts the edges off at the frame. Offset X and Y move the picture that many container pixels right and down, and negative values move it left and up. A picture smaller than the frame stops at the frame's edge, and a larger one stops where its own edge reaches the frame. The line under Auto-crop shows the size and position the build will use. From a terminal, <code>create --picture-scale 90 --picture-offset 0,-20</code> does the same.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp</pre>
 

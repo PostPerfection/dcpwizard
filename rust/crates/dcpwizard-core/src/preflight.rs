@@ -779,7 +779,7 @@ pub fn plan_picture(plan: &CreatePlan) -> Result<Option<PlannedPicture>, String>
     )?;
     Ok(Some(PlannedPicture {
         raster: (resolved.encode_width, resolved.encode_height),
-        content: (resolved.plan.scaled_width, resolved.plan.scaled_height),
+        content: (resolved.plan.visible_width, resolved.plan.visible_height),
     }))
 }
 

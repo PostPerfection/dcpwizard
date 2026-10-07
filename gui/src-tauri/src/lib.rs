@@ -116,6 +116,7 @@ pub fn run() {
             pipeline::list_profiles,
             pipeline::marker_labels,
             pipeline::detect_source_crop,
+            pipeline::picture_placement,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,
             pipeline::group_channel_files,

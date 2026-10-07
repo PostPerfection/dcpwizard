@@ -789,6 +789,35 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
   }
 });
 
+const PICTURE_PLACEMENT_CONTROLS = [
+  "prop-picture-scale", "prop-picture-offset-x", "prop-picture-offset-y",
+  "prop-crop-left", "prop-crop-right", "prop-crop-top", "prop-crop-bottom",
+  "prop-fill-crop", "prop-rotate", "prop-flip", "prop-resolution",
+];
+// a slow answer must not overwrite the one for a later edit
+let picturePlacementRequest = 0;
+
+async function refreshPicturePlacement() {
+  const plan = document.getElementById("prop-crop-plan");
+  const reel = project.reels[0];
+  if (!plan || !reel?.picture) return;
+  const requestNumber = ++picturePlacementRequest;
+  let text;
+  try {
+    const placement = await invoke("picture_placement", {
+      request: jobRequest({ reel, video: reel.picture.path, title: "", output: "", encrypt: false, keyOut: "" }),
+    });
+    text = placement.description;
+  } catch (e) {
+    text = String(e);
+  }
+  if (requestNumber === picturePlacementRequest) plan.textContent = text;
+}
+
+for (const id of PICTURE_PLACEMENT_CONTROLS) {
+  document.getElementById(id)?.addEventListener("input", refreshPicturePlacement);
+}
+
 // === Audio channel mapping matrix ===
 
 // the sound the drawn matrix belongs to, so re-rendering the reels does not throw
@@ -1486,6 +1515,9 @@ function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
     denoise: document.getElementById("prop-denoise")?.checked || false,
     rotate: document.getElementById("prop-rotate")?.value || "none",
     flip: document.getElementById("prop-flip")?.value || "none",
+    pictureScalePercent: optionalNumber(document.getElementById("prop-picture-scale")?.value),
+    pictureOffsetX: parseInt(document.getElementById("prop-picture-offset-x")?.value) || 0,
+    pictureOffsetY: parseInt(document.getElementById("prop-picture-offset-y")?.value) || 0,
     upmix: document.getElementById("prop-upmix")?.value || "none",
     reelLengthMinutes: parseInt(document.getElementById("prop-reel-length")?.value) || 0,
     splitAt: document.getElementById("prop-split-at")?.value || null,
