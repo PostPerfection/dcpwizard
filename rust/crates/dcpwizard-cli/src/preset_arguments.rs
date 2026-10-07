@@ -11,11 +11,14 @@ const ANY_TEXT: &str = "";
 const AUTOMATIC_CHOICE: &str = "auto";
 const OFF_CHOICE: &str = "none";
 const SINGLE_REEL_CHOICE: &str = "0";
+const FULL_SIZE_CHOICE: &str = "100";
 
 const AUDIO_MAP_ARGUMENT: &str = "audio_map";
 const CONTENT_TYPE_ARGUMENT: &str = "content_type";
 const LUMINANCE_ARGUMENT: &str = "luminance";
 const LUMINANCE_UNITS_KEY: &str = "luminanceUnits";
+const PICTURE_OFFSET_ARGUMENT: &str = "picture_offset";
+const PICTURE_OFFSET_Y_KEY: &str = "pictureOffsetY";
 
 enum CreateOption {
     // the field's text follows the flag unless it is empty or the left-off choice
@@ -30,6 +33,9 @@ enum CreateOption {
     // create takes the number and its unit as one value
     Luminance,
     LuminanceUnits,
+    // create takes both offsets as one X,Y value
+    PictureOffsetX,
+    PictureOffsetY,
 }
 
 const fn text(argument: &'static str) -> CreateOption {
@@ -135,6 +141,12 @@ const CREATE_OPTION_BY_FORM_KEY: &[(&str, CreateOption)] = &[
     ("facilityName", text("facility")),
     ("luminance", CreateOption::Luminance),
     (LUMINANCE_UNITS_KEY, CreateOption::LuminanceUnits),
+    (
+        "pictureScalePercent",
+        text_unless("picture_scale", FULL_SIZE_CHOICE),
+    ),
+    ("pictureOffsetX", CreateOption::PictureOffsetX),
+    (PICTURE_OFFSET_Y_KEY, CreateOption::PictureOffsetY),
 ];
 
 #[derive(Debug, PartialEq)]
@@ -211,8 +223,34 @@ fn create_value(
             Some(number) => Some((LUMINANCE_ARGUMENT, Some(luminance_value(preset, &number)?))),
             None => None,
         },
-        CreateOption::LuminanceUnits => None,
+        CreateOption::LuminanceUnits | CreateOption::PictureOffsetY => None,
+        CreateOption::PictureOffsetX => picture_offset_value(preset, key, value)?
+            .map(|offset| (PICTURE_OFFSET_ARGUMENT, Some(offset))),
     })
+}
+
+fn no_offset(text: &str) -> bool {
+    text.is_empty() || text.parse::<f64>() == Ok(0.0)
+}
+
+// None at 0,0, where the picture sits centred
+fn picture_offset_value(preset: &Preset, key: &str, x: &Value) -> Result<Option<String>, String> {
+    let x = field_text(preset, key, x)?;
+    let y = match preset.form.get(PICTURE_OFFSET_Y_KEY) {
+        Some(y) => field_text(preset, PICTURE_OFFSET_Y_KEY, y)?,
+        None => String::new(),
+    };
+    if no_offset(&x) && no_offset(&y) {
+        return Ok(None);
+    }
+    let coordinate = |text: String| {
+        if text.is_empty() {
+            "0".to_string()
+        } else {
+            text
+        }
+    };
+    Ok(Some(format!("{},{}", coordinate(x), coordinate(y))))
 }
 
 fn create_argument<'a>(create: &'a Command, id: &str) -> &'a Arg {
@@ -341,6 +379,14 @@ mod tests {
     use std::collections::BTreeMap;
 
     const CREATE: &str = "create";
+    const PROJECT_FORM_SCRIPT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gui/src/project-form.js"
+    );
+    const FORM_CONTROLS_DECLARATION: &str = "export const FORM_CONTROLS = [";
+    const PROJECT_ONLY_DECLARATION: &str = "export const PROJECT_ONLY_FORM_KEYS = [";
+    // panel fields create has no flag for, which --preset warns about and leaves out
+    const FORM_KEYS_WITHOUT_CREATE_OPTION: &[&str] = &[];
     const REQUIRED: [&str; 7] = [
         "dcpwizard",
         CREATE,
@@ -397,6 +443,7 @@ mod tests {
             AUDIO_MAP_ARGUMENT,
             CONTENT_TYPE_ARGUMENT,
             LUMINANCE_ARGUMENT,
+            PICTURE_OFFSET_ARGUMENT,
         ];
         for (_, option) in CREATE_OPTION_BY_FORM_KEY {
             match option {
@@ -474,6 +521,93 @@ mod tests {
 
         assert_eq!(expanded.keys_without_option, vec!["someLaterField"]);
         assert_eq!(expanded.arguments, vec!["--standard=interop"]);
+    }
+
+    #[test]
+    fn the_two_offsets_become_one_flag_create_takes() {
+        let festival = preset(
+            json!({"pictureScalePercent": "90", "pictureOffsetX": "-10", "pictureOffsetY": "5"}),
+            None,
+        );
+
+        let mut arguments = arguments_for(festival, &[]).unwrap().arguments;
+        arguments.sort();
+
+        assert_eq!(
+            arguments,
+            vec!["--picture-offset=-10,5", "--picture-scale=90"]
+        );
+        on_main_thread_stack(move || {
+            let given = REQUIRED.iter().map(|argument| argument.to_string());
+            crate::Cli::command()
+                .try_get_matches_from(given.chain(arguments))
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn full_size_at_no_offset_leaves_both_picture_flags_off() {
+        let festival = preset(
+            json!({"pictureScalePercent": "100", "pictureOffsetX": "0", "pictureOffsetY": "0"}),
+            None,
+        );
+
+        assert_eq!(
+            arguments_for(festival, &[]).unwrap().arguments,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn one_offset_off_centre_moves_the_picture() {
+        let festival = preset(json!({"pictureOffsetX": "0", "pictureOffsetY": "-8"}), None);
+
+        assert_eq!(
+            arguments_for(festival, &[]).unwrap().arguments,
+            vec!["--picture-offset=0,-8"]
+        );
+    }
+
+    fn quoted_names_in_array(script: &str, declaration: &str) -> Vec<String> {
+        let start = script.find(declaration).expect(declaration) + declaration.len();
+        let length = script[start..].find("\n];").expect("the array is closed");
+        script[start..start + length]
+            .lines()
+            .filter_map(|line| line.split('"').nth(1))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn every_preset_field_of_the_panel_has_a_create_option_or_is_listed_without_one() {
+        let script = std::fs::read_to_string(PROJECT_FORM_SCRIPT).unwrap();
+        let project_only = quoted_names_in_array(&script, PROJECT_ONLY_DECLARATION);
+        let preset_keys: Vec<String> = quoted_names_in_array(&script, FORM_CONTROLS_DECLARATION)
+            .into_iter()
+            .filter(|key| !project_only.contains(key))
+            .collect();
+        let mapped: Vec<&str> = CREATE_OPTION_BY_FORM_KEY
+            .iter()
+            .map(|(key, _)| *key)
+            .collect();
+
+        let unmapped: Vec<&String> = preset_keys
+            .iter()
+            .filter(|key| !mapped.contains(&key.as_str()))
+            .filter(|key| !FORM_KEYS_WITHOUT_CREATE_OPTION.contains(&key.as_str()))
+            .collect();
+        let not_on_the_panel: Vec<&str> = mapped
+            .iter()
+            .chain(FORM_KEYS_WITHOUT_CREATE_OPTION)
+            .filter(|key| !preset_keys.iter().any(|preset_key| preset_key == *key))
+            .copied()
+            .collect();
+
+        assert!(
+            unmapped.is_empty(),
+            "map these in CREATE_OPTION_BY_FORM_KEY or list them in FORM_KEYS_WITHOUT_CREATE_OPTION: {unmapped:?}"
+        );
+        assert!(not_on_the_panel.is_empty(), "{not_on_the_panel:?}");
     }
 
     #[test]
