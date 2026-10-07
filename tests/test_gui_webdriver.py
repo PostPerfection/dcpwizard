@@ -79,6 +79,13 @@ FINISHED_BUILD_STAGES = {"Done", "Error", "Cancelled"}
 WINDOW_TITLE_SEPARATOR = " - "
 # the probe writes this into the video's asset row
 FIXTURE_ASSET_SIZE = FIXTURE_SIZE.replace("x", "\u00d7")
+# the fixture's x264 stream carries no colour tags
+DETECTED_HINT_PREFIX = f"From the source: {FIXTURE_SIZE}, {FIXTURE_FPS} fps, colour space not declared, "
+# the bit rate between the two varies by encoder build
+DETECTED_HINT_SUFFIX = " Mbit/s. Edit any field to override."
+DETECTED_HINT = "#prop-detected-hint"
+AUTO_RESOLUTION_OPTION = '#prop-resolution option[value="auto"]'
+FIXTURE_AUTO_RESOLUTION = f"Auto ({FIXTURE_ASSET_SIZE})"
 
 # crossing the first reel takes longer than the reel lasts when decoding lags
 REEL_CROSSING_TIMEOUT_MULTIPLE = 3
@@ -171,6 +178,10 @@ return [...document.querySelectorAll("#prop-audio-map tbody tr")].map((row) => (
   name: row.querySelector("th").title,
   autoRouted: [...row.querySelectorAll("input.auto-routed")].map((cell) => cell.dataset.lane),
 }));
+"""
+
+DETECTED_FIELDS = """
+return [...document.querySelectorAll("#view-project .detected")].map((field) => field.id);
 """
 
 # guikit stores the recent list only once it knows the form a New would discard
@@ -732,6 +743,16 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
         lambda: any(FIXTURE_ASSET_SIZE in meta for meta in session.execute(ASSET_METAS)),
         OPEN_TIMEOUT_SECONDS,
     )
+    wait_until(
+        "auto resolution never named the fixture's container",
+        lambda: session.property(AUTO_RESOLUTION_OPTION, "textContent") == FIXTURE_AUTO_RESOLUTION,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.execute(DETECTED_FIELDS) == ["prop-resolution", "prop-framerate"]
+    assert session.property("#prop-framerate", "value") == str(FIXTURE_FPS)
+    detected_hint = session.property(DETECTED_HINT, "textContent")
+    assert detected_hint.startswith(DETECTED_HINT_PREFIX), detected_hint
+    assert detected_hint.endswith(DETECTED_HINT_SUFFIX), detected_hint
     choose_in_dialog(window, "#import-audio", sound)
     wait_until(
         "the sound never reached the asset list",
@@ -790,6 +811,8 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     assert session.property("#prop-title", "value") == SECOND_PROJECT_TITLE
     assert session.execute(ASSET_PATHS) == []
     assert saved_asset_paths(saved_project(second_path)) == []
+    assert session.execute(DETECTED_FIELDS) == []
+    assert session.property(DETECTED_HINT, "hidden") is True
 
     choose_in_dialog(window, "#btn-project-open", project_path)
     wait_for_status(session, f"Opened {project_path.name}", REACTION_TIMEOUT_SECONDS)
