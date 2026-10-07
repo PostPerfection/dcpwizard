@@ -24,6 +24,7 @@ import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPU
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
+import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
@@ -2033,6 +2034,7 @@ document.getElementById("verify-browse")?.addEventListener("click", async () => 
   const resultsBox = document.getElementById("verify-results");
   resultsBox.textContent = "";
   resultsBox.classList.remove("visible");
+  setVerifyReportSavable(false);
 });
 
 async function runVerification() {
@@ -2042,8 +2044,9 @@ async function runVerification() {
   const resultsBox = document.getElementById("verify-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Verifying...";
+  setVerifyReportSavable(false);
 
-  const args = ["verify", dir, "--strict"];
+  const args = ["verify", dir, "--strict", ...(await verifyReportOutputArgs())];
   if (!document.getElementById("verify-mxf")?.checked) args.push("--no-picture-check");
   if (!document.getElementById("verify-hashes")?.checked) args.push("--no-hash-check");
 
@@ -2056,9 +2059,14 @@ async function runVerification() {
     resultsBox.textContent = "✗ Verification failed\n\n" + result.stdout + result.stderr;
     setStatus("Verification failed");
   }
+  setVerifyReportSavable(true);
 }
 
 document.getElementById("verify-run")?.addEventListener("click", runVerification);
+initVerifyReport({
+  packageDirectory: () => document.getElementById("verify-path").textContent,
+  setStatus,
+});
 
 // === Encryption & KDM ===
 function fieldValue(id) {

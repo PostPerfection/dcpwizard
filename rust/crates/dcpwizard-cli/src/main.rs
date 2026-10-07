@@ -6256,9 +6256,15 @@ fn run() {
                 },
             );
 
+            let bv21 =
+                strict.then(|| dcpwizard_core::verify::check_bv21_profile(Path::new(&dcp_dir)));
+
             if let Some(ref out_path) = output
-                && let Err(e) =
-                    dcpwizard_core::verify::write_verify_report(&result, Path::new(out_path))
+                && let Err(e) = dcpwizard_core::verify::write_verify_report(
+                    &result,
+                    bv21.as_ref(),
+                    Path::new(out_path),
+                )
             {
                 tracing::error!("Failed to write report: {e}");
                 std::process::exit(1);
@@ -6266,16 +6272,12 @@ fn run() {
 
             if !quiet {
                 print_verify_findings(&result);
+                if let Some(ref bv21) = bv21 {
+                    print_bv21_findings(bv21);
+                }
             }
 
-            let bv21_valid = !strict || {
-                let bv21 = dcpwizard_core::verify::check_bv21_profile(Path::new(&dcp_dir));
-                if !quiet {
-                    print_bv21_findings(&bv21);
-                }
-                bv21.valid
-            };
-
+            let bv21_valid = bv21.is_none_or(|bv21| bv21.valid);
             if result.valid && bv21_valid { 0 } else { 1 }
         }
 

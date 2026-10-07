@@ -232,6 +232,7 @@ dcpwizard batch move 3 --before 2</pre>
     <h2 id="verify">Validate a DCP</h2>
     <h3>In the app</h3>
     <p>Open Verify, press Select DCP… and pick the package folder, then press Validate. The app runs the strict SMPTE check and then the Bv2.1 profile check, and a package with only warnings passes. Inspect MXF essence is off by default, so the picture bitstream is not read unless you tick it. Inspect, in the bottom bar after a build, opens this view on the new package and runs it.</p>
+    <p>After a run, Save report… writes the findings as an HTML page, and on Linux Save PDF… prints the same page to a PDF. The save dialog offers <code>&lt;package folder&gt;-verify.html</code> or <code>.pdf</code> beside the package. The report holds the Bv2.1 findings below the strict check's, and its verdict passes only when both pass.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard verify "./dcp/My Film" --strict
 dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre>

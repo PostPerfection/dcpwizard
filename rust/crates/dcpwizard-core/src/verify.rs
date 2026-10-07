@@ -122,7 +122,11 @@ fn verify_result_from_notes(notes: &[dcpdoctor_core::Note]) -> VerifyResult {
 }
 
 /// Write verification report to a file. Supports .txt and .html extensions.
-pub fn write_verify_report(result: &VerifyResult, output: &Path) -> Result<(), String> {
+pub fn write_verify_report(
+    result: &VerifyResult,
+    bv21_profile: Option<&VerifyResult>,
+    output: &Path,
+) -> Result<(), String> {
     let ext = output
         .extension()
         .and_then(|e| e.to_str())
@@ -130,20 +134,39 @@ pub fn write_verify_report(result: &VerifyResult, output: &Path) -> Result<(), S
         .to_lowercase();
 
     let content = match ext.as_str() {
-        "html" | "htm" => format_report_html(result),
-        _ => format_report_text(result),
+        "html" | "htm" => format_report_html(result, bv21_profile),
+        _ => format_report_text(result, bv21_profile),
     };
 
     std::fs::write(output, content)
         .map_err(|e| format!("Failed to write report to {}: {e}", output.display()))
 }
 
-fn format_report_text(result: &VerifyResult) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
+fn verdict(passed: bool) -> &'static str {
+    if passed { "PASSED" } else { "FAILED" }
+}
+
+fn report_passed(result: &VerifyResult, bv21_profile: Option<&VerifyResult>) -> bool {
+    result.valid && bv21_profile.is_none_or(|profile| profile.valid)
+}
+
+fn format_report_text(result: &VerifyResult, bv21_profile: Option<&VerifyResult>) -> String {
+    let mut out = format!(
         "DCP Verification: {}\n\n",
-        if result.valid { "PASSED" } else { "FAILED" }
-    ));
+        verdict(report_passed(result, bv21_profile))
+    );
+    push_text_findings(&mut out, result);
+    if let Some(profile) = bv21_profile {
+        out.push_str(&format!(
+            "\nBv2.1 profile check: {}\n\n",
+            verdict(profile.valid)
+        ));
+        push_text_findings(&mut out, profile);
+    }
+    out
+}
+
+fn push_text_findings(out: &mut String, result: &VerifyResult) {
     if !result.errors.is_empty() {
         out.push_str("ERRORS:\n");
         for e in &result.errors {
@@ -164,10 +187,9 @@ fn format_report_text(result: &VerifyResult) -> String {
             out.push_str(&format!("  [INFO] {i}\n"));
         }
     }
-    out
 }
 
-fn format_report_html(result: &VerifyResult) -> String {
+fn format_report_html(result: &VerifyResult, bv21_profile: Option<&VerifyResult>) -> String {
     let mut out = String::new();
     out.push_str("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n");
     out.push_str("<title>DCP Verification Report</title>\n");
@@ -176,31 +198,39 @@ fn format_report_html(result: &VerifyResult) -> String {
     out.push_str("h1{margin-bottom:0.5em}</style></head><body>\n");
     out.push_str(&format!(
         "<h1>DCP Verification: {}</h1>\n",
-        if result.valid { "PASSED" } else { "FAILED" }
+        verdict(report_passed(result, bv21_profile))
     ));
-    if !result.errors.is_empty() {
-        out.push_str("<h2>Errors</h2><ul>\n");
-        for e in &result.errors {
-            out.push_str(&format!("<li class=\"error\">{}</li>\n", html_escape(e)));
-        }
-        out.push_str("</ul>\n");
-    }
-    if !result.warnings.is_empty() {
-        out.push_str("<h2>Warnings</h2><ul>\n");
-        for w in &result.warnings {
-            out.push_str(&format!("<li class=\"warn\">{}</li>\n", html_escape(w)));
-        }
-        out.push_str("</ul>\n");
-    }
-    if !result.info.is_empty() {
-        out.push_str("<h2>Info</h2><ul>\n");
-        for i in &result.info {
-            out.push_str(&format!("<li class=\"info\">{}</li>\n", html_escape(i)));
-        }
-        out.push_str("</ul>\n");
+    push_html_findings(&mut out, result, "h2");
+    if let Some(profile) = bv21_profile {
+        out.push_str(&format!(
+            "<h2>Bv2.1 profile check: {}</h2>\n",
+            verdict(profile.valid)
+        ));
+        push_html_findings(&mut out, profile, "h3");
     }
     out.push_str("</body></html>\n");
     out
+}
+
+fn push_html_findings(out: &mut String, result: &VerifyResult, heading: &str) {
+    let sections = [
+        ("Errors", "error", &result.errors),
+        ("Warnings", "warn", &result.warnings),
+        ("Info", "info", &result.info),
+    ];
+    for (title, class, findings) in sections {
+        if findings.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("<{heading}>{title}</{heading}><ul>\n"));
+        for finding in findings {
+            out.push_str(&format!(
+                "<li class=\"{class}\">{}</li>\n",
+                html_escape(finding)
+            ));
+        }
+        out.push_str("</ul>\n");
+    }
 }
 
 fn html_escape(s: &str) -> String {
@@ -261,7 +291,7 @@ mod tests {
             warnings: vec!["Unusual frame rate".into()],
             info: vec!["SMPTE standard detected".into()],
         };
-        write_verify_report(&result, tmp.path()).unwrap();
+        write_verify_report(&result, None, tmp.path()).unwrap();
         let content = fs::read_to_string(tmp.path()).unwrap();
         assert!(content.contains("FAILED"));
         assert!(content.contains("Missing CPL"));
@@ -278,11 +308,77 @@ mod tests {
             warnings: vec![],
             info: vec!["All good".into()],
         };
-        write_verify_report(&result, tmp.path()).unwrap();
+        write_verify_report(&result, None, tmp.path()).unwrap();
         let content = fs::read_to_string(tmp.path()).unwrap();
         assert!(content.contains("<!DOCTYPE html>"));
         assert!(content.contains("PASSED"));
         assert!(content.contains("All good"));
+    }
+
+    fn bv21_profile_with_findings() -> VerifyResult {
+        VerifyResult {
+            valid: false,
+            errors: vec!["Picture bitrate exceeds the Bv2.1 limit".into()],
+            warnings: vec!["Sound track has no MCA labels".into()],
+            info: vec![],
+        }
+    }
+
+    fn passed_verification() -> VerifyResult {
+        VerifyResult {
+            valid: true,
+            info: vec!["All good".into()],
+            ..VerifyResult::default()
+        }
+    }
+
+    #[test]
+    fn the_text_report_holds_the_bv21_findings_and_their_verdict() {
+        let tmp = tempfile::NamedTempFile::with_suffix(".txt").unwrap();
+        write_verify_report(
+            &passed_verification(),
+            Some(&bv21_profile_with_findings()),
+            tmp.path(),
+        )
+        .unwrap();
+        let content = fs::read_to_string(tmp.path()).unwrap();
+        assert!(content.starts_with("DCP Verification: FAILED"));
+        assert!(content.contains("Bv2.1 profile check: FAILED"));
+        assert!(content.contains("[ERROR] Picture bitrate exceeds the Bv2.1 limit"));
+        assert!(content.contains("[WARN] Sound track has no MCA labels"));
+        assert!(content.contains("[INFO] All good"));
+    }
+
+    #[test]
+    fn the_html_report_holds_the_bv21_findings_and_their_verdict() {
+        let tmp = tempfile::NamedTempFile::with_suffix(".html").unwrap();
+        write_verify_report(
+            &passed_verification(),
+            Some(&bv21_profile_with_findings()),
+            tmp.path(),
+        )
+        .unwrap();
+        let content = fs::read_to_string(tmp.path()).unwrap();
+        assert!(content.contains("<h1>DCP Verification: FAILED</h1>"));
+        assert!(content.contains("<h2>Bv2.1 profile check: FAILED</h2>"));
+        assert!(
+            content.contains("<li class=\"error\">Picture bitrate exceeds the Bv2.1 limit</li>")
+        );
+        assert!(content.contains("<li class=\"warn\">Sound track has no MCA labels</li>"));
+        assert!(content.contains("<li class=\"info\">All good</li>"));
+    }
+
+    #[test]
+    fn a_passed_bv21_profile_keeps_the_report_passed() {
+        let tmp = tempfile::NamedTempFile::with_suffix(".html").unwrap();
+        let profile = VerifyResult {
+            valid: true,
+            ..VerifyResult::default()
+        };
+        write_verify_report(&passed_verification(), Some(&profile), tmp.path()).unwrap();
+        let content = fs::read_to_string(tmp.path()).unwrap();
+        assert!(content.contains("<h1>DCP Verification: PASSED</h1>"));
+        assert!(content.contains("<h2>Bv2.1 profile check: PASSED</h2>"));
     }
 
     #[test]
@@ -294,7 +390,7 @@ mod tests {
             warnings: vec![],
             info: vec![],
         };
-        write_verify_report(&result, tmp.path()).unwrap();
+        write_verify_report(&result, None, tmp.path()).unwrap();
         let content = fs::read_to_string(tmp.path()).unwrap();
         assert!(content.contains("&lt;file&gt;"));
         assert!(content.contains("&amp;"));

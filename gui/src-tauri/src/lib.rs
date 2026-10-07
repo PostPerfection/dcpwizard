@@ -25,6 +25,7 @@ mod library;
 mod pipeline;
 mod preferences;
 mod timeline;
+mod verify_report;
 
 #[tauri::command]
 fn cpl_identities(dcp_dir: String) -> Result<Vec<dcpwizard_core::info::CplIdentity>, String> {
@@ -130,6 +131,11 @@ pub fn run() {
             library::library_needs_duration,
             timeline::list_cpls,
             timeline::get_timeline,
+            verify_report::verify_report_path,
+            verify_report::save_verify_report,
+            verify_report::verify_report_prints_to_pdf,
+            #[cfg(target_os = "linux")]
+            verify_report::print_verify_report_to_pdf,
         ])
         .setup(|app| {
             #[cfg(target_os = "linux")]

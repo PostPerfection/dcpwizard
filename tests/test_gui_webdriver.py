@@ -1,7 +1,10 @@
+import html
 import json
 import os
+import re
 import subprocess
 import tomllib
+import unicodedata
 import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,6 +112,19 @@ PREVIOUS_FIELD_CHORD = "shift+Tab"
 NEXT_FIELD_KEY = "Tab"
 MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
 NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
+
+VERIFY_CHORD = "ctrl+3"
+VERIFY_VIEW = "view-verify"
+VERIFY_STATUS_VERDICTS = {"Verification passed": "PASSED", "Verification failed": "FAILED"}
+VERIFY_TIMEOUT_SECONDS = 300
+PDF_TIMEOUT_SECONDS = 60
+SAVE_REPORT_BUTTON = "#verify-save-report"
+SAVE_PDF_BUTTON = "#verify-save-pdf"
+SAVED_REPORT_PREFIX = "Saved the report to "
+REPORT_VERDICT_PREFIX = "DCP Verification: "
+BV21_SECTION_HEADING = "<h2>Bv2.1 profile check: "
+REPORT_FINDING = re.compile(r'<li class="\w+">(.*?)</li>')
+PDF_MAGIC = b"%PDF-"
 
 TOOLS_CHORD = "ctrl+5"
 TOOLS_VIEW = "view-tools"
@@ -1093,3 +1109,60 @@ def test_the_export_tool_writes_a_prores_from_a_dcp(window, one_reel_cpl, tmp_pa
         REACTION_TIMEOUT_SECONDS,
     )
     assert counted_video_frames(output) == frames
+
+
+def verify_status(session):
+    return status_text(session) in VERIFY_STATUS_VERDICTS and status_text(session)
+
+
+def first_bv21_finding(report_html):
+    _, bv21_section = report_html.split(BV21_SECTION_HEADING, 1)
+    return html.unescape(REPORT_FINDING.search(bv21_section).group(1))
+
+
+# pdftotext splits wrapped lines, drops the hyphen it wrapped at and keeps the font's fi ligature
+def comparable_text(text):
+    return re.sub(r"[\s-]", "", unicodedata.normalize("NFKC", text))
+
+
+def pdf_text(pdf):
+    extracted = subprocess.run(
+        ("pdftotext", str(pdf), "-"), capture_output=True, text=True, check=True
+    )
+    return comparable_text(extracted.stdout)
+
+
+def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_cpl, tmp_path):
+    session = window.session
+    package = one_reel_cpl.parent
+    report = tmp_path / "report.html"
+    pdf = tmp_path / "report.pdf"
+
+    window.press(VERIFY_CHORD)
+    wait_for_view(session, VERIFY_VIEW)
+    assert session.property(SAVE_REPORT_BUTTON, "disabled") is True
+    assert session.property(SAVE_PDF_BUTTON, "hidden") is False
+    choose_in_dialog(window, "#verify-browse", package)
+    wait_until(
+        "the chosen package never reached the Verify view",
+        lambda: session.property("#verify-path", "textContent") == str(package),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#verify-run")
+    status = wait_until("the validation never finished", lambda: verify_status(session), VERIFY_TIMEOUT_SECONDS)
+    verdict_line = f"{REPORT_VERDICT_PREFIX}{VERIFY_STATUS_VERDICTS[status]}"
+    assert session.property(SAVE_REPORT_BUTTON, "disabled") is False
+
+    save_in_dialog(window, SAVE_REPORT_BUTTON, report)
+    wait_for_status(session, f"{SAVED_REPORT_PREFIX}{report}", REACTION_TIMEOUT_SECONDS)
+    report_html = report.read_text()
+    assert f"<h1>{verdict_line}</h1>" in report_html
+    finding = first_bv21_finding(report_html)
+    assert finding in session.property("#verify-results", "textContent")
+
+    save_in_dialog(window, SAVE_PDF_BUTTON, pdf)
+    wait_for_status(session, f"{SAVED_REPORT_PREFIX}{pdf}", PDF_TIMEOUT_SECONDS)
+    assert pdf.read_bytes().startswith(PDF_MAGIC)
+    printed = pdf_text(pdf)
+    assert comparable_text(verdict_line) in printed, printed
+    assert comparable_text(finding) in printed, printed
