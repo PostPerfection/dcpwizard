@@ -75,3 +75,11 @@ test("with a source picked Verify checks the opened package, then the last build
   assert.equal(verifyTarget({ selectedPreview: source, openedPackage: null, outputPath: "/dcps/built" }), "/dcps/built");
   assert.equal(verifyTarget({ selectedPreview: null, openedPackage: null, outputPath: null }), null);
 });
+
+test("a package the preview loaded comes before every other", () => {
+  const picked = { kind: PREVIEW_KIND_PACKAGE, path: "/dcps/picked" };
+  assert.equal(
+    verifyTarget({ previewedPackage: "/dcps/playing", selectedPreview: picked, openedPackage: "/dcps/opened", outputPath: "/dcps/built" }),
+    "/dcps/playing",
+  );
+});

@@ -1886,6 +1886,8 @@ let selectedPreview = null;
 
 // what the preview panel holds
 let previewShownPath = null;
+// the last package the preview loaded, from Recent, the playlist or Open DCP
+let previewedPackage = null;
 
 function selectPreview(kind, path) {
   selectedPreview = { kind, path };
@@ -2031,6 +2033,7 @@ async function previewSourcePicture(path) {
   const loaded = previewFile(path, contentKeys);
   forgetContentKeysIfRefused(path, loaded);
   const reel = project.reels.find(r => r.picture?.path === path);
+  previewedPackage = null;
   previewShowsJobPicture = Boolean(reel);
   previewedJobReel = reel ?? null;
   setPreviewedTimelineReel(reel ? project.reels.indexOf(reel) : null);
@@ -2060,6 +2063,7 @@ async function previewPackage(dirPath) {
   const generation = previewGeneration;
   previewShowsJobPicture = false;
   previewedJobReel = null;
+  previewedPackage = dirPath;
   setPreviewedTimelineReel(null);
   forgetContentKeysIfRefused(dirPath, previewDcp(dirPath, contentKeys));
   setPreviewCrop(null);
@@ -2171,7 +2175,7 @@ function showVerifyPackage(dir) {
 
 function showDefaultVerifyPackage() {
   if (verifyPackageChosen) return;
-  const dir = verifyTarget({ selectedPreview, openedPackage, outputPath: submittedPackage });
+  const dir = verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath: submittedPackage });
   if (dir) showVerifyPackage(dir);
 }
 
@@ -2930,6 +2934,7 @@ async function restoreBuildPanel(saved) {
   updateStatusStats();
   submittedPackage = null;
   openedPackage = null;
+  previewedPackage = null;
   clearPreviewSelection();
   stopPreview();
   if (isPreviewVisible()) previewCurrentTarget();

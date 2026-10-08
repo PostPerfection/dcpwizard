@@ -1365,6 +1365,33 @@ def test_the_verify_view_checks_the_opened_package(window, one_reel_cpl):
     assert session.property("#verify-run", "disabled") is False
 
 
+def test_the_verify_view_checks_the_package_played_from_recent(window, two_reel_dcp):
+    session = window.session
+    choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
+    wait_until(
+        "the opened project never reached the Recent list",
+        lambda: session.find(".recent-queue"),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-recent-projects")
+    window.click(".recent-queue")
+    window.click("#playlist .playlist-title")
+    wait_until(
+        "the queued package never reached the preview",
+        lambda: preview_title(session).endswith(two_reel_dcp.directory.name),
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+
+    window.press(VERIFY_CHORD)
+    wait_for_view(session, VERIFY_VIEW)
+    wait_until(
+        "the package in the preview never became the one to validate",
+        lambda: session.property("#verify-path", "textContent") == str(two_reel_dcp.directory),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#verify-run", "disabled") is False
+
+
 def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_cpl, tmp_path):
     session = window.session
     package = one_reel_cpl.parent
