@@ -45,6 +45,26 @@
   display: none;
 }
 
+.progress-section[hidden] {
+  display: none;
+}
+
+/* with appearance off, a progress with no value draws an empty bar */
+.progress-section progress:not([value])::-webkit-progress-bar {
+  background: linear-gradient(90deg, var(--surface-alt) 30%, var(--primary) 50%, var(--surface-alt) 70%);
+  background-size: 200% 100%;
+  animation: progress-indeterminate 1.5s linear infinite;
+}
+
+@keyframes progress-indeterminate {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 .preset-actions {
   display: flex;
   flex-wrap: wrap;

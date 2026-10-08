@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use dcpwizard_core::job_log;
 
 mod preset_arguments;
+mod verify_progress;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum AccessibilityStandardArg {
@@ -1431,6 +1432,9 @@ enum Commands {
         /// Quiet mode (exit code only, no output)
         #[arg(short, long)]
         quiet: bool,
+        /// Print `progress <hashes|frames> <done> <total>` lines to stderr
+        #[arg(long)]
+        progress: bool,
     },
     /// Show DCP metadata
     Info {
@@ -6254,8 +6258,10 @@ fn run() {
             ov,
             output,
             quiet,
+            progress,
         } => {
-            let result = dcpwizard_core::verify::verify_dcp_with_options(
+            let mut progress_lines = verify_progress::ProgressLines::default();
+            let result = dcpwizard_core::verify::verify_dcp_with_progress(
                 &PathBuf::from(&dcp_dir),
                 &dcpwizard_core::verify::VerifyCliOptions {
                     skip_hash_check: no_hash_check,
@@ -6265,6 +6271,14 @@ fn run() {
                     // the picture check reads every frame's codestream, as dcpdoctor's own does
                     scan_every_frame: !no_picture_check,
                     ov_dir: ov.map(PathBuf::from),
+                },
+                &mut |report| {
+                    if !progress {
+                        return;
+                    }
+                    if let Some(line) = progress_lines.line_for(report) {
+                        eprintln!("{line}");
+                    }
                 },
             );
 

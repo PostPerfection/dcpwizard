@@ -881,6 +881,7 @@
               <div class="panel-actions">
                 <button id="verify-browse" class="btn-sm">Select DCP…</button>
                 <button id="verify-run" class="btn-sm primary" disabled>Validate</button>
+                <button id="verify-cancel" class="btn-sm" hidden>Cancel</button>
                 <button id="verify-save-report" class="btn-sm" disabled>Save report…</button>
                 <button id="verify-save-pdf" class="btn-sm" hidden disabled>Save PDF…</button>
               </div>
@@ -891,6 +892,10 @@
             <div class="prop-field">
               <label><input type="checkbox" id="verify-mxf"> Inspect MXF essence</label>
               <label><input type="checkbox" id="verify-hashes" checked> Verify hashes</label>
+            </div>
+            <div id="verify-progress-section" class="progress-section" hidden>
+              <progress id="verify-progress" max="100"></progress>
+              <span id="verify-progress-text" class="progress-stats"></span>
             </div>
             <div id="verify-results" class="results-box"></div>
           </section>

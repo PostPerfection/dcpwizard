@@ -240,10 +240,13 @@ dcpwizard batch move 3 --before 2</pre>
     <h2 id="verify">Validate a DCP</h2>
     <h3>In the app</h3>
     <p>Open Verify and press Validate. The view starts on the package the preview last played, else the DCP opened with Open DCP, else the last build, else the package folder beside the open project file. Select DCP… picks another, which then stays. The app runs the strict SMPTE check and then the Bv2.1 profile check, and a package with only warnings passes. Inspect MXF essence is off by default. Ticked, it reads every picture frame's codestream and names the largest frame against the DCI cap, which takes about as long as reading the picture file once. Inspect, in the bottom bar after a build, opens this view on the new package and runs it.</p>
+    <p>While Validate runs, a bar under the boxes reads Checking hashes or Scanning frames with the percent done, and Scanning frames starts from 0% for each reel. Cancel beside Validate stops the run, and the results then read Verification cancelled.</p>
     <p>After a run, Save report… writes the findings as an HTML page, and on Linux Save PDF… prints the same page to a PDF. The save dialog offers <code>&lt;package folder&gt;-verify.html</code> or <code>.pdf</code> beside the package. The report holds the Bv2.1 findings below the strict check's, and its verdict passes only when both pass.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard verify "./dcp/My Film" --strict
-dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html</pre>
+dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html
+dcpwizard verify "./dcp/My Film" --strict --progress</pre>
+    <p><code>--progress</code> prints <code>progress hashes &lt;done&gt; &lt;total&gt;</code> and <code>progress frames &lt;done&gt; &lt;total&gt;</code> lines to stderr, one each time the whole percent changes. Hashes count bytes and frames count each reel's picture frames.</p>
 
     <h2 id="timeline">See the reels on the Timeline</h2>
     <h3>In the app</h3>

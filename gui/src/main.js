@@ -25,6 +25,7 @@ import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } fr
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
+import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
@@ -2136,7 +2137,7 @@ document.getElementById("post-build-inspect")?.addEventListener("click", () => {
   if (!output) return;
   switchView("verify");
   document.getElementById("verify-path").textContent = output;
-  document.getElementById("verify-run").disabled = false;
+  setVerifyRunEnabled(true);
   runVerification();
 });
 
@@ -2147,14 +2148,21 @@ document.getElementById("post-build-reveal")?.addEventListener("click", () => {
 
 // === Verify ===
 const NO_VERIFY_PACKAGE_TEXT = "No DCP selected";
+const VERIFY_CANCELLED_TEXT = "Verification cancelled";
 // a package chosen in the Verify view stays until another is chosen there
 let verifyPackageChosen = false;
+// the verify command running now, as { child }, or null
+let runningVerification = null;
+
+function setVerifyRunEnabled(hasPackage) {
+  document.getElementById("verify-run").disabled = !hasPackage || runningVerification !== null;
+}
 
 function showVerifyPackage(dir) {
   const path = document.getElementById("verify-path");
   if (path.textContent === dir) return;
   path.textContent = dir;
-  document.getElementById("verify-run").disabled = false;
+  setVerifyRunEnabled(true);
   const resultsBox = document.getElementById("verify-results");
   resultsBox.textContent = "";
   resultsBox.classList.remove("visible");
@@ -2165,7 +2173,7 @@ function showDefaultVerifyPackage() {
   if (verifyPackageChosen) return;
   const dir = verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath: submittedPackage, packageBesideProject });
   showVerifyPackage(dir ?? NO_VERIFY_PACKAGE_TEXT);
-  document.getElementById("verify-run").disabled = !dir;
+  setVerifyRunEnabled(Boolean(dir));
 }
 
 document.getElementById("verify-browse")?.addEventListener("click", async () => {
@@ -2175,32 +2183,87 @@ document.getElementById("verify-browse")?.addEventListener("click", async () => 
   showVerifyPackage(dir);
 });
 
-async function runVerification() {
+function verifyPackageShown() {
   const dir = document.getElementById("verify-path").textContent;
-  if (!dir || dir.startsWith("No ")) return;
+  return Boolean(dir) && !dir.startsWith("No ");
+}
+
+function showVerifyRunning(running) {
+  setVerifyRunEnabled(verifyPackageShown());
+  document.getElementById("verify-cancel").hidden = !running;
+  document.getElementById("verify-progress-section").hidden = !running;
+  document.getElementById("verify-progress").removeAttribute("value");
+  document.getElementById("verify-progress-text").textContent = "";
+}
+
+function showVerifyProgress(progress) {
+  const { percent, text } = verifyProgressDisplay(progress);
+  document.getElementById("verify-progress").value = percent;
+  document.getElementById("verify-progress-text").textContent = text;
+}
+
+function endVerification(text, status) {
+  runningVerification = null;
+  showVerifyRunning(false);
+  document.getElementById("verify-results").textContent = text;
+  setStatus(status);
+}
+
+async function runVerification() {
+  if (!verifyPackageShown() || runningVerification) return;
+  const dir = document.getElementById("verify-path").textContent;
+  const run = { child: null };
+  runningVerification = run;
+  showVerifyRunning(true);
 
   const resultsBox = document.getElementById("verify-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Verifying...";
   setVerifyReportSavable(false);
 
-  const args = ["verify", dir, "--strict", ...(await verifyReportOutputArgs())];
+  const args = ["verify", dir, "--strict", "--progress", ...(await verifyReportOutputArgs())];
   if (!document.getElementById("verify-mxf")?.checked) args.push("--no-picture-check");
   if (!document.getElementById("verify-hashes")?.checked) args.push("--no-hash-check");
 
   const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
-  if (result.code === 0) {
-    resultsBox.textContent = "✓ DCP verification PASSED\n\n" + result.stdout;
-    setStatus("Verification passed");
-  } else {
-    resultsBox.textContent = "✗ Verification failed\n\n" + result.stdout + result.stderr;
-    setStatus("Verification failed");
+  const stdout = [];
+  const stderr = [];
+  cmd.stdout.on("data", (line) => stdout.push(line));
+  cmd.stderr.on("data", (line) => {
+    const progress = parseVerifyProgress(line);
+    if (!progress) stderr.push(line);
+    else if (runningVerification === run) showVerifyProgress(progress);
+  });
+  cmd.on("error", (error) => stderr.push(`${error}\n`));
+  cmd.on("close", ({ code }) => {
+    // a cancelled run has already said so
+    if (runningVerification !== run) return;
+    if (code === 0) {
+      endVerification("✓ DCP verification PASSED\n\n" + stdout.join(""), "Verification passed");
+    } else {
+      endVerification("✗ Verification failed\n\n" + stdout.join("") + stderr.join(""), "Verification failed");
+    }
+    setVerifyReportSavable(true);
+  });
+  try {
+    run.child = await cmd.spawn();
+  } catch (error) {
+    endVerification(`✗ Verification failed\n\n${error}`, "Verification failed");
+    return;
   }
-  setVerifyReportSavable(true);
+  if (runningVerification !== run) await run.child.kill();
+}
+
+function cancelVerification() {
+  const run = runningVerification;
+  if (!run) return;
+  endVerification(VERIFY_CANCELLED_TEXT, VERIFY_CANCELLED_TEXT);
+  // a child still spawning is killed once spawn returns it
+  run.child?.kill();
 }
 
 document.getElementById("verify-run")?.addEventListener("click", runVerification);
+document.getElementById("verify-cancel")?.addEventListener("click", cancelVerification);
 initVerifyReport({
   packageDirectory: () => document.getElementById("verify-path").textContent,
   setStatus,

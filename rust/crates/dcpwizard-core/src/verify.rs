@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub use dcpdoctor_core::{VerifyProgress, VerifyStage};
+
 /// Result of a DCP verification pass.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VerifyResult {
@@ -44,6 +46,14 @@ pub fn verify_dcp_for_report(dcp_dir: &Path) -> VerifyResult {
 
 /// Verify a DCP with the specified options.
 pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> VerifyResult {
+    verify_dcp_with_progress(dcp_dir, options, &mut |_| {})
+}
+
+pub fn verify_dcp_with_progress(
+    dcp_dir: &Path,
+    options: &VerifyCliOptions,
+    progress: &mut dyn FnMut(VerifyProgress),
+) -> VerifyResult {
     if !dcp_dir.exists() {
         return VerifyResult {
             valid: false,
@@ -89,7 +99,7 @@ pub fn verify_dcp_with_options(dcp_dir: &Path, options: &VerifyCliOptions) -> Ve
         }
     };
 
-    let report = dcpdoctor_core::verify(dcp_dir, &opts);
+    let report = dcpdoctor_core::verify_with_progress(dcp_dir, &opts, progress);
     verify_result_from_notes(&report.notes)
 }
 

@@ -2,6 +2,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import tomllib
 import unicodedata
@@ -134,6 +135,10 @@ VERIFY_VIEW = "view-verify"
 NO_VERIFY_PACKAGE_TEXT = "No DCP selected"
 VERIFY_STATUS_VERDICTS = {"Verification passed": "PASSED", "Verification failed": "FAILED"}
 VERIFY_TIMEOUT_SECONDS = 300
+VERIFY_CANCELLED_TEXT = "Verification cancelled"
+HASH_PROGRESS_PREFIX = "Checking hashes "
+# the hash check reads this for about 10 s on a laptop
+SPARSE_PICTURE_BYTES = 20 * 1024**3
 PDF_TIMEOUT_SECONDS = 60
 SAVE_REPORT_BUTTON = "#verify-save-report"
 SAVE_PDF_BUTTON = "#verify-save-pdf"
@@ -1502,3 +1507,68 @@ def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_c
     printed = pdf_text(pdf)
     assert comparable_text(verdict_line) in printed, printed
     assert comparable_text(finding) in printed, printed
+
+
+# a picture MXF grown into a sparse file keeps the hash check reading for seconds
+def package_with_sparse_picture(package, tmp_path):
+    copy = tmp_path / package.name
+    shutil.copytree(package, copy)
+    os.truncate(sorted(copy.glob("picture_*.mxf"))[0], SPARSE_PICTURE_BYTES)
+    return copy
+
+
+def processes_reading(path):
+    found = []
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            arguments = cmdline.read_bytes().split(b"\0")
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        if os.fsencode(path) in arguments:
+            found.append(cmdline.parent.name)
+    return found
+
+
+def hash_progress_shown(session):
+    value = session.attribute("#verify-progress", "value")
+    text = session.property("#verify-progress-text", "textContent")
+    return value is not None and float(value) > 0 and text.startswith(HASH_PROGRESS_PREFIX)
+
+
+def test_cancel_stops_a_running_validation(window, two_reel_dcp, tmp_path):
+    session = window.session
+    package = package_with_sparse_picture(two_reel_dcp.directory, tmp_path)
+
+    window.click(VERIFY_VIEW_BUTTON)
+    wait_for_view(session, VERIFY_VIEW)
+    assert session.property("#verify-cancel", "hidden") is True
+    assert session.property("#verify-progress-section", "hidden") is True
+    choose_in_dialog(window, "#verify-browse", package)
+    wait_for_verify_path(session, str(package))
+
+    window.click("#verify-run")
+    wait_until(
+        "the hash check never showed its progress",
+        lambda: hash_progress_shown(session),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#verify-run", "disabled") is True
+    assert processes_reading(package), "no verify process was reading the package"
+
+    window.click("#verify-cancel")
+    wait_until(
+        "the results never said the validation was cancelled",
+        lambda: session.property("#verify-results", "textContent") == VERIFY_CANCELLED_TEXT,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    wait_until(
+        "the verify process outlived the cancel",
+        lambda: not processes_reading(package),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#verify-results", "textContent") == VERIFY_CANCELLED_TEXT
+    assert status_text(session) == VERIFY_CANCELLED_TEXT
+    assert session.property("#verify-run", "disabled") is False
+    assert session.property("#verify-cancel", "hidden") is True
+    assert session.property("#verify-progress-section", "hidden") is True
+    assert session.property(SAVE_REPORT_BUTTON, "disabled") is True
