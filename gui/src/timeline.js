@@ -36,6 +36,7 @@ export function loadTimelineFromProject(reels, durationsFrames, editRate) {
   }
   buildTimelineData(projectTimelineEntries(reels, durationsFrames, editRate));
   render();
+  startTimelinePolling();
 }
 
 function buildTimelineData(reels) {

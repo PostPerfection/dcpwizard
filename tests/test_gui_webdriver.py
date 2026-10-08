@@ -1212,6 +1212,62 @@ def test_the_preview_in_container_shows_the_frame_the_build_writes(window, tmp_p
     wait_for_shown_frame_size(session, CONTAINER_VIEW_SOURCE_SIZE, "turning the view off never brought the source back")
 
 
+TIMELINE_CLIP_SECONDS = 10
+TIMELINE_SEEK_SECONDS = 5
+TIMELINE_HALFWAY = "50%"
+REELS_VIEW_BUTTON = '.sidebar-btn[data-view="reels"]'
+
+PREVIEW_DURATION = """
+return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => JSON.parse(text).duration);
+"""
+
+# what the preview's scrubber sends while it is dragged
+PREVIEW_SEEK = """
+return window.__TAURI_INTERNALS__.invoke("preview_seek_absolute", {seconds: arguments[0]}).then(() => true);
+"""
+
+RULER_PLAYHEAD_LEFT = """
+return document.getElementById("ruler-playhead")?.style.left ?? null;
+"""
+
+
+def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_path):
+    session = window.session
+    picture = tmp_path / "source.mov"
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"testsrc2=size=640x360:rate={FIXTURE_FPS}:duration={TIMELINE_CLIP_SECONDS}",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        str(picture),
+    )
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", picture)
+    window.click(REELS_VIEW_BUTTON)
+    wait_until(
+        "the project timeline never drew its playhead",
+        lambda: session.execute(RULER_PLAYHEAD_LEFT) is not None,
+        OPEN_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-preview")
+    wait_until(
+        "the preview never reported a duration",
+        lambda: (session.execute(PREVIEW_DURATION) or 0) > 0,
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+
+    session.execute(PREVIEW_SEEK, TIMELINE_SEEK_SECONDS)
+    wait_until(
+        "the timeline playhead never followed the preview",
+        lambda: session.execute(RULER_PLAYHEAD_LEFT) == TIMELINE_HALFWAY,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
 def counted_video_frames(movie):
     probed = subprocess.run(
         (
