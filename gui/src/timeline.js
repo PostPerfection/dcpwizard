@@ -1,11 +1,16 @@
 // DCP Timeline View - renders multi-reel timeline with visual reel segments and playback integration
 import { invoke } from '@tauri-apps/api/core';
-import { projectTimelineEntries, segmentSpan } from './project-timeline.js';
+import { projectTimelineEntries, reelPositionAtFrame, segmentSpan, timelineFrameOfReelPosition } from './project-timeline.js';
 
 let timelineData = null; // { reels: [], totalFrames, editRate }
 let currentReel = -1;
 let playheadFrame = 0;
 let timelinePollingId = null;
+// an opened DCP plays as one composition, a project's preview plays one reel's picture at a time
+let followsProjectReels = false;
+// the reel whose picture the preview plays, null while it plays anything else
+let previewedReelIndex = null;
+let seekProjectReel = async () => {};
 
 export function initTimeline() {
   renderEmpty();
@@ -20,6 +25,7 @@ export async function loadTimelineFromCpl(cplPath) {
       return;
     }
     buildTimelineData(reels);
+    followsProjectReels = false;
     render();
     startTimelinePolling();
   } catch (e) {
@@ -35,8 +41,18 @@ export function loadTimelineFromProject(reels, durationsFrames, editRate) {
     return;
   }
   buildTimelineData(projectTimelineEntries(reels, durationsFrames, editRate));
+  followsProjectReels = true;
   render();
   startTimelinePolling();
+}
+
+export function setPreviewedTimelineReel(reelIndex) {
+  previewedReelIndex = reelIndex;
+}
+
+// the page loads a reel's picture into the preview and seeks it
+export function setProjectReelSeeker(seeker) {
+  seekProjectReel = seeker;
 }
 
 function buildTimelineData(reels) {
@@ -214,15 +230,19 @@ function handleTrackSeek(e) {
 async function seekToPercent(pct) {
   if (!timelineData) return;
   const targetFrame = Math.floor(pct * timelineData.totalFrames);
+  playheadFrame = targetFrame;
+  updatePlayheadPosition();
 
   try {
-    await invoke('preview_seek_absolute', { seconds: targetFrame / (timelineData.editRate || 24) });
+    if (!followsProjectReels) {
+      await invoke('preview_seek_absolute', { seconds: targetFrame / (timelineData.editRate || 24) });
+    } else if (previewedReelIndex !== null) {
+      const { reelIndex, seconds } = reelPositionAtFrame(timelineData.reels, targetFrame);
+      await seekProjectReel(reelIndex, seconds);
+    }
   } catch (e) {
     console.error('[timeline] Failed to seek:', e);
   }
-
-  playheadFrame = targetFrame;
-  updatePlayheadPosition();
 }
 
 function reelAtFrame(frame) {
@@ -254,12 +274,17 @@ export function startTimelinePolling() {
     try {
       const resp = await invoke('preview_get_metadata');
       const meta = JSON.parse(resp);
-      if (meta.position != null) {
+      if (meta.position == null) return;
+      if (!followsProjectReels) {
         // the position is where playback sits in the composition, not in a reel
         const fps = timelineData.editRate || 24;
         playheadFrame = Math.min(Math.floor(meta.position * fps), timelineData.totalFrames);
-        updatePlayheadPosition();
+      } else {
+        const reel = timelineData.reels[previewedReelIndex];
+        if (!reel) return;
+        playheadFrame = timelineFrameOfReelPosition(reel, meta.position);
       }
+      updatePlayheadPosition();
     } catch {
       // mpv not running
     }

@@ -13,7 +13,7 @@ import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js
 import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls-panel.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
-import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject } from "./timeline.js";
+import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setPreviewedTimelineReel, setProjectReelSeeker } from "./timeline.js";
 import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
@@ -2032,13 +2032,23 @@ async function previewSourcePicture(path) {
   const reel = project.reels.find(r => r.picture?.path === path);
   previewShowsJobPicture = Boolean(reel);
   previewedJobReel = reel ?? null;
+  setPreviewedTimelineReel(reel ? project.reels.indexOf(reel) : null);
   setPreviewCrop(reel ? currentCrop() : null);
-  if (!reel) return;
+  if (!reel) return loaded;
   showPreviewTrack(reel.subtitle?.path, "subtitle", generation);
   showPreviewTrack(document.getElementById("prop-ccap")?.value, "closed-caption", generation);
   // the load takes the container view's filters off
   if (containerViewToggle.checked && (await loaded) && generation === previewGeneration) refreshPicturePlacement();
+  return loaded;
 }
+
+// a timeline click in another reel loads that reel's picture first
+setProjectReelSeeker(async (reelIndex, seconds) => {
+  const reel = project.reels[reelIndex];
+  if (!reel?.picture) return;
+  if (previewedJobReel !== reel && !(await previewSourcePicture(reel.picture.path))) return;
+  await invoke("preview_seek_absolute", { seconds });
+});
 
 // A built DCP carries the crop in its pictures already, and its timed text is
 // read back out of the package rather than off the source files.
@@ -2049,6 +2059,7 @@ async function previewPackage(dirPath) {
   const generation = previewGeneration;
   previewShowsJobPicture = false;
   previewedJobReel = null;
+  setPreviewedTimelineReel(null);
   forgetContentKeysIfRefused(dirPath, previewDcp(dirPath, contentKeys));
   setPreviewCrop(null);
   showPreviewTrack(dirPath, "subtitle", generation);

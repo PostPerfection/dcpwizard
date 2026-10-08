@@ -28,3 +28,17 @@ export function segmentSpan(reel, reelCount, totalFrames) {
     widthPercent: (reel.duration_frames / totalFrames) * FULL_TRACK_PERCENT,
   };
 }
+
+// the reel a timeline frame falls in, and how far into that reel it is
+export function reelPositionAtFrame(reels, frame) {
+  const index = reels.findIndex((reel) => frame < reel.startFrame + reel.duration_frames);
+  const reelIndex = index === -1 ? reels.length - 1 : index;
+  const reel = reels[reelIndex];
+  return { reelIndex, seconds: Math.max(0, frame - reel.startFrame) / reel.fps };
+}
+
+// the timeline frame a preview position stands for while the preview plays one reel's picture
+export function timelineFrameOfReelPosition(reel, seconds) {
+  const intoReel = Math.min(Math.floor(seconds * reel.fps), reel.duration_frames);
+  return reel.startFrame + intoReel;
+}
