@@ -1223,6 +1223,14 @@ PREVIEW_DURATION = """
 return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => JSON.parse(text).duration);
 """
 
+PREVIEW_PAUSED = """
+return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => JSON.parse(text).paused);
+"""
+
+PREVIEW_PLAY_PAUSE = """
+return window.__TAURI_INTERNALS__.invoke("preview_play_pause").then(() => true);
+"""
+
 # what the preview's scrubber sends while it is dragged
 PREVIEW_SEEK = """
 return window.__TAURI_INTERNALS__.invoke("preview_seek_absolute", {seconds: arguments[0]}).then(() => true);
@@ -1260,6 +1268,13 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
         "the preview never reported a duration",
         lambda: (session.execute(PREVIEW_DURATION) or 0) > 0,
         PREVIEW_TIMEOUT_SECONDS,
+    )
+    # mpv plays on load, so the playhead only passes through halfway
+    session.execute(PREVIEW_PLAY_PAUSE)
+    wait_until(
+        "the preview never paused",
+        lambda: session.execute(PREVIEW_PAUSED),
+        REACTION_TIMEOUT_SECONDS,
     )
 
     session.execute(PREVIEW_SEEK, TIMELINE_SEEK_SECONDS)
