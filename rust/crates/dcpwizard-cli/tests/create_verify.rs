@@ -12,6 +12,7 @@ const PASSED_LINE: &str = "DCP verification PASSED";
 const SKIP_LINE: &str = "--no-verify: the finished package was not verified";
 const BV21_SECTION_LINE: &str = "Bv2.1 profile check:";
 const BV21_EXTENSION_METADATA_NOTE: &str = "BV2.1 recommends ExtensionMetadata in CPL";
+const CODESTREAM_SUMMARY_CODE: &str = "j2k_codestream_summary";
 
 fn dcpwizard(config_home: &Path) -> Command {
     let mut command = Command::cargo_bin("dcpwizard").unwrap();
@@ -142,6 +143,38 @@ fn verify_strict_runs_the_bv21_profile_check() {
 
     let plain = everything_printed(&verify(&[]));
     assert!(!plain.contains(BV21_SECTION_LINE), "{plain}");
+}
+
+// the GUI's Inspect MXF essence box is the picture check
+#[test]
+fn the_picture_check_reads_every_frame() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = write_source(directory.path());
+    let out = directory.path().join("dcp");
+    assert!(
+        create(&source, &out, config_home.path(), &["--no-verify"])
+            .status
+            .success()
+    );
+    let verify = |extra: &[&str]| {
+        let run = dcpwizard(config_home.path())
+            .args(["verify", "--strict", "--no-hash-check"])
+            .args(extra)
+            .arg(out.join(TITLE))
+            .output()
+            .expect("dcpwizard has to run");
+        everything_printed(&run)
+    };
+
+    let checked = verify(&[]);
+    assert!(
+        checked.contains(CODESTREAM_SUMMARY_CODE)
+            && checked.contains(&format!("across {FRAMES} frames")),
+        "{checked}"
+    );
+    let skipped = verify(&["--no-picture-check"]);
+    assert!(!skipped.contains(CODESTREAM_SUMMARY_CODE), "{skipped}");
 }
 
 #[test]

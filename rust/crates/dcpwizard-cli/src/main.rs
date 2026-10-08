@@ -6262,7 +6262,8 @@ fn run() {
                     skip_picture_check: no_picture_check,
                     skip_bitrate_measurement: false,
                     strict,
-                    scan_every_frame: false,
+                    // the picture check reads every frame's codestream, as dcpdoctor's own does
+                    scan_every_frame: !no_picture_check,
                     ov_dir: ov.map(PathBuf::from),
                 },
             );
