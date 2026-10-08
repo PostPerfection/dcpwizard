@@ -19,7 +19,7 @@ import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
-import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
+import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
@@ -63,22 +63,7 @@ async function open(opts = {}) {
 
 // === Sidebar navigation ===
 document.querySelectorAll(".sidebar-btn[data-view]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".sidebar-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    btn.classList.add("active");
-    const view = document.getElementById(`view-${btn.dataset.view}`);
-    if (view) view.classList.add("active");
-    if (btn.dataset.view === "reels") showProjectTimeline();
-
-    // Auto-refresh jobs when switching to jobs view
-    if (btn.dataset.view === "jobs") {
-      refreshJobs();
-      startJobsPolling();
-    } else {
-      stopJobsPolling();
-    }
-  });
+  btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 
 initGpuSettings();
@@ -1888,6 +1873,8 @@ let selectedPreview = null;
 let previewShownPath = null;
 // the last package the preview loaded, from Recent, the playlist or Open DCP
 let previewedPackage = null;
+// the package directory named like the open project file, when it exists
+let packageBesideProject = null;
 
 function selectPreview(kind, path) {
   selectedPreview = { kind, path };
@@ -2159,6 +2146,7 @@ document.getElementById("post-build-reveal")?.addEventListener("click", () => {
 });
 
 // === Verify ===
+const NO_VERIFY_PACKAGE_TEXT = "No DCP selected";
 // a package chosen in the Verify view stays until another is chosen there
 let verifyPackageChosen = false;
 
@@ -2175,8 +2163,9 @@ function showVerifyPackage(dir) {
 
 function showDefaultVerifyPackage() {
   if (verifyPackageChosen) return;
-  const dir = verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath: submittedPackage });
-  if (dir) showVerifyPackage(dir);
+  const dir = verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath: submittedPackage, packageBesideProject });
+  showVerifyPackage(dir ?? NO_VERIFY_PACKAGE_TEXT);
+  document.getElementById("verify-run").disabled = !dir;
 }
 
 document.getElementById("verify-browse")?.addEventListener("click", async () => {
@@ -2912,7 +2901,7 @@ function serializeBuildPanel() {
   return serializeForm({ ...buildPanel(), audioMap: audioMapSpec() });
 }
 
-async function restoreBuildPanel(saved) {
+async function restoreBuildPanel(saved, projectPath) {
   const { form, notRestored } = restoreFormState(saved, buildPanelDefaults, buildPanel());
   nextAssetId = Math.max(0, ...project.assets.map((asset) => asset.id)) + 1;
   nextCplId = Math.max(0, ...project.compositions.map((composition) => composition.id)) + 1;
@@ -2935,6 +2924,8 @@ async function restoreBuildPanel(saved) {
   submittedPackage = null;
   openedPackage = null;
   previewedPackage = null;
+  const packagePath = projectPath ? packagePathBeside(projectPath) : null;
+  packageBesideProject = packagePath && (await existsInScope(packagePath)) ? packagePath : null;
   clearPreviewSelection();
   stopPreview();
   if (isPreviewVisible()) previewCurrentTarget();
@@ -2948,6 +2939,7 @@ async function restoreBuildPanel(saved) {
   await refreshLibrary();
   const inLibrary = new Set(libraryItems.map((item) => item.name));
   notRestored.push(...joined.filter((name) => !inLibrary.has(name)).map((name) => `library item ${name}`));
+  if (document.getElementById("view-verify").classList.contains("active")) showDefaultVerifyPackage();
   return notRestored;
 }
 

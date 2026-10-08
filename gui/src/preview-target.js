@@ -10,11 +10,11 @@ export function previewTarget({ selectedPreview, firstPicturePath, openedPackage
   return null;
 }
 
-// the package the Verify view checks when no package was chosen there
-export function verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath }) {
+// the package the Verify view checks when none was chosen there, the open project's own package last
+export function verifyTarget({ previewedPackage, selectedPreview, openedPackage, outputPath, packageBesideProject }) {
   if (previewedPackage) return previewedPackage;
   if (selectedPreview?.kind === PREVIEW_KIND_PACKAGE) return selectedPreview.path;
-  return openedPackage ?? outputPath ?? null;
+  return openedPackage ?? outputPath ?? packageBesideProject ?? null;
 }
 
 export function previewButtonEnabled(target, shownPath) {

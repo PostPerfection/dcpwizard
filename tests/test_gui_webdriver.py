@@ -129,7 +129,9 @@ MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
 NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
 
 VERIFY_CHORD = "ctrl+3"
+VERIFY_VIEW_BUTTON = '.sidebar-btn[data-view="verify"]'
 VERIFY_VIEW = "view-verify"
+NO_VERIFY_PACKAGE_TEXT = "No DCP selected"
 VERIFY_STATUS_VERDICTS = {"Verification passed": "PASSED", "Verification failed": "FAILED"}
 VERIFY_TIMEOUT_SECONDS = 300
 PDF_TIMEOUT_SECONDS = 60
@@ -1390,6 +1392,65 @@ def test_the_verify_view_checks_the_package_played_from_recent(window, two_reel_
         REACTION_TIMEOUT_SECONDS,
     )
     assert session.property("#verify-run", "disabled") is False
+
+
+# the row's own buttons queue, retitle or delete the package instead of opening it
+def open_from_recent(window, project_path):
+    window.click("#btn-recent-projects")
+    window.click(f'.recent-item[data-path="{project_path}"] .recent-title')
+    wait_until(
+        "the Recent list stayed open after a row was clicked",
+        lambda: window.session.property("#recent-list", "hidden") is True,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def wait_for_verify_path(session, path):
+    wait_until(
+        f"the Verify view never read {path}",
+        lambda: session.property("#verify-path", "textContent") == path,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def test_the_verify_view_checks_the_package_of_a_project_opened_from_recent(window, two_reel_dcp):
+    session = window.session
+    choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
+    wait_until(
+        "the opened project never reached the Recent list",
+        lambda: session.find(".recent-item"),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    open_from_recent(window, two_reel_dcp.project_path)
+
+    window.click(VERIFY_VIEW_BUTTON)
+    wait_for_view(session, VERIFY_VIEW)
+    wait_for_verify_path(session, str(two_reel_dcp.directory))
+    assert session.property("#verify-run", "disabled") is False
+
+
+def test_a_project_opened_from_recent_refreshes_the_verify_view_in_place(window, two_reel_dcp, tmp_path):
+    session = window.session
+    choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
+    wait_until(
+        "the opened project never reached the Recent list",
+        lambda: session.find(".recent-item"),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.press(VERIFY_CHORD)
+    wait_for_view(session, VERIFY_VIEW)
+    wait_for_verify_path(session, str(two_reel_dcp.directory))
+
+    new_project_path = tmp_path / f"{SECOND_PROJECT_TITLE}.{PROJECT_WIZARD}"
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, new_project_path)
+    wait_for_status(session, f"Saved {new_project_path}", REACTION_TIMEOUT_SECONDS)
+    wait_for_verify_path(session, NO_VERIFY_PACKAGE_TEXT)
+    assert session.property("#verify-run", "disabled") is True
+
+    open_from_recent(window, two_reel_dcp.project_path)
+    wait_for_verify_path(session, str(two_reel_dcp.directory))
+    assert session.property("#verify-run", "disabled") is False
+    assert active_view(session) == VERIFY_VIEW
 
 
 def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_cpl, tmp_path):

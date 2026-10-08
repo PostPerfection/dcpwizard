@@ -83,3 +83,20 @@ test("a package the preview loaded comes before every other", () => {
     "/dcps/playing",
   );
 });
+
+test("with nothing else to check Verify checks the package beside the open project", () => {
+  const source = { kind: PREVIEW_KIND_SOURCE, path: "/media/clip.mov" };
+  assert.equal(
+    verifyTarget({ previewedPackage: null, selectedPreview: source, openedPackage: null, outputPath: null, packageBesideProject: "/dcps/project" }),
+    "/dcps/project",
+  );
+});
+
+test("the package beside the open project loses to every other package", () => {
+  const picked = { kind: PREVIEW_KIND_PACKAGE, path: "/dcps/picked" };
+  const beside = { packageBesideProject: "/dcps/project" };
+  assert.equal(verifyTarget({ ...beside, previewedPackage: "/dcps/playing" }), "/dcps/playing");
+  assert.equal(verifyTarget({ ...beside, selectedPreview: picked }), "/dcps/picked");
+  assert.equal(verifyTarget({ ...beside, openedPackage: "/dcps/opened" }), "/dcps/opened");
+  assert.equal(verifyTarget({ ...beside, outputPath: "/dcps/built" }), "/dcps/built");
+});
