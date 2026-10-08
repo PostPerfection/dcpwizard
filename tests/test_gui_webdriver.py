@@ -1350,6 +1350,21 @@ def pdf_text(pdf):
     return comparable_text(extracted.stdout)
 
 
+def test_the_verify_view_checks_the_opened_package(window, one_reel_cpl):
+    session = window.session
+    package = one_reel_cpl.parent
+
+    choose_in_dialog(window, "#btn-open-dcp", package)
+    window.press(VERIFY_CHORD)
+    wait_for_view(session, VERIFY_VIEW)
+    wait_until(
+        "the opened package never became the one to validate",
+        lambda: session.property("#verify-path", "textContent") == str(package),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#verify-run", "disabled") is False
+
+
 def test_a_validated_package_saves_its_report_as_html_and_pdf(window, one_reel_cpl, tmp_path):
     session = window.session
     package = one_reel_cpl.parent

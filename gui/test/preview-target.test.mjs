@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { previewButtonEnabled, previewTarget, PREVIEW_KIND_PACKAGE, PREVIEW_KIND_SOURCE } from '../src/preview-target.js';
+import { previewButtonEnabled, previewTarget, verifyTarget, PREVIEW_KIND_PACKAGE, PREVIEW_KIND_SOURCE } from '../src/preview-target.js';
 
 const EVERY_TIER = {
   selectedPreview: { kind: PREVIEW_KIND_SOURCE, path: '/assets/picked.mov' },
@@ -62,4 +62,16 @@ test('the button comes back on once the panel shows nothing', () => {
 
 test('the button is off when there is nothing to open', () => {
   assert.equal(previewButtonEnabled(null, null), false);
+});
+
+test("Verify checks the recent package picked for preview", () => {
+  const picked = { kind: PREVIEW_KIND_PACKAGE, path: "/dcps/picked" };
+  assert.equal(verifyTarget({ selectedPreview: picked, openedPackage: "/dcps/opened", outputPath: "/dcps/built" }), "/dcps/picked");
+});
+
+test("with a source picked Verify checks the opened package, then the last build", () => {
+  const source = { kind: PREVIEW_KIND_SOURCE, path: "/media/clip.mov" };
+  assert.equal(verifyTarget({ selectedPreview: source, openedPackage: "/dcps/opened", outputPath: "/dcps/built" }), "/dcps/opened");
+  assert.equal(verifyTarget({ selectedPreview: source, openedPackage: null, outputPath: "/dcps/built" }), "/dcps/built");
+  assert.equal(verifyTarget({ selectedPreview: null, openedPackage: null, outputPath: null }), null);
 });

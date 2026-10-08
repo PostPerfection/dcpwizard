@@ -5,7 +5,7 @@ import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
 import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
-import { previewTarget, previewButtonEnabled, PREVIEW_KIND_SOURCE } from "./preview-target.js";
+import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
 import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
@@ -99,6 +99,7 @@ function switchView(viewName) {
   const view = document.getElementById(`view-${viewName}`);
   if (view) view.classList.add("active");
   if (viewName === "reels") showProjectTimeline();
+  if (viewName === "verify") showDefaultVerifyPackage();
   if (viewName === "jobs") { refreshJobs(); startJobsPolling(); } else { stopJobsPolling(); }
 }
 
@@ -2154,15 +2155,31 @@ document.getElementById("post-build-reveal")?.addEventListener("click", () => {
 });
 
 // === Verify ===
-document.getElementById("verify-browse")?.addEventListener("click", async () => {
-  const dir = await open({ directory: true });
-  if (!dir) return;
-  document.getElementById("verify-path").textContent = dir;
+// a package chosen in the Verify view stays until another is chosen there
+let verifyPackageChosen = false;
+
+function showVerifyPackage(dir) {
+  const path = document.getElementById("verify-path");
+  if (path.textContent === dir) return;
+  path.textContent = dir;
   document.getElementById("verify-run").disabled = false;
   const resultsBox = document.getElementById("verify-results");
   resultsBox.textContent = "";
   resultsBox.classList.remove("visible");
   setVerifyReportSavable(false);
+}
+
+function showDefaultVerifyPackage() {
+  if (verifyPackageChosen) return;
+  const dir = verifyTarget({ selectedPreview, openedPackage, outputPath: submittedPackage });
+  if (dir) showVerifyPackage(dir);
+}
+
+document.getElementById("verify-browse")?.addEventListener("click", async () => {
+  const dir = await open({ directory: true });
+  if (!dir) return;
+  verifyPackageChosen = true;
+  showVerifyPackage(dir);
 });
 
 async function runVerification() {
