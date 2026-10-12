@@ -1364,7 +1364,7 @@ enum Commands {
         #[arg(long, default_value = "16")]
         bit_depth: u32,
     },
-    /// Re-encode an existing DCP's picture essence to a lower bandwidth
+    /// Re-encode an existing DCP's picture essence at another bandwidth or in another container
     TranscodeDcp {
         /// Input DCP directory
         #[arg(short, long)]
@@ -1372,15 +1372,18 @@ enum Commands {
         /// Output DCP directory (must differ from input)
         #[arg(short, long)]
         output: String,
-        /// Target picture bandwidth in Mbit/s
+        /// Target picture bandwidth in Mbit/s. Unset re-encodes at the source
+        /// picture's own average bandwidth
         #[arg(long)]
-        video_bit_rate: u32,
-        /// Optional target width (with --height, rescales the picture)
+        video_bit_rate: Option<u32>,
+        /// Fit the picture into this container, keeping its aspect: 2k-scope,
+        /// 2k-flat, 2k-full, 4k-scope, 4k-flat, 4k-full
         #[arg(long)]
-        width: Option<u32>,
-        /// Optional target height (with --width, rescales the picture)
-        #[arg(long)]
-        height: Option<u32>,
+        container: Option<String>,
+        /// Fit the picture into a custom container WxH (e.g. 1920x1080). Must be
+        /// even and fit within the 4K (4096x2160) container.
+        #[arg(long, conflicts_with = "container")]
+        container_dims: Option<String>,
         /// KDM XML to decrypt an encrypted source (needs --recipient-key or the recipientKey preference)
         #[arg(long)]
         kdm: Option<String>,
@@ -6204,18 +6207,27 @@ fn run() {
             input,
             output,
             video_bit_rate,
-            width,
-            height,
+            container,
+            container_dims,
             kdm,
             recipient_key,
             keys,
         } => {
+            // transcode-dcp has no --fourk, so custom dims may reach the 4K frame
+            let container =
+                match resolve_container(container.as_deref(), container_dims.as_deref(), true) {
+                    Ok(NO_CONTAINER) => None,
+                    Ok(container) => Some(container),
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        std::process::exit(1);
+                    }
+                };
             let config = dcpwizard_core::j2k_transcode::DcpTranscodeConfig {
                 input_dir: PathBuf::from(input),
                 output_dir: PathBuf::from(output),
-                target_bitrate_mbps: Some(video_bit_rate),
-                target_width: width.unwrap_or(0),
-                target_height: height.unwrap_or(0),
+                target_bitrate_mbps: video_bit_rate,
+                container,
                 recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
                     kdm.as_deref().map(Path::new),
                     recipient_key.map(PathBuf::from),
@@ -6226,6 +6238,10 @@ fn run() {
                 watermark: None,
                 encode_threads,
             };
+            if let Err(e) = dcpwizard_core::j2k_transcode::check_picture_changes(&config) {
+                tracing::error!("{e}");
+                std::process::exit(1);
+            }
             dcpwizard_core::j2k_transcode::transcode_dcp(&config)
         }
 
@@ -7354,8 +7370,6 @@ fn run() {
                 input_dir: PathBuf::from(input),
                 output_dir: PathBuf::from(output),
                 target_bitrate_mbps: video_bit_rate,
-                target_width: 0,
-                target_height: 0,
                 recipient_key: dcpwizard_core::preferences::recipient_key_or_preference(
                     kdm.as_deref().map(Path::new),
                     recipient_key.map(PathBuf::from),
@@ -7364,6 +7378,7 @@ fn run() {
                 kdm: kdm.map(PathBuf::from),
                 keys: keys.map(PathBuf::from),
                 watermark: Some(mark),
+                container: None,
                 encode_threads,
             };
             dcpwizard_core::j2k_transcode::transcode_dcp(&config)

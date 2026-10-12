@@ -55,6 +55,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Picture MXF import**: a JPEG 2000 picture MXF is accepted as the video, its codestreams are wrapped unchanged and the frame rate is its edit rate. Encrypted and stereoscopic picture MXFs are refused
 - **DCP export** via `export`: a DCP of any number of reels, written in reel order, encrypted with a KDM or KEYS.json or not, to ProRes, H.264, H.265, DNxHR or PNG. The JPEG 2000 decodes through grok and the decrypted picture stays in memory
 - **DCP export in the GUI**: the Tools view runs the same export with the same KDM, recipient key and KEYS.json options, and shows a progress bar with frames and fps
+- **DCP re-encode** via `transcode-dcp`: an existing DCP's picture at another bandwidth, or fitted into another container with `--container` or `--container-dims`, keeping its aspect with black bars. Sound and timed text ship unchanged
 - **Video transcoding**, ProRes, H.264, H.265 and DNxHR are decoded by ffmpeg straight into the J2K encode
 - **Image sequence input**, DPX, TIFF, EXR, PNG, JPEG, BMP
 - **Scale / Crop / Letterbox**, target resolution adaptation
@@ -459,6 +460,11 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp --check
 # subtitle tracks are copied unchanged). Encrypted input needs --kdm with
 # --recipient-key, or --keys, and is written out decrypted
 dcpwizard transcode-dcp --input "./dcp/My Film" --output ./dcp_light --video-bit-rate 100
+
+# Move a flat DCP into the scope container: the picture is cropped to the active
+# area the source CPL declares, scaled to fit with its aspect kept and centred
+# with black bars. Without --video-bit-rate each reel keeps its own bandwidth
+dcpwizard transcode-dcp --input "./dcp/My Film" --output ./dcp_scope --container 2k-scope
 
 # Create with encryption. Content keys are generated with a CSPRNG and every
 # essence is AES-128 encrypted at wrap time: picture, sound, subtitle,

@@ -18,8 +18,13 @@ const BITS_PER_MEGABIT: u64 = 1_000_000;
 /// The CPL element a stereoscopic reel declares its picture as (ST 429-10).
 const STEREOSCOPIC_PICTURE_ELEMENT: &str = "MainStereoscopicPicture";
 
+// ffmpeg reads no packed 12-bit RGB TIFF
+const FIT_SAMPLE_PRECISION: u8 = 16;
+const FIT_PIXEL_FORMAT: &str = "rgb48le";
+const FIT_TIFF_COMPRESSION: &str = "raw";
+
 /// Re-encode an existing DCP's picture essence at a different bandwidth (and,
-/// optionally, resolution), copying audio and subtitle tracks unchanged. With
+/// optionally, into another container), copying audio and subtitle tracks unchanged. With
 /// `watermark` set the same pass marks the picture, which is what the
 /// `watermark` command is.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -30,9 +35,9 @@ pub struct DcpTranscodeConfig {
     /// source picture's own average bandwidth, which is what marking a DCP
     /// asks for: the mark is the only thing meant to change.
     pub target_bitrate_mbps: Option<u32>,
-    /// optional target resolution; 0 keeps the source dimensions
-    pub target_width: u32,
-    pub target_height: u32,
+    /// container raster the picture is fitted into with its aspect kept.
+    /// `None` keeps the source raster untouched.
+    pub container: Option<(u32, u32)>,
     /// KDM XML for an encrypted source (with `recipient_key`). Each source frame
     /// is decrypted and decoded in memory; the re-encoded output is cleartext.
     pub kdm: Option<PathBuf>,
@@ -73,6 +78,48 @@ struct NewPicture {
     height: u32,
     edit_rate_num: u32,
     edit_rate_den: u32,
+}
+
+/// Refuse a transcode that names no bandwidth, no mark and no container other
+/// than the source's own raster: the picture would only lose quality.
+pub fn check_picture_changes(config: &DcpTranscodeConfig) -> Result<(), String> {
+    if config.target_bitrate_mbps.is_some() || config.watermark.is_some() {
+        return Ok(());
+    }
+    if let Some(container) = config.container
+        && source_picture_rasters(&config.input_dir)?
+            .iter()
+            .any(|raster| *raster != container)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "nothing would change in {}: without --video-bit-rate or a container whose raster \
+         differs from the source picture's, the picture would be re-encoded as it is and \
+         only lose quality",
+        config.input_dir.display()
+    ))
+}
+
+/// The stored raster of every reel's picture, read from the MXF descriptors.
+fn source_picture_rasters(input_dir: &Path) -> Result<Vec<(u32, u32)>, String> {
+    let cpls = crate::multi_cpl::list_cpls(input_dir);
+    let cpl = cpls
+        .first()
+        .ok_or_else(|| format!("No CPL found in {}", input_dir.display()))?;
+    crate::multi_cpl::get_timeline(&input_dir.join(&cpl.file_path))
+        .iter()
+        .map(|entry| {
+            let mut reader = MxfReader::new();
+            reader
+                .open_read(&entry.picture_file)
+                .map_err(|e| format!("Failed to open picture MXF {}: {e}", entry.picture_file))?;
+            let descriptor = reader
+                .picture_descriptor()
+                .map_err(|e| format!("Failed to read picture descriptor: {e}"))?;
+            Ok((descriptor.stored_width, descriptor.stored_height))
+        })
+        .collect()
 }
 
 /// Transcode an existing DCP: re-encode every reel's picture essence to the
@@ -142,6 +189,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
     } else {
         crate::Standard::Smpte
     };
+    let source_active_area = crate::cpl::active_area_from_cpl(&cpl_content);
 
     if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
         tracing::error!("Failed to create output directory: {e}");
@@ -159,7 +207,13 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
             tracing::error!("reel {} picture MXF not found", entry.reel_number);
             return -1;
         }
-        let Some(pic) = transcode_picture(&src_pic, config, key_source.as_ref()) else {
+        let Some(pic) = transcode_picture(
+            &src_pic,
+            config,
+            key_source.as_ref(),
+            source_active_area,
+            standard,
+        ) else {
             return -1;
         };
 
@@ -387,6 +441,8 @@ fn transcode_picture(
     src_mxf: &Path,
     config: &DcpTranscodeConfig,
     key_source: Option<&postkit::content_keys::ContentKeys>,
+    source_active_area: Option<(u32, u32)>,
+    standard: crate::Standard,
 ) -> Option<NewPicture> {
     let mut reader = MxfReader::new();
     if let Err(e) = reader.open_read(&src_mxf.to_string_lossy()) {
@@ -434,12 +490,31 @@ fn transcode_picture(
     let edit_den = desc.edit_rate.denominator.max(1) as u32;
     let fps = (edit_num as f64 / edit_den as f64).round() as u32;
 
-    let resize = config.target_width > 0 && config.target_height > 0;
-    let (out_w, out_h) = if resize {
-        (config.target_width, config.target_height)
-    } else {
-        (src_w, src_h)
+    let (out_w, out_h) = config.container.unwrap_or((src_w, src_h));
+    let fit_plan = config
+        .container
+        .map(|container| {
+            container_fit(
+                src_mxf,
+                (src_w, src_h),
+                source_active_area,
+                container,
+                fps,
+                standard,
+            )
+        })
+        .transpose();
+    let fit_plan = match fit_plan {
+        Ok(plan) => plan.filter(|plan| !plan.is_identity()),
+        Err(e) => {
+            tracing::error!("{e}");
+            return None;
+        }
     };
+    if let Some(plan) = &fit_plan {
+        tracing::info!("{}: {}", src_mxf.display(), plan.describe());
+    }
+    let fit_filters = fit_plan.map(|plan| plan.filters.join(","));
 
     let bitrate_mbps = match config.target_bitrate_mbps {
         Some(mbps) => mbps,
@@ -471,7 +546,7 @@ fn transcode_picture(
         return None;
     }
 
-    let resize_to = resize.then_some((out_w, out_h));
+    let fit_filters = fit_filters.as_deref();
     let work_dir = work.as_path();
     let writer_info = &info;
     let open_loader = || -> Result<postkit::encode::FrameLoader<'_>, String> {
@@ -490,7 +565,7 @@ fn transcode_picture(
                 crypto.as_mut(),
                 frame_index as u32,
                 &mut buf,
-                resize_to,
+                fit_filters,
                 work_dir,
             )
         }))
@@ -553,6 +628,46 @@ fn transcode_picture(
         edit_rate_num: edit_num,
         edit_rate_den: edit_den,
     })
+}
+
+/// Crop the source to the active area its CPL declares, centred in the stored
+/// raster, then fit that onto the container the way `create` fits a source.
+fn container_fit(
+    src_mxf: &Path,
+    source_raster: (u32, u32),
+    source_active_area: Option<(u32, u32)>,
+    container: (u32, u32),
+    fps: u32,
+    standard: crate::Standard,
+) -> Result<postkit::picture_processing::PicturePlan, String> {
+    let is_4k = crate::Resolution::for_raster(container.0, container.1) == crate::Resolution::FourK;
+    crate::hfr::validate_fps_resolution(fps, is_4k, standard == crate::Standard::Smpte)?;
+    let (stored_width, stored_height) = source_raster;
+    let (active_width, active_height) = source_active_area.unwrap_or(source_raster);
+    let unused_width = stored_width.saturating_sub(active_width);
+    let unused_height = stored_height.saturating_sub(active_height);
+    let options = crate::source_picture::SourcePictureOptions {
+        crop: postkit::picture_processing::Crop {
+            left: unused_width / 2,
+            right: unused_width - unused_width / 2,
+            top: unused_height / 2,
+            bottom: unused_height - unused_height / 2,
+        },
+        ..Default::default()
+    };
+    let geometry = crate::source_picture::EncodeGeometry {
+        forced_raster: Some(container),
+        container: Some(container),
+    };
+    let resolved = crate::source_picture::resolve_picture(
+        &options,
+        src_mxf,
+        stored_width,
+        stored_height,
+        &geometry,
+        false,
+    )?;
+    Ok(resolved.plan)
 }
 
 /// The picture's own average bandwidth in Mbit/s, rounded up: every frame's
@@ -681,7 +796,7 @@ fn from_decrypt(s: crate::decrypt::ShippedAsset) -> ShippedAsset {
 }
 
 /// Read one source frame, decrypting it when the essence is encrypted, decode
-/// it in memory, and hand it to the encoder as planar components. A resize goes
+/// it in memory, and hand it to the encoder as planar components. A fit goes
 /// through ffmpeg, which reads and writes a TIFF in `work`.
 fn decode_source_frame(
     reader: &mut MxfReader,
@@ -691,7 +806,7 @@ fn decode_source_frame(
     )>,
     index: u32,
     buf: &mut [u8],
-    resize_to: Option<(u32, u32)>,
+    fit_filters: Option<&str>,
     work: &Path,
 ) -> Result<RawFrame, String> {
     let (dec, hmac) = match crypto {
@@ -703,77 +818,95 @@ fn decode_source_frame(
         .map_err(|e| format!("Failed to read frame {index} (wrong key or MIC mismatch): {e}"))?;
     let decoded = postkit::grok_decoder::decode(buf[..n].to_vec(), 0)
         .map_err(|e| format!("cannot decode frame {index}: {e}"))?;
-    let precision = decoded.precision;
-    let (width, height) = (decoded.width, decoded.height);
-    let components: [Vec<i32>; 3] = decoded
-        .components
-        .try_into()
-        .map_err(|_| format!("frame {index} does not carry three components"))?;
-
-    let Some((out_w, out_h)) = resize_to else {
+    let Some(filters) = fit_filters else {
+        let components: [Vec<i32>; 3] = decoded
+            .components
+            .try_into()
+            .map_err(|_| format!("frame {index} does not carry three components"))?;
         return Ok(RawFrame::Planar {
             components,
-            width,
-            height,
-            precision,
+            width: decoded.width,
+            height: decoded.height,
+            precision: decoded.precision,
             index: u64::from(index),
         });
     };
-    let tif = work.join(format!("frame_{index:07}.tif"));
-    let decoded_frame = postkit::grok_decoder::DecodedFrame {
-        width,
-        height,
-        precision,
-        components: components.to_vec(),
-        chroma_subsampled: false,
-    };
-    postkit::grok::write_tiff_rgb(
-        &tif,
-        width,
-        height,
-        precision,
-        &decoded_frame.interleaved_samples()?,
-    )?;
-    if !scale_tiff(&tif, out_w, out_h) {
-        return Err(format!("cannot scale frame {index} to {out_w}x{out_h}"));
-    }
-    let scaled = crate::grok::load_tiff(&tif);
-    let _ = std::fs::remove_file(&tif);
-    let scaled = scaled?;
+    let fitted = fit_frame(
+        &decoded,
+        filters,
+        &work.join(format!("frame_{index:07}.tif")),
+    )
+    .map_err(|e| format!("cannot fit frame {index} into the container: {e}"))?;
     Ok(RawFrame::Planar {
-        components: scaled.components,
-        width: scaled.width,
-        height: scaled.height,
-        precision: scaled.precision,
+        components: fitted.components,
+        width: fitted.width,
+        height: fitted.height,
+        precision: decoded.precision,
         index: u64::from(index),
     })
 }
 
-/// Scale a TIFF in place to the target dimensions using ffmpeg.
-fn scale_tiff(tif: &Path, w: u32, h: u32) -> bool {
-    let tmp = tif.with_extension("scaled.tif");
-    let out = std::process::Command::new("ffmpeg")
-        .arg("-y")
-        .arg("-i")
+/// Run the fit's ffmpeg filters over one decoded frame and bring the samples
+/// back at the frame's own precision.
+fn fit_frame(
+    decoded: &postkit::grok_decoder::DecodedFrame,
+    filters: &str,
+    tif: &Path,
+) -> Result<crate::grok::TiffFrame, String> {
+    let shift = FIT_SAMPLE_PRECISION
+        .checked_sub(decoded.precision)
+        .ok_or_else(|| {
+            format!(
+                "{}-bit samples are deeper than the fit runs at",
+                decoded.precision
+            )
+        })?;
+    let widened: Vec<u16> = decoded
+        .interleaved_samples()?
+        .into_iter()
+        .map(|sample| sample << shift)
+        .collect();
+    postkit::grok::write_tiff_rgb(
+        tif,
+        decoded.width,
+        decoded.height,
+        FIT_SAMPLE_PRECISION,
+        &widened,
+    )?;
+    let fitted_tif = tif.with_extension("fitted.tif");
+    let ffmpeg = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-i"])
         .arg(tif)
-        .arg("-vf")
-        .arg(format!("scale={w}:{h}"))
-        .arg(&tmp)
+        .args(["-vf", filters, "-pix_fmt", FIT_PIXEL_FORMAT])
+        .args(["-compression_algo", FIT_TIFF_COMPRESSION])
+        .arg(&fitted_tif)
         .output();
-    match out {
-        Ok(o) if o.status.success() => std::fs::rename(&tmp, tif).is_ok(),
-        Ok(o) => {
-            tracing::error!(
-                "ffmpeg scale failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
-            false
-        }
-        Err(e) => {
-            tracing::error!("Failed to run ffmpeg: {e}");
-            false
+    let _ = std::fs::remove_file(tif);
+    let ffmpeg = ffmpeg.map_err(|e| format!("cannot run ffmpeg: {e}"))?;
+    if !ffmpeg.status.success() {
+        let _ = std::fs::remove_file(&fitted_tif);
+        return Err(format!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&ffmpeg.stderr)
+        ));
+    }
+    let fitted = crate::grok::load_tiff(&fitted_tif);
+    let _ = std::fs::remove_file(&fitted_tif);
+    let mut fitted = fitted?;
+    if fitted.precision != FIT_SAMPLE_PRECISION {
+        return Err(format!(
+            "ffmpeg wrote {}-bit samples where {FIT_SAMPLE_PRECISION} were asked for",
+            fitted.precision
+        ));
+    }
+    let narrowed_maximum = (1i32 << decoded.precision) - 1;
+    let rounding = (1i32 << shift) >> 1;
+    for component in &mut fitted.components {
+        for sample in component.iter_mut() {
+            *sample = ((*sample + rounding) >> shift).min(narrowed_maximum);
         }
     }
+    Ok(fitted)
 }
 
 fn sorted_files(dir: &Path) -> Vec<PathBuf> {
@@ -832,6 +965,38 @@ mod tests {
         assert_eq!(a.filename, "sound_the-id.mxf");
         assert!(out.join(&a.filename).exists());
         assert_eq!(a.size, 13);
+    }
+
+    const FLAT: (u32, u32) = (1998, 1080);
+    const FOUR_K_FLAT: (u32, u32) = (3996, 2160);
+    const HIGH_FRAME_RATE: u32 = 48;
+
+    #[test]
+    fn a_container_the_source_already_fills_runs_no_filters() {
+        let plan = container_fit(
+            Path::new("/source/never-read.mxf"),
+            FLAT,
+            Some(FLAT),
+            FLAT,
+            24,
+            crate::Standard::Smpte,
+        )
+        .unwrap();
+        assert!(plan.is_identity(), "{:?}", plan.filters);
+    }
+
+    #[test]
+    fn a_four_k_container_at_a_high_frame_rate_is_refused() {
+        let refused = container_fit(
+            Path::new("/source/never-read.mxf"),
+            FLAT,
+            None,
+            FOUR_K_FLAT,
+            HIGH_FRAME_RATE,
+            crate::Standard::Smpte,
+        )
+        .unwrap_err();
+        assert!(refused.contains("requires a 2K container"), "{refused}");
     }
 
     #[test]

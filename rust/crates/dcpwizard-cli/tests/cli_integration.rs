@@ -734,6 +734,94 @@ fn create_encodes_a_source_that_already_is_the_forced_container_raster() {
     );
 }
 
+fn file_starting_with(dir: &std::path::Path, prefix: &str) -> std::path::PathBuf {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with(prefix))
+        .unwrap_or_else(|| panic!("no {prefix}* in {}", dir.display()))
+}
+
+fn flat_dcp(dir: &std::path::Path) -> std::path::PathBuf {
+    let video = dir.join("flat.mp4");
+    write_test_video(&video, 1998, 1080);
+    let source = dir.join("source");
+    cmd()
+        .args(["create", "--title", "T", "--video"])
+        .arg(&video)
+        .arg("-o")
+        .arg(&source)
+        .args(["--container", "2k-flat"])
+        .assert()
+        .success();
+    source.join("T")
+}
+
+#[test]
+fn transcode_dcp_fits_a_flat_dcp_into_the_scope_container() {
+    let dir = TempDir::new().unwrap();
+    let source = flat_dcp(dir.path());
+    let scope = dir.path().join("scope");
+
+    cmd()
+        .args(["transcode-dcp", "--input"])
+        .arg(&source)
+        .arg("--output")
+        .arg(&scope)
+        .args(["--container", "2k-scope"])
+        .assert()
+        .success();
+
+    let mut reader = asdcplib::jp2k::MxfReader::new();
+    reader
+        .open_read(&file_starting_with(&scope, "picture").to_string_lossy())
+        .expect("open the transcoded picture");
+    let descriptor = reader.picture_descriptor().expect("picture descriptor");
+    assert_eq!(
+        (descriptor.stored_width, descriptor.stored_height),
+        (2048, 858)
+    );
+    let cpl = std::fs::read_to_string(file_starting_with(&scope, "CPL_")).unwrap();
+    assert!(
+        cpl.contains("<ScreenAspectRatio>2048 858</ScreenAspectRatio>"),
+        "{cpl}"
+    );
+}
+
+#[test]
+fn transcode_dcp_refuses_a_run_that_changes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let source = flat_dcp(dir.path());
+    let output = dir.path().join("unchanged");
+    for flags in [&[][..], &["--container", "2k-flat"][..]] {
+        cmd()
+            .args(["transcode-dcp", "--input"])
+            .arg(&source)
+            .arg("--output")
+            .arg(&output)
+            .args(flags)
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("nothing would change"));
+        assert!(!output.exists(), "a refused run writes nothing: {flags:?}");
+    }
+}
+
+#[test]
+fn transcode_dcp_refuses_a_container_with_custom_container_dims() {
+    let dir = TempDir::new().unwrap();
+    cmd()
+        .args(["transcode-dcp", "--input"])
+        .arg(dir.path())
+        .arg("--output")
+        .arg(dir.path().join("out"))
+        .args(["--container", "2k-scope", "--container-dims", "1920x1080"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
 /// The scratch a build writes belongs to the build, not to the package, and a
 /// package that was never written keeps it for `--resume`. The ASSETMAP is the
 /// last thing `create_dcp` writes and its name is fixed, so a directory in its
