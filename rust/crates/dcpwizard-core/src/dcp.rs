@@ -250,7 +250,7 @@ pub trait ProgressSink {
     fn frames(&self, _done: u64, _total: u64) {}
 }
 
-struct NoProgress;
+pub(crate) struct NoProgress;
 impl ProgressSink for NoProgress {
     fn stage(&self, _percent: u32, _message: &str) {}
     fn cancelled(&self) -> bool {
@@ -306,7 +306,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     }
 }
 
-const CANCELLED_MESSAGE: &str = "cancelled between stages";
+pub(crate) const CANCELLED_MESSAGE: &str = "cancelled between stages";
 
 /// As [`create_dcp`], reporting coarse stage progress and honouring cooperative
 /// cancellation through `progress`. Fails with `CANCELLED_MESSAGE` when cancelled

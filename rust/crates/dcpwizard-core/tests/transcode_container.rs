@@ -3,15 +3,20 @@
 //! the output CPL declares the container. Every check reads the output back.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-use dcpwizard_core::dcp::{DcpConfig, create_dcp};
-use dcpwizard_core::j2k_transcode::{DcpTranscodeConfig, check_picture_changes, transcode_dcp};
+use dcpwizard_core::dcp::{DcpConfig, ProgressSink, create_dcp};
+use dcpwizard_core::j2k_transcode::{
+    DcpTranscodeConfig, check_picture_changes, transcode_dcp, transcode_dcp_with_progress,
+};
 use postkit::grok_encoder::{self, CompressParams, RawFrame};
 
 const FPS: u32 = 24;
 const FRAMES: usize = 2;
+// a SMPTE reel lasts at least a second
+const REEL_FRAMES: usize = FPS as usize;
+const REEL_COUNT: usize = 2;
 const SAMPLE_RATE: u32 = 48_000;
 const DCI_PRECISION: u8 = 12;
 const FLAT: (u32, u32) = (1998, 1080);
@@ -30,8 +35,13 @@ const REENCODE_TOLERANCE: i32 = 32;
 const EDGE_MARGIN: u32 = 8;
 
 /// Encode one 12-bit frame whose every sample is `code_value_at(column)`, and
-/// copy it into `FRAMES` codestreams.
-fn make_frames(dir: &Path, (width, height): (u32, u32), code_value_at: impl Fn(u32) -> i32) {
+/// copy it into `frame_count` codestreams.
+fn make_frames(
+    dir: &Path,
+    (width, height): (u32, u32),
+    frame_count: usize,
+    code_value_at: impl Fn(u32) -> i32,
+) {
     std::fs::create_dir_all(dir).unwrap();
     let row: Vec<i32> = (0..width).map(code_value_at).collect();
     let plane: Vec<i32> = row
@@ -63,7 +73,7 @@ fn make_frames(dir: &Path, (width, height): (u32, u32), code_value_at: impl Fn(u
     );
     assert!(result.success, "seed frame encode failed: {}", result.error);
     let seed = work.join("frame_00000000.j2c");
-    for index in 0..FRAMES {
+    for index in 0..frame_count {
         std::fs::copy(&seed, dir.join(format!("frame_{index:05}.j2c"))).unwrap();
     }
     std::fs::remove_dir_all(&work).unwrap();
@@ -71,8 +81,8 @@ fn make_frames(dir: &Path, (width, height): (u32, u32), code_value_at: impl Fn(u
 
 /// Silent stereo PCM covering the picture, so the CPL carries the metadata
 /// asset that holds the stored and active areas.
-fn make_wav(path: &Path) {
-    let seconds = FRAMES as f64 / f64::from(FPS);
+fn make_wav(path: &Path, frame_count: usize) {
+    let seconds = frame_count as f64 / f64::from(FPS);
     let output = std::process::Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i"])
         .arg(format!("anullsrc=r={SAMPLE_RATE}:cl=stereo"))
@@ -87,9 +97,14 @@ fn make_wav(path: &Path) {
     );
 }
 
-fn source_dcp(root: &Path, frames: PathBuf, active_area: Option<(u32, u32)>) -> PathBuf {
+fn source_dcp(
+    root: &Path,
+    frames: PathBuf,
+    active_area: Option<(u32, u32)>,
+    reel_split_frames: Vec<u64>,
+) -> PathBuf {
     let wav = root.join("audio.wav");
-    make_wav(&wav);
+    make_wav(&wav, std::fs::read_dir(&frames).unwrap().count());
     let out = root.join("source");
     let (container_width, container_height) = active_area.unwrap_or((0, 0));
     let config = DcpConfig {
@@ -104,20 +119,25 @@ fn source_dcp(root: &Path, frames: PathBuf, active_area: Option<(u32, u32)>) -> 
         audio_path: Some(wav),
         container_width,
         container_height,
+        reel_split_frames,
         ..Default::default()
     };
     assert_eq!(create_dcp(&config), 0, "build the source DCP");
     out
 }
 
-fn transcode_into(source: &Path, output: &Path, container: (u32, u32)) {
-    let config = DcpTranscodeConfig {
+fn transcode_config(source: &Path, output: &Path, container: (u32, u32)) -> DcpTranscodeConfig {
+    DcpTranscodeConfig {
         input_dir: source.to_path_buf(),
         output_dir: output.to_path_buf(),
         target_bitrate_mbps: Some(BANDWIDTH_MBPS),
         container: Some(container),
         ..Default::default()
-    };
+    }
+}
+
+fn transcode_into(source: &Path, output: &Path, container: (u32, u32)) {
+    let config = transcode_config(source, output, container);
     assert_eq!(transcode_dcp(&config), 0, "transcode into {container:?}");
 }
 
@@ -256,8 +276,8 @@ fn a_flat_dcp_is_fitted_into_full_and_scope_with_black_bars() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let frames = root.join("frames");
-    make_frames(&frames, FLAT, |_| PICTURE_CODE_VALUE);
-    let source = source_dcp(root, frames, None);
+    make_frames(&frames, FLAT, FRAMES, |_| PICTURE_CODE_VALUE);
+    let source = source_dcp(root, frames, None, Vec::new());
     let (_, source_frame) = read_picture(&source);
     assert_nothing_would_change(picture_changes(&source, None, None));
     assert_nothing_would_change(picture_changes(&source, None, Some(FLAT)));
@@ -302,14 +322,14 @@ fn the_source_is_cropped_to_its_active_area_before_the_fit() {
     // a full raster with a flat active area where create puts it, at column 24,
     // and bright columns around it that no output column may show
     let active_columns = FLAT_ACTIVE_AREA_LEFT..FLAT_ACTIVE_AREA_LEFT + FLAT.0;
-    make_frames(&frames, FULL, |column| {
+    make_frames(&frames, FULL, FRAMES, |column| {
         if active_columns.contains(&column) {
             PICTURE_CODE_VALUE
         } else {
             OUTSIDE_ACTIVE_AREA_CODE_VALUE
         }
     });
-    let source = source_dcp(root, frames, Some(FLAT));
+    let source = source_dcp(root, frames, Some(FLAT), Vec::new());
     assert_eq!(declared_geometry(&source).stored_area, FULL);
     assert_eq!(declared_geometry(&source).active_area, FLAT);
     // cropped to 1998 and padded back out to 2048 is the picture it already is
@@ -324,4 +344,101 @@ fn the_source_is_cropped_to_its_active_area_before_the_fit() {
     // without the crop, 2048 would be scaled to 1998 with bars above and below
     // and the bright columns would land at both edges
     assert_picture(&frame, EDGE_MARGIN, FLAT.0 - EDGE_MARGIN);
+}
+
+#[derive(Default)]
+struct RecordingSink {
+    stages: Mutex<Vec<String>>,
+    frames: Mutex<Vec<(u64, u64)>>,
+}
+
+impl ProgressSink for RecordingSink {
+    fn stage(&self, _percent: u32, message: &str) {
+        self.stages.lock().unwrap().push(message.to_string());
+    }
+    fn cancelled(&self) -> bool {
+        false
+    }
+    fn frames(&self, done: u64, total: u64) {
+        self.frames.lock().unwrap().push((done, total));
+    }
+}
+
+#[test]
+fn progress_counts_the_frames_of_every_reel() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let frames = root.join("frames");
+    let total_frames = REEL_FRAMES * REEL_COUNT;
+    make_frames(&frames, FLAT, total_frames, |_| PICTURE_CODE_VALUE);
+    let source = source_dcp(root, frames, None, vec![REEL_FRAMES as u64]);
+    let output = root.join("full");
+    let sink = RecordingSink::default();
+
+    transcode_dcp_with_progress(&transcode_config(&source, &output, FULL), &sink)
+        .expect("transcode with progress");
+
+    let total_frames = total_frames as u64;
+    let frames = sink.frames.into_inner().unwrap();
+    assert_eq!(frames.last(), Some(&(total_frames, total_frames)));
+    assert!(
+        frames.iter().all(|&(_, total)| total == total_frames),
+        "{frames:?}"
+    );
+    assert!(
+        frames.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+        "{frames:?}"
+    );
+    let stages = sink.stages.into_inner().unwrap();
+    for reel in 1..=REEL_COUNT {
+        let names_reel = format!("reel {reel} of {REEL_COUNT}");
+        assert!(
+            stages.iter().any(|stage| stage.contains(&names_reel)),
+            "no stage names {names_reel}: {stages:?}"
+        );
+    }
+}
+
+#[derive(Default)]
+struct CancelAfterFirstFrames {
+    frames_seen: AtomicBool,
+}
+
+impl ProgressSink for CancelAfterFirstFrames {
+    fn stage(&self, _percent: u32, _message: &str) {}
+    fn cancelled(&self) -> bool {
+        self.frames_seen.load(Ordering::Relaxed)
+    }
+    fn frames(&self, _done: u64, _total: u64) {
+        self.frames_seen.store(true, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn a_cancel_during_the_encode_leaves_no_picture_and_no_cpl() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let frames = root.join("frames");
+    make_frames(&frames, FLAT, FRAMES, |_| PICTURE_CODE_VALUE);
+    let source = source_dcp(root, frames, None, Vec::new());
+    let output = root.join("full");
+
+    let error = transcode_dcp_with_progress(
+        &transcode_config(&source, &output, FULL),
+        &CancelAfterFirstFrames::default(),
+    )
+    .expect_err("a cancelled transcode fails");
+
+    assert!(error.contains("cancelled"), "{error}");
+    let left: Vec<String> = std::fs::read_dir(&output)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    for prefix in ["picture", "CPL_", ".transcode_"] {
+        assert!(
+            !left.iter().any(|name| name.starts_with(prefix)),
+            "{prefix}* left in the output: {left:?}"
+        );
+    }
 }

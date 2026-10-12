@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use asdcplib::jp2k::MxfReader;
 use postkit::grok_encoder::RawFrame;
@@ -18,10 +18,9 @@ const BITS_PER_MEGABIT: u64 = 1_000_000;
 /// The CPL element a stereoscopic reel declares its picture as (ST 429-10).
 const STEREOSCOPIC_PICTURE_ELEMENT: &str = "MainStereoscopicPicture";
 
-// ffmpeg reads no packed 12-bit RGB TIFF
-const FIT_SAMPLE_PRECISION: u8 = 16;
-const FIT_PIXEL_FORMAT: &str = "rgb48le";
-const FIT_TIFF_COMPRESSION: &str = "raw";
+// the re-encode reports 0 to this, the package files the rest
+const PACKAGING_PERCENT: u32 = 95;
+const DONE_PERCENT: u32 = 100;
 
 /// Re-encode an existing DCP's picture essence at a different bandwidth (and,
 /// optionally, into another container), copying audio and subtitle tracks unchanged. With
@@ -126,62 +125,66 @@ fn source_picture_rasters(input_dir: &Path) -> Result<Vec<(u32, u32)>, String> {
 /// target bandwidth, copy audio/subtitle tracks verbatim, and emit a fresh
 /// CPL/PKL/ASSETMAP. Fails loud on encrypted input.
 pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
+    match transcode_dcp_with_progress(config, &crate::dcp::NoProgress) {
+        Ok(()) => 0,
+        Err(message) => {
+            tracing::error!("{message}");
+            -1
+        }
+    }
+}
+
+pub fn transcode_dcp_with_progress(
+    config: &DcpTranscodeConfig,
+    progress: &dyn crate::dcp::ProgressSink,
+) -> Result<(), String> {
     if config.target_bitrate_mbps == Some(0) {
-        tracing::error!("--video-bit-rate must be > 0");
-        return -1;
+        return Err("--video-bit-rate must be > 0".into());
     }
     if !config.input_dir.exists() {
-        tracing::error!("Input DCP not found: {}", config.input_dir.display());
-        return -1;
+        return Err(format!(
+            "Input DCP not found: {}",
+            config.input_dir.display()
+        ));
     }
     if config.input_dir == config.output_dir {
-        tracing::error!("output must differ from input");
-        return -1;
+        return Err("output must differ from input".into());
     }
 
     let cpls = crate::multi_cpl::list_cpls(&config.input_dir);
     let Some(cpl) = cpls.first() else {
-        tracing::error!("No CPL found in {}", config.input_dir.display());
-        return -1;
+        return Err(format!("No CPL found in {}", config.input_dir.display()));
     };
     let cpl_path = config.input_dir.join(&cpl.file_path);
     let cpl_content = std::fs::read_to_string(&cpl_path).unwrap_or_default();
     let timeline = crate::multi_cpl::get_timeline(&cpl_path);
     if timeline.is_empty() {
-        tracing::error!("CPL has no reels");
-        return -1;
+        return Err("CPL has no reels".into());
     }
 
     // encrypted input needs key material: with a KDM+recipient key or KEYS.json
     // each source frame is decrypted in memory before decode; without it we
     // cannot re-encode what we cannot decode, so fail loud.
-    let key_source = match postkit::content_keys::ContentKeys::from_options(
+    let key_source = postkit::content_keys::ContentKeys::from_options(
         config.kdm.as_deref(),
         config.recipient_key.as_deref(),
         config.keys.as_deref(),
-    ) {
-        Ok(k) => k,
-        Err(e) => {
-            tracing::error!("{e}");
-            return -1;
-        }
-    };
+    )?;
     if cpl_content.contains("<KeyId>") && key_source.is_none() {
-        tracing::error!(
+        return Err(
             "input DCP is encrypted; supply --kdm + --recipient-key or --keys to transcode it"
+                .into(),
         );
-        return -1;
     }
 
     // both eyes share one picture track, and this path re-encodes a track as a
     // single eye, so a stereoscopic source would come back with one eye
     if cpl_content.contains(STEREOSCOPIC_PICTURE_ELEMENT) {
-        tracing::error!(
+        return Err(format!(
             "{} is stereoscopic: re-encoding its picture here would keep one eye of the two, \
              so it is refused",
             config.input_dir.display()
-        );
-        return -1;
+        ));
     }
 
     let standard = if cpl_content.contains("digicine.com") {
@@ -191,82 +194,79 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
     };
     let source_active_area = crate::cpl::active_area_from_cpl(&cpl_content);
 
-    if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
-        tracing::error!("Failed to create output directory: {e}");
-        return -1;
-    }
+    std::fs::create_dir_all(&config.output_dir)
+        .map_err(|e| format!("Failed to create output directory: {e}"))?;
 
     let mut cpl_reels: Vec<crate::cpl::CplReel> = Vec::new();
     let mut shipped: Vec<ShippedAsset> = Vec::new();
     // re-encoding keeps the frame count, so marker offsets carry over unchanged
     let source_markers = crate::markers::markers_from_cpl(&cpl_content);
 
+    let reel_frame_counts = timeline
+        .iter()
+        .map(|entry| {
+            if entry.picture_file.is_empty() || !Path::new(&entry.picture_file).exists() {
+                return Err(format!("reel {} picture MXF not found", entry.reel_number));
+            }
+            picture_frame_count(Path::new(&entry.picture_file))
+        })
+        .collect::<Result<Vec<u64>, String>>()?;
+    let total_frames: u64 = reel_frame_counts.iter().sum();
+    let mut frames_before = 0u64;
+
     for (reel_index, entry) in timeline.iter().enumerate() {
-        let src_pic = PathBuf::from(&entry.picture_file);
-        if entry.picture_file.is_empty() || !src_pic.exists() {
-            tracing::error!("reel {} picture MXF not found", entry.reel_number);
-            return -1;
+        if progress.cancelled() {
+            return Err(crate::dcp::CANCELLED_MESSAGE.into());
         }
-        let Some(pic) = transcode_picture(
+        progress.stage(
+            percent_of(frames_before, total_frames),
+            &format!(
+                "re-encoding the picture of reel {} of {}",
+                reel_index + 1,
+                timeline.len()
+            ),
+        );
+        let src_pic = PathBuf::from(&entry.picture_file);
+        let pic = transcode_picture(
             &src_pic,
             config,
             key_source.as_ref(),
             source_active_area,
             standard,
-        ) else {
-            return -1;
-        };
+            &FrameProgress {
+                sink: progress,
+                frames_before,
+                total_frames,
+            },
+        )?;
+        frames_before += reel_frame_counts[reel_index];
 
         // every non-picture track: cleartext copies verbatim (asset id preserved);
         // with a key source, an encrypted one is decrypted and rewrapped so the
         // cleartext output stays coherent.
         let fps_snd = (pic.edit_rate_num as f64 / pic.edit_rate_den as f64).round() as u32;
-        let sound = match sound_track(
+        let sound = sound_track(
             &entry.sound_file,
             &entry.sound_asset_id,
             key_source.as_ref(),
             fps_snd,
             &config.output_dir,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("{e}");
-                return -1;
-            }
-        };
-        let subtitle = match timed_text_track(
+        )?;
+        let subtitle = timed_text_track(
             &entry.subtitle_file,
             &entry.subtitle_asset_id,
             "subtitle",
             key_source.as_ref(),
             &config.output_dir,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("{e}");
-                return -1;
-            }
-        };
-        let ccap = match timed_text_track(
+        )?;
+        let ccap = timed_text_track(
             &entry.ccap_file,
             &entry.ccap_asset_id,
             "ccap",
             key_source.as_ref(),
             &config.output_dir,
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("{e}");
-                return -1;
-            }
-        };
-        let aux = match aux_data_track(entry, key_source.as_ref(), &config.output_dir) {
-            Ok(a) => a,
-            Err(e) => {
-                tracing::error!("{e}");
-                return -1;
-            }
-        };
+        )?;
+        let aux = aux_data_track(entry, key_source.as_ref(), &config.output_dir)?;
 
         let subtitle_lang = if entry.subtitle_language.is_empty() {
             None
@@ -337,6 +337,10 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         }
     }
 
+    if progress.cancelled() {
+        return Err(crate::dcp::CANCELLED_MESSAGE.into());
+    }
+    progress.stage(PACKAGING_PERCENT, "writing CPL/PKL/ASSETMAP");
     // ── CPL ────────────────────────────────────────────────────────────
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
     let out_cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
@@ -357,8 +361,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &out_cpl_path) != 0 {
-        tracing::error!("Failed to generate CPL");
-        return -1;
+        return Err("Failed to generate CPL".into());
     }
 
     // ── PKL ────────────────────────────────────────────────────────────
@@ -392,8 +395,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         &pkl_path,
     ) != 0
     {
-        tracing::error!("Failed to generate PKL");
-        return -1;
+        return Err("Failed to generate PKL".into());
     }
 
     // ── ASSETMAP ───────────────────────────────────────────────────────
@@ -417,8 +419,7 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
         });
     }
     if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard, None) != 0 {
-        tracing::error!("Failed to generate ASSETMAP");
-        return -1;
+        return Err("Failed to generate ASSETMAP".into());
     }
 
     match config.target_bitrate_mbps {
@@ -433,7 +434,30 @@ pub fn transcode_dcp(config: &DcpTranscodeConfig) -> i32 {
             timeline.len(),
         ),
     }
-    0
+    progress.stage(DONE_PERCENT, "done");
+    Ok(())
+}
+
+// how far through the re-encode a reel starts, from the frames already encoded
+fn percent_of(frames_done: u64, total_frames: u64) -> u32 {
+    (frames_done * u64::from(PACKAGING_PERCENT) / total_frames.max(1)) as u32
+}
+
+fn picture_frame_count(picture_file: &Path) -> Result<u64, String> {
+    let mut reader = MxfReader::new();
+    reader
+        .open_read(&picture_file.to_string_lossy())
+        .map_err(|e| format!("Failed to open picture MXF {}: {e}", picture_file.display()))?;
+    let descriptor = reader
+        .picture_descriptor()
+        .map_err(|e| format!("Failed to read picture descriptor: {e}"))?;
+    Ok(u64::from(descriptor.container_duration))
+}
+
+struct FrameProgress<'a> {
+    sink: &'a dyn crate::dcp::ProgressSink,
+    frames_before: u64,
+    total_frames: u64,
 }
 
 /// Decode one picture MXF in memory and re-encode it at the bandwidth's bytes a frame.
@@ -443,46 +467,33 @@ fn transcode_picture(
     key_source: Option<&postkit::content_keys::ContentKeys>,
     source_active_area: Option<(u32, u32)>,
     standard: crate::Standard,
-) -> Option<NewPicture> {
+    progress: &FrameProgress,
+) -> Result<NewPicture, String> {
     let mut reader = MxfReader::new();
-    if let Err(e) = reader.open_read(&src_mxf.to_string_lossy()) {
-        tracing::error!("Failed to open picture MXF {}: {e}", src_mxf.display());
-        return None;
-    }
-    let desc = match reader.picture_descriptor() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to read picture descriptor: {e}");
-            return None;
-        }
-    };
+    reader
+        .open_read(&src_mxf.to_string_lossy())
+        .map_err(|e| format!("Failed to open picture MXF {}: {e}", src_mxf.display()))?;
+    let desc = reader
+        .picture_descriptor()
+        .map_err(|e| format!("Failed to read picture descriptor: {e}"))?;
     // encrypted source: build the AES/HMAC contexts from the key source, keyed by
     // this MXF's own KeyId, so every read_frame below decrypts in memory.
-    let info = match reader.writer_info() {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::error!("Failed to read picture writer info: {e}");
-            return None;
-        }
-    };
+    let info = reader
+        .writer_info()
+        .map_err(|e| format!("Failed to read picture writer info: {e}"))?;
     let key_source = key_source.filter(|_| info.encrypted_essence);
     if info.encrypted_essence {
         let Some(ks) = key_source else {
-            tracing::error!(
+            return Err(format!(
                 "picture MXF {} is encrypted and no key source was given",
                 src_mxf.display()
-            );
-            return None;
+            ));
         };
-        if let Err(e) = ks.decrypt_and_hmac_contexts(&info, "picture") {
-            tracing::error!("{e}");
-            return None;
-        }
+        ks.decrypt_and_hmac_contexts(&info, "picture")?;
     }
     let frame_count = desc.container_duration;
     if frame_count == 0 {
-        tracing::error!("picture MXF {} has no frames", src_mxf.display());
-        return None;
+        return Err(format!("picture MXF {} has no frames", src_mxf.display()));
     }
     let src_w = desc.stored_width;
     let src_h = desc.stored_height;
@@ -503,30 +514,17 @@ fn transcode_picture(
                 standard,
             )
         })
-        .transpose();
-    let fit_plan = match fit_plan {
-        Ok(plan) => plan.filter(|plan| !plan.is_identity()),
-        Err(e) => {
-            tracing::error!("{e}");
-            return None;
-        }
-    };
+        .transpose()?
+        .filter(|plan| !plan.is_identity());
     if let Some(plan) = &fit_plan {
         tracing::info!("{}: {}", src_mxf.display(), plan.describe());
     }
-    let fit_filters = fit_plan.map(|plan| plan.filters.join(","));
+    let fit_filters = fit_plan.map(|plan| plan.filters);
 
     let bitrate_mbps = match config.target_bitrate_mbps {
         Some(mbps) => mbps,
         None => {
-            let measured = match source_bandwidth_mbps(src_mxf, key_source, &info, frame_count, fps)
-            {
-                Ok(mbps) => mbps,
-                Err(e) => {
-                    tracing::error!("{e}");
-                    return None;
-                }
-            };
+            let measured = source_bandwidth_mbps(src_mxf, key_source, &info, frame_count, fps)?;
             tracing::info!(
                 "{} averages {measured} Mbit/s, which the re-encode targets",
                 src_mxf.display()
@@ -541,13 +539,10 @@ fn transcode_picture(
         .output_dir
         .join(format!(".transcode_{}", uuid::Uuid::new_v4()));
     let j2k_dir = work.join("j2k");
-    if std::fs::create_dir_all(&j2k_dir).is_err() {
-        tracing::error!("Failed to create transcode work dir");
-        return None;
-    }
+    std::fs::create_dir_all(&j2k_dir)
+        .map_err(|e| format!("Failed to create transcode work dir: {e}"))?;
 
     let fit_filters = fit_filters.as_deref();
-    let work_dir = work.as_path();
     let writer_info = &info;
     let open_loader = || -> Result<postkit::encode::FrameLoader<'_>, String> {
         let mut reader = MxfReader::new();
@@ -559,14 +554,17 @@ fn transcode_picture(
             None => None,
         };
         let mut buf = vec![0u8; MAX_FRAME_BUF];
+        let mut fit = fit_filters.map(|filters| FrameFit {
+            filters,
+            graph: None,
+        });
         Ok(Box::new(move |frame_index: u64| {
             decode_source_frame(
                 &mut reader,
                 crypto.as_mut(),
                 frame_index as u32,
                 &mut buf,
-                fit_filters,
-                work_dir,
+                fit.as_mut(),
             )
         }))
     };
@@ -581,19 +579,31 @@ fn transcode_picture(
         encode_threads: config.encode_threads,
         ..Default::default()
     };
+    let cancel = Arc::new(AtomicBool::new(false));
     let result = postkit::encode::encode_loaded_frames(
         u64::from(frame_count),
         open_loader,
         &options,
-        &Arc::new(AtomicBool::new(false)),
+        &cancel,
         &Arc::new(AtomicBool::new(false)),
         None,
-        |_| {},
+        |encoded| {
+            progress.sink.frames(
+                progress.frames_before + encoded.frame,
+                progress.total_frames,
+            );
+            if progress.sink.cancelled() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
     );
-    if !result.success {
-        tracing::error!("re-encode failed: {}", result.error);
+    if cancel.load(Ordering::Relaxed) {
         let _ = std::fs::remove_dir_all(&work);
-        return None;
+        return Err(crate::dcp::CANCELLED_MESSAGE.into());
+    }
+    if !result.success {
+        let _ = std::fs::remove_dir_all(&work);
+        return Err(format!("re-encode failed: {}", result.error));
     }
 
     let id = uuid::Uuid::new_v4();
@@ -609,11 +619,16 @@ fn transcode_picture(
         Some(*id.as_bytes()),
     );
     let _ = std::fs::remove_dir_all(&work);
-    let track = track?;
+    let track = track.ok_or_else(|| {
+        format!(
+            "Failed to wrap the re-encoded picture into {}",
+            out_mxf.display()
+        )
+    })?;
 
-    let hash = crate::hash::hash_file(&out_mxf).ok()?;
+    let hash = crate::hash::hash_file(&out_mxf)?;
     let size = std::fs::metadata(&out_mxf).map(|m| m.len()).unwrap_or(0);
-    Some(NewPicture {
+    Ok(NewPicture {
         id: track.uuid,
         filename,
         hash,
@@ -795,9 +810,15 @@ fn from_decrypt(s: crate::decrypt::ShippedAsset) -> ShippedAsset {
     }
 }
 
+// one per loader thread, the graph built from its first frame and kept for the rest
+struct FrameFit<'a> {
+    filters: &'a [String],
+    graph: Option<postkit::planar_rgb_filter::PlanarRgbFilter>,
+}
+
 /// Read one source frame, decrypting it when the essence is encrypted, decode
-/// it in memory, and hand it to the encoder as planar components. A fit goes
-/// through ffmpeg, which reads and writes a TIFF in `work`.
+/// it in memory, run the fit over it when there is one, and hand it to the
+/// encoder as planar components.
 fn decode_source_frame(
     reader: &mut MxfReader,
     crypto: Option<&mut (
@@ -806,8 +827,7 @@ fn decode_source_frame(
     )>,
     index: u32,
     buf: &mut [u8],
-    fit_filters: Option<&str>,
-    work: &Path,
+    fit: Option<&mut FrameFit>,
 ) -> Result<RawFrame, String> {
     let (dec, hmac) = match crypto {
         Some((d, h)) => (Some(d), Some(h)),
@@ -818,11 +838,11 @@ fn decode_source_frame(
         .map_err(|e| format!("Failed to read frame {index} (wrong key or MIC mismatch): {e}"))?;
     let decoded = postkit::grok_decoder::decode(buf[..n].to_vec(), 0)
         .map_err(|e| format!("cannot decode frame {index}: {e}"))?;
-    let Some(filters) = fit_filters else {
-        let components: [Vec<i32>; 3] = decoded
-            .components
-            .try_into()
-            .map_err(|_| format!("frame {index} does not carry three components"))?;
+    let components: [Vec<i32>; 3] = decoded
+        .components
+        .try_into()
+        .map_err(|_| format!("frame {index} does not carry three components"))?;
+    let Some(fit) = fit else {
         return Ok(RawFrame::Planar {
             components,
             width: decoded.width,
@@ -831,82 +851,27 @@ fn decode_source_frame(
             index: u64::from(index),
         });
     };
-    let fitted = fit_frame(
-        &decoded,
-        filters,
-        &work.join(format!("frame_{index:07}.tif")),
-    )
-    .map_err(|e| format!("cannot fit frame {index} into the container: {e}"))?;
+    let cannot_fit = |e: String| format!("cannot fit frame {index} into the container: {e}");
+    let graph = match &mut fit.graph {
+        Some(graph) => graph,
+        None => fit.graph.insert(
+            postkit::planar_rgb_filter::PlanarRgbFilter::new(
+                decoded.width,
+                decoded.height,
+                decoded.precision,
+                fit.filters,
+            )
+            .map_err(cannot_fit)?,
+        ),
+    };
+    let (width, height, components) = graph.filter(&components).map_err(cannot_fit)?;
     Ok(RawFrame::Planar {
-        components: fitted.components,
-        width: fitted.width,
-        height: fitted.height,
+        components,
+        width,
+        height,
         precision: decoded.precision,
         index: u64::from(index),
     })
-}
-
-/// Run the fit's ffmpeg filters over one decoded frame and bring the samples
-/// back at the frame's own precision.
-fn fit_frame(
-    decoded: &postkit::grok_decoder::DecodedFrame,
-    filters: &str,
-    tif: &Path,
-) -> Result<crate::grok::TiffFrame, String> {
-    let shift = FIT_SAMPLE_PRECISION
-        .checked_sub(decoded.precision)
-        .ok_or_else(|| {
-            format!(
-                "{}-bit samples are deeper than the fit runs at",
-                decoded.precision
-            )
-        })?;
-    let widened: Vec<u16> = decoded
-        .interleaved_samples()?
-        .into_iter()
-        .map(|sample| sample << shift)
-        .collect();
-    postkit::grok::write_tiff_rgb(
-        tif,
-        decoded.width,
-        decoded.height,
-        FIT_SAMPLE_PRECISION,
-        &widened,
-    )?;
-    let fitted_tif = tif.with_extension("fitted.tif");
-    let ffmpeg = std::process::Command::new("ffmpeg")
-        .args(["-y", "-loglevel", "error", "-i"])
-        .arg(tif)
-        .args(["-vf", filters, "-pix_fmt", FIT_PIXEL_FORMAT])
-        .args(["-compression_algo", FIT_TIFF_COMPRESSION])
-        .arg(&fitted_tif)
-        .output();
-    let _ = std::fs::remove_file(tif);
-    let ffmpeg = ffmpeg.map_err(|e| format!("cannot run ffmpeg: {e}"))?;
-    if !ffmpeg.status.success() {
-        let _ = std::fs::remove_file(&fitted_tif);
-        return Err(format!(
-            "ffmpeg failed: {}",
-            String::from_utf8_lossy(&ffmpeg.stderr)
-        ));
-    }
-    let fitted = crate::grok::load_tiff(&fitted_tif);
-    let _ = std::fs::remove_file(&fitted_tif);
-    let mut fitted = fitted?;
-    if fitted.precision != FIT_SAMPLE_PRECISION {
-        return Err(format!(
-            "ffmpeg wrote {}-bit samples where {FIT_SAMPLE_PRECISION} were asked for",
-            fitted.precision
-        ));
-    }
-    let narrowed_maximum = (1i32 << decoded.precision) - 1;
-    let rounding = (1i32 << shift) >> 1;
-    for component in &mut fitted.components {
-        for sample in component.iter_mut() {
-            *sample = ((*sample + rounding) >> shift).min(narrowed_maximum);
-        }
-    }
-    Ok(fitted)
 }
 
 fn sorted_files(dir: &Path) -> Vec<PathBuf> {
