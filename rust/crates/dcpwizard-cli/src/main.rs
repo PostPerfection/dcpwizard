@@ -1230,8 +1230,8 @@ enum Commands {
     /// are the inputs' reels in order, with library items as reels before and
     /// after them. Essence is copied byte-identical and referenced by its
     /// existing UUIDs. Inputs must share standard/rate/resolution and must not
-    /// be encrypted. The CPL carries the first input's ratings and content
-    /// version.
+    /// be encrypted. The CPL carries the first input's content kind, ratings
+    /// and content version.
     Assemble {
         /// Input DCP directories (one or more), in program order
         #[arg(long = "input", required = true, num_args = 1..)]
@@ -8138,6 +8138,7 @@ fn run() {
                 tail_items,
                 ratings,
                 item_video_bit_rate_mbps: video_bit_rate,
+                move_track_files: false,
                 encode_threads,
                 detect_picture_findings,
             };

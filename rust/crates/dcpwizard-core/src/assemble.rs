@@ -41,6 +41,9 @@ pub struct AssembleConfig {
     // None encodes the item reels to the compression ratio alone, as create does
     #[serde(default)]
     pub item_video_bit_rate_mbps: Option<u32>,
+    // renames the inputs' track files into the output, which leaves the inputs broken
+    #[serde(default)]
+    pub move_track_files: bool,
     // the running process's settings, never read from a job
     #[serde(skip)]
     pub encode_threads: u32,
@@ -56,6 +59,13 @@ struct InputDcp {
     reels: Vec<TimelineEntry>,
     geometry: crate::cpl::PictureGeometry,
     edit_rate: String,
+    identity: CompositionIdentity,
+}
+
+/// What a CPL says the composition is, apart from its title and reels.
+struct CompositionIdentity {
+    // empty when the CPL has none, which the CPL writer turns into "feature"
+    content_kind: String,
     ratings: Vec<Rating>,
     content_version_label: Option<String>,
 }
@@ -128,7 +138,7 @@ pub fn assemble_with_progress(
     let mut copies: Vec<TrackCopy> = Vec::new();
     let mut planned: HashSet<String> = HashSet::new();
     let mut used_names: HashSet<String> = HashSet::new();
-    let mut main_sound_track: Option<PathBuf> = None;
+    let mut main_sound_id: Option<String> = None;
 
     for input in &inputs {
         let pkl_map = parse_pkls(&input.dir);
@@ -153,8 +163,8 @@ pub fn assemble_with_progress(
                     recorded: pkl_map.get(id).cloned(),
                 });
             }
-            if main_sound_track.is_none() && !reel.sound_asset_id.is_empty() {
-                main_sound_track = Some(PathBuf::from(&reel.sound_file));
+            if main_sound_id.is_none() && !reel.sound_asset_id.is_empty() {
+                main_sound_id = Some(reel.sound_asset_id.clone());
             }
 
             let has_sub = !reel.subtitle_asset_id.is_empty();
@@ -195,8 +205,19 @@ pub fn assemble_with_progress(
         return Err("no reels found in the input DCPs".into());
     }
 
-    let (mut pkl_entries, mut assetmap_entries) =
-        copy_tracks(&copies, &config.output_dir, progress)?;
+    let (mut pkl_entries, mut assetmap_entries) = place_tracks(
+        &copies,
+        &config.output_dir,
+        config.move_track_files,
+        progress,
+    )?;
+    // read from the output, since a moved track is no longer in its input
+    let main_sound_track = main_sound_id.map(|id| {
+        let copy = copies.iter().find(|copy| copy.id == id);
+        config
+            .output_dir
+            .join(&copy.expect("every sound track is planned").name)
+    });
 
     let has_items = !config.head_items.is_empty() || !config.tail_items.is_empty();
     let mut joined = if has_items {
@@ -248,12 +269,12 @@ pub fn assemble_with_progress(
     let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
     let cpl_config = crate::cpl::CplConfig {
         title: assemble_title(&config.title),
-        content_kind: "feature".into(),
+        content_kind: first.identity.content_kind.clone(),
         ratings: config
             .ratings
             .clone()
-            .unwrap_or_else(|| first.ratings.clone()),
-        content_version_label: first.content_version_label.clone(),
+            .unwrap_or_else(|| first.identity.ratings.clone()),
+        content_version_label: first.identity.content_version_label.clone(),
         reels: joined.reels,
         standard,
         main_sound,
@@ -356,10 +377,12 @@ fn check_inputs_agree(inputs: &[InputDcp]) -> Result<(), String> {
     Ok(())
 }
 
-/// Copy the source track files byte for byte, reporting progress by bytes.
-fn copy_tracks(
+/// Copy or move the source track files byte for byte, reporting progress by
+/// bytes.
+fn place_tracks(
     copies: &[TrackCopy],
     output_dir: &Path,
+    move_track_files: bool,
     progress: &dyn ProgressSink,
 ) -> Result<
     (
@@ -381,15 +404,14 @@ fn copy_tracks(
             return Err(crate::dcp::CANCELLED_MESSAGE.into());
         }
         let percent = u64::from(COPY_START_PERCENT) + span * copied_bytes / total_bytes.max(1);
-        progress.stage(percent as u32, &format!("copying {}", copy.name));
+        let verb = if move_track_files {
+            "moving"
+        } else {
+            "copying"
+        };
+        progress.stage(percent as u32, &format!("{verb} {}", copy.name));
         let destination = output_dir.join(&copy.name);
-        copied_bytes += std::fs::copy(&copy.source, &destination).map_err(|e| {
-            format!(
-                "cannot copy {} -> {}: {e}",
-                copy.source.display(),
-                destination.display()
-            )
-        })?;
+        copied_bytes += place_track(&copy.source, &destination, move_track_files)?;
         let (hash, size) = match &copy.recorded {
             Some(recorded) => recorded.clone(),
             None => (
@@ -411,6 +433,31 @@ fn copy_tracks(
         });
     }
     Ok((pkl_entries, assetmap_entries))
+}
+
+/// Put one track file at `destination`, returning its size. A move falls back
+/// to a copy across filesystems, leaving the source in place.
+fn place_track(source: &Path, destination: &Path, move_file: bool) -> Result<u64, String> {
+    if move_file {
+        match std::fs::rename(source, destination) {
+            Ok(()) => return file_size(destination),
+            Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {}
+            Err(e) => {
+                return Err(format!(
+                    "cannot move {} -> {}: {e}",
+                    source.display(),
+                    destination.display()
+                ));
+            }
+        }
+    }
+    std::fs::copy(source, destination).map_err(|e| {
+        format!(
+            "cannot copy {} -> {}: {e}",
+            source.display(),
+            destination.display()
+        )
+    })
 }
 
 fn file_size(path: &Path) -> Result<u64, String> {
@@ -488,15 +535,14 @@ fn parse_input(dir: &Path) -> Result<InputDcp, String> {
     }
     let geometry = picture_geometry(&cpl, Path::new(&reels[0].picture_file))?;
     let edit_rate = reels[0].edit_rate.clone();
-    let (ratings, content_version_label) = composition_identity(&cpl)?;
+    let identity = composition_identity(&cpl)?;
     Ok(InputDcp {
         dir: dir.to_path_buf(),
         standard,
         reels,
         geometry,
         edit_rate,
-        ratings,
-        content_version_label,
+        identity,
     })
 }
 
@@ -532,8 +578,7 @@ fn picture_geometry(
     })
 }
 
-/// The CPL's RatingList and ContentVersion label.
-fn composition_identity(cpl_xml: &str) -> Result<(Vec<Rating>, Option<String>), String> {
+fn composition_identity(cpl_xml: &str) -> Result<CompositionIdentity, String> {
     let doc = roxmltree::Document::parse(cpl_xml).map_err(|e| format!("CPL: {e}"))?;
     let child_text = |node: roxmltree::Node, name: &str| -> Option<String> {
         node.children()
@@ -559,7 +604,11 @@ fn composition_identity(cpl_xml: &str) -> Result<(Vec<Rating>, Option<String>), 
     let content_version_label = child("ContentVersion")
         .and_then(|version| child_text(version, "LabelText"))
         .filter(|label| Some(label) != title.as_ref());
-    Ok((ratings, content_version_label))
+    Ok(CompositionIdentity {
+        content_kind: child_text(root, "ContentKind").unwrap_or_default(),
+        ratings,
+        content_version_label,
+    })
 }
 
 /// id -> (hash, size) across every PKL in the directory.

@@ -167,8 +167,9 @@ const ITEM_SOURCE_SIZE: &str = "1920x1080";
 const MPAA_AGENCY: &str = "http://www.mpaa.org/2003-ratings";
 const BBFC_AGENCY: &str = "http://www.bbfc.co.uk";
 const CONTENT_VERSION: &str = "Final Cut";
+const TRAILER_CONTENT_KIND: &str = "<ContentKind>trailer</ContentKind>";
 
-/// A 2K SMPTE feature masked to flat, with 8 channels of sound, a rating and a
+/// A 2K SMPTE trailer masked to flat, with 8 channels of sound, a rating and a
 /// content version, so every carried value differs from a default.
 fn make_feature(root: &Path) -> PathBuf {
     let content = root.join("feature_j2k");
@@ -178,7 +179,7 @@ fn make_feature(root: &Path) -> PathBuf {
         title: "The Feature".into(),
         standard: dcpwizard_core::Standard::Smpte,
         resolution: dcpwizard_core::Resolution::TwoK,
-        content_type: dcpwizard_core::ContentType::Feature,
+        content_type: dcpwizard_core::ContentType::Trailer,
         frame_rate_num: 24,
         frame_rate_den: 1,
         container_width: FLAT_ACTIVE_WIDTH,
@@ -437,6 +438,7 @@ fn ratings_and_content_version_are_carried_unless_replaced() {
     };
     assert_eq!(assemble(&config), 0);
     let xml = cpl_xml(&carried);
+    assert!(xml.contains(TRAILER_CONTENT_KIND), "{xml}");
     assert!(
         xml.contains(&format!("<Agency>{MPAA_AGENCY}</Agency>")),
         "{xml}"
@@ -460,6 +462,7 @@ fn ratings_and_content_version_are_carried_unless_replaced() {
     };
     assert_eq!(assemble(&config), 0);
     let xml = cpl_xml(&replaced);
+    assert!(xml.contains(TRAILER_CONTENT_KIND), "{xml}");
     assert!(
         xml.contains(&format!("<Agency>{BBFC_AGENCY}</Agency>")),
         "{xml}"
@@ -510,4 +513,75 @@ fn one_input_becomes_a_new_ov() {
 
     let result = dcpwizard_core::verify::verify_dcp(&out);
     assert!(result.valid, "dcpdoctor errors: {:?}", result.errors);
+}
+
+/// Asset id to hash, as the directory's PKL records them.
+fn pkl_hashes(dir: &Path) -> std::collections::HashMap<String, String> {
+    let pkl = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("PKL_"))
+        })
+        .expect("a PKL");
+    let xml = std::fs::read_to_string(pkl).unwrap();
+    xml.split("<Asset>")
+        .skip(1)
+        .map(|asset| {
+            let id = element_text(asset, "<Id>urn:uuid:", "</Id>").to_string();
+            let hash = element_text(asset, "<Hash>", "</Hash>").to_string();
+            (id, hash)
+        })
+        .collect()
+}
+
+#[test]
+fn moving_track_files_takes_them_out_of_the_input() {
+    let root = tempfile::tempdir().unwrap();
+    let source = make_dcp(root.path(), "intermediate", "Intermediate", 48, 24, false);
+    let source_reel = timeline(&source).remove(0);
+    let source_hashes = pkl_hashes(&source);
+
+    let out = root.path().join("moved");
+    let config = AssembleConfig {
+        inputs: vec![source.clone()],
+        output_dir: out.clone(),
+        title: "Moved".into(),
+        move_track_files: true,
+        ..Default::default()
+    };
+    assert_eq!(assemble(&config), 0);
+
+    let output_reel = timeline(&out).remove(0);
+    let output_hashes = pkl_hashes(&out);
+    for (id, source_file, output_file) in [
+        (
+            &source_reel.picture_asset_id,
+            &source_reel.picture_file,
+            &output_reel.picture_file,
+        ),
+        (
+            &source_reel.sound_asset_id,
+            &source_reel.sound_file,
+            &output_reel.sound_file,
+        ),
+    ] {
+        assert!(
+            Path::new(output_file).is_file(),
+            "{output_file} is in the output"
+        );
+        assert!(
+            !Path::new(source_file).exists(),
+            "{source_file} left the input"
+        );
+        assert_eq!(output_hashes[id], source_hashes[id], "PKL hash of {id}");
+    }
+    assert_eq!(
+        hash_file(Path::new(&output_reel.picture_file)).unwrap(),
+        source_hashes[&source_reel.picture_asset_id],
+        "the moved picture is the one the source PKL describes"
+    );
 }
