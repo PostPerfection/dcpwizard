@@ -250,7 +250,7 @@ pub trait ProgressSink {
     fn frames(&self, _done: u64, _total: u64) {}
 }
 
-struct NoProgress;
+pub(crate) struct NoProgress;
 impl ProgressSink for NoProgress {
     fn stage(&self, _percent: u32, _message: &str) {}
     fn cancelled(&self) -> bool {
@@ -306,7 +306,7 @@ pub fn create_dcp(config: &DcpConfig) -> i32 {
     }
 }
 
-const CANCELLED_MESSAGE: &str = "cancelled between stages";
+pub(crate) const CANCELLED_MESSAGE: &str = "cancelled between stages";
 
 /// As [`create_dcp`], reporting coarse stage progress and honouring cooperative
 /// cancellation through `progress`. Fails with `CANCELLED_MESSAGE` when cancelled
@@ -1096,7 +1096,13 @@ pub fn create_dcp_with_progress(
             geometry,
             sound: job_sound,
         };
-        crate::library_reel::join_library_items(config, &format, vec![reel])?
+        crate::library_reel::join_library_items(
+            &crate::library_reel::ItemEncodeSettings::of_job(config),
+            &config.head_items,
+            &config.tail_items,
+            &format,
+            vec![reel],
+        )?
     } else {
         crate::library_reel::JoinedComposition {
             reels: vec![reel],

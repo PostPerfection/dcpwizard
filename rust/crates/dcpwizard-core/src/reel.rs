@@ -707,7 +707,13 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         geometry,
         sound: job_sound,
     };
-    let mut joined = match crate::library_reel::join_library_items(config, &format, cpl_reels) {
+    let mut joined = match crate::library_reel::join_library_items(
+        &crate::library_reel::ItemEncodeSettings::of_job(config),
+        &config.head_items,
+        &config.tail_items,
+        &format,
+        cpl_reels,
+    ) {
         Ok(joined) => joined,
         Err(e) => {
             tracing::error!("{e}");

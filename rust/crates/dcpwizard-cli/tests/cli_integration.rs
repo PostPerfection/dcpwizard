@@ -1382,6 +1382,79 @@ fn create_reads_the_tms_config_before_it_encodes() {
     assert!(!out.exists(), "the encode must not have started");
 }
 
+const HEAD_ITEM_SECONDS: &str = "1";
+const HEAD_ITEM_FRAMES_AT_24: u64 = 24;
+
+#[test]
+fn assemble_joins_a_library_item_onto_the_head_of_a_dcp() {
+    let dir = TempDir::new().unwrap();
+    let source = dcp_without_the_accessibility_tracks();
+    let still = dir.path().join("ident.png");
+    write_test_stills(&dir.path().join("stills"), 1920, 1080);
+    std::fs::copy(dir.path().join("stills").join("frame_001.png"), &still).unwrap();
+    let library = dir.path().join("library");
+    cmd()
+        .args([
+            "library",
+            "--library-dir",
+            library.to_str().unwrap(),
+            "add",
+            "--file",
+            still.to_str().unwrap(),
+            "--name",
+            "Ident",
+            "--kind",
+            "head-ident",
+            "--duration",
+            HEAD_ITEM_SECONDS,
+        ])
+        .assert()
+        .success();
+
+    let out = dir.path().join("out");
+    cmd()
+        .args([
+            "assemble",
+            "--input",
+            source.to_str().unwrap(),
+            "--head-item",
+            "Ident",
+            "--library-dir",
+            library.to_str().unwrap(),
+            "--rating",
+            "http://www.mpaa.org/2003-ratings=PG",
+            "--output",
+            out.to_str().unwrap(),
+            "--title",
+            "With Ident",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Assembled OV at"));
+
+    let package = out.join("With Ident");
+    let cpl = std::fs::read_dir(&package)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("CPL_"))
+        .expect("a CPL");
+    let reels = dcpwizard_core::multi_cpl::get_timeline(&cpl);
+    let source_cpl = std::fs::read_dir(&source)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("CPL_"))
+        .unwrap();
+    let source_reels = dcpwizard_core::multi_cpl::get_timeline(&source_cpl);
+    assert_eq!(reels.len(), 2, "the ident, then the source's reel");
+    assert_eq!(reels[0].duration_frames, HEAD_ITEM_FRAMES_AT_24);
+    assert_ne!(reels[0].picture_asset_id, source_reels[0].picture_asset_id);
+    assert_eq!(reels[1].picture_asset_id, source_reels[0].picture_asset_id);
+    let xml = std::fs::read_to_string(&cpl).unwrap();
+    assert!(xml.contains("<Label>PG</Label>"), "{xml}");
+}
+
 #[test]
 fn the_default_registration_url_needs_no_license() {
     let directory = TempDir::new().unwrap();

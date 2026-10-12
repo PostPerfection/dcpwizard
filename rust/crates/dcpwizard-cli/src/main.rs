@@ -189,19 +189,7 @@ impl CreateIsdcfNaming {
             }
             _ => dcpwizard_core::isdcf_name::TerritoryType::Specific,
         };
-        let mut ratings = Vec::new();
-        for spec in &self.ratings {
-            let (agency, label) = spec.split_once(RATING_SEPARATOR).ok_or_else(|| {
-                format!(
-                    "rating '{spec}' must be AGENCY=LABEL, e.g. \
-                     http://www.mpaa.org/2003-ratings=PG-13"
-                )
-            })?;
-            ratings.push(dcpwizard_core::isdcf_name::Rating {
-                agency: agency.to_string(),
-                label: label.to_string(),
-            });
-        }
+        let ratings = parse_ratings(&self.ratings)?;
         let date = match self.isdcf_date.as_deref() {
             Some(spec) => Some(parse_isdcf_date(spec)?),
             None => None,
@@ -223,6 +211,24 @@ impl CreateIsdcfNaming {
             replaces_title: self.isdcf_name,
         })
     }
+}
+
+fn parse_ratings(specs: &[String]) -> Result<Vec<dcpwizard_core::isdcf_name::Rating>, String> {
+    specs
+        .iter()
+        .map(|spec| {
+            let (agency, label) = spec.split_once(RATING_SEPARATOR).ok_or_else(|| {
+                format!(
+                    "rating '{spec}' must be AGENCY=LABEL, e.g. \
+                     http://www.mpaa.org/2003-ratings=PG-13"
+                )
+            })?;
+            Ok(dcpwizard_core::isdcf_name::Rating {
+                agency: agency.to_string(),
+                label: label.to_string(),
+            })
+        })
+        .collect()
 }
 
 fn parse_isdcf_date(spec: &str) -> Result<dcpwizard_core::isdcf_name::IsdcfDate, String> {
@@ -740,16 +746,16 @@ struct CreateDelivery {
 }
 
 /// Library items joined onto the build as reels of their own, and the folder
-/// they are resolved against. Boxed into the Create variant.
+/// they are resolved against. Boxed into the Create and Assemble variants.
 #[derive(Args)]
 struct CreateLibraryItems {
     /// Join a library item onto the head of the build as its own reel, by name
     /// (repeatable, in the order given). See `library list`.
-    #[arg(long = "head-item", value_name = "NAME", conflicts_with = "versions")]
+    #[arg(long = "head-item", value_name = "NAME")]
     head_items: Vec<String>,
     /// Join a library item onto the tail of the build as its own reel, by name
     /// (repeatable, in the order given).
-    #[arg(long = "tail-item", value_name = "NAME", conflicts_with = "versions")]
+    #[arg(long = "tail-item", value_name = "NAME")]
     tail_items: Vec<String>,
     /// Library folder to resolve --head-item / --tail-item against
     /// (default: XDG data dir)
@@ -1035,7 +1041,7 @@ enum Commands {
         #[arg(long, conflicts_with = "versions")]
         subtitle: Option<String>,
         /// Multi-version manifest (JSON array): one CPL per entry over shared essence
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["head_items", "tail_items"])]
         versions: Option<String>,
         /// Subtitle language code (e.g. "en", "fr")
         #[arg(long, default_value = "en")]
@@ -1221,11 +1227,13 @@ enum Commands {
         signer_opts: SignerOpts,
     },
     /// Assemble a new OV composition from existing DCPs: one new CPL whose reels
-    /// are the inputs' reels in order. Essence is copied byte-identical and
-    /// referenced by its existing UUIDs. Inputs must share standard/rate/
-    /// resolution and must not be encrypted.
+    /// are the inputs' reels in order, with library items as reels before and
+    /// after them. Essence is copied byte-identical and referenced by its
+    /// existing UUIDs. Inputs must share standard/rate/resolution and must not
+    /// be encrypted. The CPL carries the first input's ratings and content
+    /// version.
     Assemble {
-        /// Input DCP directories (two or more), in program order
+        /// Input DCP directories (one or more), in program order
         #[arg(long = "input", required = true, num_args = 1..)]
         input: Vec<String>,
         /// Folder the OV is written into, as <OUTPUT>/<title>
@@ -1234,6 +1242,17 @@ enum Commands {
         /// Title for the assembled composition
         #[arg(short, long, default_value = "")]
         title: String,
+        /// Certification rating as AGENCY=LABEL (repeatable), e.g.
+        /// "http://www.mpaa.org/2003-ratings=PG-13". Replaces the first input's
+        /// RatingList.
+        #[arg(long = "rating", value_name = "AGENCY=LABEL")]
+        ratings: Vec<String>,
+        /// J2K bandwidth in Mbit/s for the library item reels (default: none,
+        /// the encoder's default compression ratio)
+        #[arg(long)]
+        video_bit_rate: Option<u32>,
+        #[command(flatten)]
+        library_items: Box<CreateLibraryItems>,
         #[command(flatten)]
         signer_opts: SignerOpts,
     },
@@ -8071,8 +8090,36 @@ fn run() {
             input,
             output,
             title,
+            ratings,
+            video_bit_rate,
+            library_items,
             signer_opts,
         } => {
+            let ratings = match parse_ratings(&ratings) {
+                Ok(ratings) => (!ratings.is_empty()).then_some(ratings),
+                Err(e) => {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+            };
+            let CreateLibraryItems {
+                head_items,
+                tail_items,
+                library_dir,
+            } = *library_items;
+            let library = open_library(library_dir);
+            let attached = dcpwizard_core::library_reel::attach_by_name(&library, &head_items)
+                .and_then(|head| {
+                    dcpwizard_core::library_reel::attach_by_name(&library, &tail_items)
+                        .map(|tail| (head, tail))
+                });
+            let (head_items, tail_items) = match attached {
+                Ok(attached) => attached,
+                Err(e) => {
+                    tracing::error!("{e}");
+                    std::process::exit(1);
+                }
+            };
             let title = dcpwizard_core::assemble::assemble_title(&title);
             let output_dir =
                 match dcpwizard_core::package_dir::new_package_dir(Path::new(&output), &title) {
@@ -8087,6 +8134,12 @@ fn run() {
                 output_dir: output_dir.clone(),
                 title,
                 signer: package_signer(&signer_opts),
+                head_items,
+                tail_items,
+                ratings,
+                item_video_bit_rate_mbps: video_bit_rate,
+                encode_threads,
+                detect_picture_findings,
             };
             let code = dcpwizard_core::assemble::assemble(&config);
             if code == 0 {

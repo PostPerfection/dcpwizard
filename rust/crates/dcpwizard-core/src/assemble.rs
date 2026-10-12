@@ -1,36 +1,73 @@
-//! Assemble one new OV composition from several existing DCPs (dom#1675).
+//! Assemble one new OV composition from one or more existing DCPs (dom#1675).
 //!
 //! Builds a single new CPL whose reels are the source DCPs' reels in input order
-//! (a program, e.g. short + feature). Essence is copied byte-identical and
-//! referenced by its existing asset UUIDs; only a fresh CPL/PKL/ASSETMAP/VOLINDEX
-//! is written. Inputs must agree on standard, frame rate and resolution, and none
-//! may be encrypted (a new CPL id breaks the KDM's CPL binding).
+//! (a program, e.g. short + feature), with library items conformed into reels of
+//! their own before the first input's reels and after the last's. Source essence
+//! is copied byte-identical and referenced by its existing asset UUIDs. Inputs
+//! must agree on standard, frame rate and resolution, and none may be encrypted
+//! (a new CPL id breaks the KDM's CPL binding).
 
+use crate::dcp::ProgressSink;
 use crate::ingest_package::{detect_standard, file_name, is_cpl_path, tag};
+use crate::isdcf_name::Rating;
+use crate::library::AttachedItem;
 use crate::multi_cpl::{TimelineEntry, get_timeline};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+const STARTING_PERCENT: u32 = 2;
+const COPY_START_PERCENT: u32 = 5;
+const COPY_END_PERCENT: u32 = 80;
+const ITEMS_PERCENT: u32 = 80;
+const PACKAGE_PERCENT: u32 = 95;
+const DONE_PERCENT: u32 = 100;
+
 /// How to assemble the output OV.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AssembleConfig {
     pub inputs: Vec<PathBuf>,
     pub output_dir: PathBuf,
     pub title: String,
+    #[serde(default)]
     pub signer: Option<crate::package_signature::PackageSigner>,
+    #[serde(default)]
+    pub head_items: Vec<AttachedItem>,
+    #[serde(default)]
+    pub tail_items: Vec<AttachedItem>,
+    // None carries the first input's RatingList
+    #[serde(default)]
+    pub ratings: Option<Vec<Rating>>,
+    // None encodes the item reels to the compression ratio alone, as create does
+    #[serde(default)]
+    pub item_video_bit_rate_mbps: Option<u32>,
+    // the running process's settings, never read from a job
+    #[serde(skip)]
+    pub encode_threads: u32,
+    #[serde(skip)]
+    pub detect_picture_findings: bool,
 }
 
-/// One parsed input DCP: its reels plus picture dimensions and edit rate.
+/// One parsed input DCP: its reels, picture geometry, edit rate and the
+/// composition identity the new CPL carries from the first input.
 struct InputDcp {
     dir: PathBuf,
     standard: crate::Standard,
     reels: Vec<TimelineEntry>,
-    pic_w: u32,
-    pic_h: u32,
+    geometry: crate::cpl::PictureGeometry,
     edit_rate: String,
+    ratings: Vec<Rating>,
+    content_version_label: Option<String>,
 }
 
-/// Assemble the inputs into a single-CPL OV at `config.output_dir`. Returns 0 ok.
+/// A source track file and the name it is copied to in the output.
+struct TrackCopy {
+    id: String,
+    source: PathBuf,
+    name: String,
+    recorded: Option<(String, u64)>,
+}
+
 pub const ASSEMBLED_OV_TITLE: &str = "Assembled OV";
 
 pub fn assemble_title(title: &str) -> String {
@@ -41,77 +78,55 @@ pub fn assemble_title(title: &str) -> String {
     }
 }
 
+/// Assemble the inputs into a single-CPL OV at `config.output_dir`. Returns 0 ok.
 pub fn assemble(config: &AssembleConfig) -> i32 {
-    if config.inputs.len() < 2 {
-        tracing::error!("assemble needs at least two input DCPs");
-        return -1;
+    match assemble_with_progress(config, &crate::dcp::NoProgress) {
+        Ok(()) => 0,
+        Err(message) => {
+            tracing::error!("{message}");
+            -1
+        }
     }
+}
+
+/// As [`assemble`], reporting stage progress and honouring cancellation between
+/// copied track files.
+pub fn assemble_with_progress(
+    config: &AssembleConfig,
+    progress: &dyn ProgressSink,
+) -> Result<(), String> {
+    if config.inputs.is_empty() {
+        return Err("assemble needs at least one input DCP".into());
+    }
+    if progress.cancelled() {
+        return Err(crate::dcp::CANCELLED_MESSAGE.into());
+    }
+    progress.stage(STARTING_PERCENT, "reading the inputs");
     // prove the signer works before anything is written, so a bad one cannot
     // leave a half-signed package behind
-    if let Some(signer) = config.signer.as_ref()
-        && let Err(e) = signer.check_usable()
-    {
-        tracing::error!("unusable signer: {e}");
-        return -1;
+    if let Some(signer) = config.signer.as_ref() {
+        signer
+            .check_usable()
+            .map_err(|e| format!("unusable signer: {e}"))?;
     }
 
-    let mut inputs = Vec::with_capacity(config.inputs.len());
-    for dir in &config.inputs {
-        match parse_input(dir) {
-            Ok(i) => inputs.push(i),
-            Err(e) => {
-                tracing::error!("{}: {e}", dir.display());
-                return -1;
-            }
-        }
-    }
+    let inputs = config
+        .inputs
+        .iter()
+        .map(|dir| parse_input(dir).map_err(|e| format!("{}: {e}", dir.display())))
+        .collect::<Result<Vec<_>, _>>()?;
+    check_inputs_agree(&inputs)?;
+    let first = &inputs[0];
+    let standard = first.standard;
 
-    // All inputs must agree: one CPL over one shared standard/rate/resolution.
-    let standard = inputs[0].standard;
-    let (w0, h0) = (inputs[0].pic_w, inputs[0].pic_h);
-    let rate0 = inputs[0].edit_rate.clone();
-    for i in &inputs[1..] {
-        if i.standard != standard {
-            tracing::error!(
-                "standard mismatch: {} is {:?} but the first input is {:?}",
-                i.dir.display(),
-                i.standard,
-                standard
-            );
-            return -1;
-        }
-        if i.edit_rate != rate0 {
-            tracing::error!(
-                "frame-rate mismatch: {} is '{}' but the first input is '{}'",
-                i.dir.display(),
-                i.edit_rate,
-                rate0
-            );
-            return -1;
-        }
-        if (i.pic_w, i.pic_h) != (w0, h0) {
-            tracing::error!(
-                "resolution mismatch: {} is {}x{} but the first input is {}x{}",
-                i.dir.display(),
-                i.pic_w,
-                i.pic_h,
-                w0,
-                h0
-            );
-            return -1;
-        }
-    }
+    std::fs::create_dir_all(&config.output_dir)
+        .map_err(|e| format!("cannot create output {}: {e}", config.output_dir.display()))?;
 
-    if let Err(e) = std::fs::create_dir_all(&config.output_dir) {
-        tracing::error!("cannot create output {}: {e}", config.output_dir.display());
-        return -1;
-    }
+    let (edit_num, edit_den) = parse_edit_rate(&first.edit_rate);
 
-    let (edit_num, edit_den) = parse_edit_rate(&rate0);
-
-    let mut cpl_reels: Vec<crate::cpl::CplReel> = Vec::new();
-    let mut new_assets: Vec<(String, String, String, u64)> = Vec::new(); // id, filename, hash, size
-    let mut copied: HashSet<String> = HashSet::new();
+    let mut feature_reels: Vec<crate::cpl::CplReel> = Vec::new();
+    let mut copies: Vec<TrackCopy> = Vec::new();
+    let mut planned: HashSet<String> = HashSet::new();
     let mut used_names: HashSet<String> = HashSet::new();
     let mut main_sound_track: Option<PathBuf> = None;
 
@@ -119,58 +134,37 @@ pub fn assemble(config: &AssembleConfig) -> i32 {
         let pkl_map = parse_pkls(&input.dir);
         for reel in &input.reels {
             // copy every track file the reel references, deduped by asset id
-            let mut copy_track = |id: &str, src: &str| -> Result<(), i32> {
-                if id.is_empty() {
-                    return Ok(());
+            for (id, source) in [
+                (&reel.picture_asset_id, &reel.picture_file),
+                (&reel.sound_asset_id, &reel.sound_file),
+                (&reel.subtitle_asset_id, &reel.subtitle_file),
+            ] {
+                if id.is_empty() || !planned.insert(id.clone()) {
+                    continue;
                 }
-                if !copied.insert(id.to_string()) {
-                    return Ok(());
+                let source = PathBuf::from(source);
+                if !source.is_file() {
+                    return Err(format!("asset {id} file missing: {}", source.display()));
                 }
-                let src_path = PathBuf::from(src);
-                if !src_path.is_file() {
-                    tracing::error!("asset {id} file missing: {src}");
-                    return Err(-1);
-                }
-                let name = unique_name(&file_name(&src_path), id, &mut used_names);
-                let dst = config.output_dir.join(&name);
-                if let Err(e) = std::fs::copy(&src_path, &dst) {
-                    tracing::error!(
-                        "cannot copy {} -> {}: {e}",
-                        src_path.display(),
-                        dst.display()
-                    );
-                    return Err(-1);
-                }
-                let (hash, size) = match pkl_map.get(id) {
-                    Some((h, s)) => (h.clone(), *s),
-                    None => (
-                        crate::hash::hash_file(&dst).unwrap_or_default(),
-                        std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0),
-                    ),
-                };
-                new_assets.push((id.to_string(), name, hash, size));
-                Ok(())
-            };
-
-            if let Err(c) = copy_track(&reel.picture_asset_id, &reel.picture_file) {
-                return c;
-            }
-            if let Err(c) = copy_track(&reel.sound_asset_id, &reel.sound_file) {
-                return c;
-            }
-            if let Err(c) = copy_track(&reel.subtitle_asset_id, &reel.subtitle_file) {
-                return c;
+                copies.push(TrackCopy {
+                    id: id.clone(),
+                    name: unique_name(&file_name(&source), id, &mut used_names),
+                    source,
+                    recorded: pkl_map.get(id).cloned(),
+                });
             }
             if main_sound_track.is_none() && !reel.sound_asset_id.is_empty() {
                 main_sound_track = Some(PathBuf::from(&reel.sound_file));
             }
 
             let has_sub = !reel.subtitle_asset_id.is_empty();
-            cpl_reels.push(crate::cpl::CplReel {
+            feature_reels.push(crate::cpl::CplReel {
                 reel_id: uuid::Uuid::new_v4().to_string(),
                 picture_id: reel.picture_asset_id.clone(),
-                picture_width: input.pic_w,
-                picture_height: input.pic_h,
+                picture_width: input.geometry.stored_width,
+                picture_height: input.geometry.stored_height,
+                picture_active_width: input.geometry.active_width,
+                picture_active_height: input.geometry.active_height,
                 picture_edit_rate_num: edit_num,
                 picture_edit_rate_den: edit_den,
                 picture_duration: reel.duration_frames,
@@ -180,7 +174,7 @@ pub fn assemble(config: &AssembleConfig) -> i32 {
                 sound_edit_rate_num: edit_num,
                 sound_edit_rate_den: edit_den,
                 sound_duration: reel.duration_frames,
-                sound_entry_point: 0,
+                sound_entry_point: reel.sound_entry_point,
                 sound_key_id: None,
                 subtitle_id: has_sub.then(|| reel.subtitle_asset_id.clone()),
                 subtitle_edit_rate_num: if has_sub { edit_num } else { 0 },
@@ -197,25 +191,54 @@ pub fn assemble(config: &AssembleConfig) -> i32 {
         }
     }
 
-    if cpl_reels.is_empty() {
-        tracing::error!("no reels found in the input DCPs");
-        return -1;
+    if feature_reels.is_empty() {
+        return Err("no reels found in the input DCPs".into());
     }
-    // the assembled program is a new composition, so it gets its own FFOC/LFOC
-    crate::cpl::apply_default_markers(&mut cpl_reels);
 
-    let title = assemble_title(&config.title);
+    let (mut pkl_entries, mut assetmap_entries) =
+        copy_tracks(&copies, &config.output_dir, progress)?;
+
+    let has_items = !config.head_items.is_empty() || !config.tail_items.is_empty();
+    let mut joined = if has_items {
+        if progress.cancelled() {
+            return Err(crate::dcp::CANCELLED_MESSAGE.into());
+        }
+        progress.stage(ITEMS_PERCENT, "conforming library items");
+        let settings = crate::library_reel::ItemEncodeSettings {
+            output_dir: config.output_dir.clone(),
+            max_bitrate_mbps: config.item_video_bit_rate_mbps.unwrap_or(0),
+            encode_threads: config.encode_threads,
+            detect_picture_findings: config.detect_picture_findings,
+            encrypt: false,
+            audio_language: main_sound_track.as_deref().and_then(spoken_language),
+        };
+        crate::library_reel::join_library_items(
+            &settings,
+            &config.head_items,
+            &config.tail_items,
+            &item_format(first, main_sound_track.as_deref())?,
+            feature_reels,
+        )?
+    } else {
+        crate::library_reel::JoinedComposition {
+            reels: feature_reels,
+            ..Default::default()
+        }
+    };
+    pkl_entries.append(&mut joined.pkl);
+    assetmap_entries.append(&mut joined.assetmap);
+    // the assembled program is a new composition, so it gets its own FFOC/LFOC
+    crate::cpl::apply_default_markers(&mut joined.reels);
+
+    if progress.cancelled() {
+        return Err(crate::dcp::CANCELLED_MESSAGE.into());
+    }
+    progress.stage(PACKAGE_PERCENT, "writing CPL/PKL/ASSETMAP");
 
     // the program combines several sources, so no input CPL's block describes it
     let main_sound = match main_sound_track {
         Some(ref track) if standard == crate::Standard::Smpte => {
-            match crate::cpl::main_sound_from_track_file(track) {
-                Ok(sound) => Some(sound),
-                Err(e) => {
-                    tracing::error!("{e}");
-                    return -1;
-                }
-            }
+            Some(crate::cpl::main_sound_from_track_file(track)?)
         }
         _ => None,
     };
@@ -224,88 +247,215 @@ pub fn assemble(config: &AssembleConfig) -> i32 {
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
     let cpl_path = config.output_dir.join(format!("CPL_{cpl_uuid}.xml"));
     let cpl_config = crate::cpl::CplConfig {
-        title,
+        title: assemble_title(&config.title),
         content_kind: "feature".into(),
-        rating: String::new(),
-        reels: cpl_reels,
+        ratings: config
+            .ratings
+            .clone()
+            .unwrap_or_else(|| first.ratings.clone()),
+        content_version_label: first.content_version_label.clone(),
+        reels: joined.reels,
         standard,
         main_sound,
-        sign_language: None,
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
-        tracing::error!("failed to write assembled CPL");
-        return -1;
+        return Err("failed to write assembled CPL".into());
     }
     // before the PKL entry below hashes it
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &cpl_path, "CPL") {
-        return -1;
+        return Err("signing the CPL failed".into());
     }
 
-    // ── PKL: CPL plus every copied asset ──
+    // ── PKL: CPL plus every copied and conformed asset ──
     let pkl_uuid = uuid::Uuid::new_v4().to_string();
-    let mut pkl_entries = vec![crate::pkl::PklEntry {
-        id: cpl_uuid.clone(),
-        asset_type: "text/xml".into(),
-        file: cpl_path.clone(),
-        hash: crate::hash::hash_file(&cpl_path).unwrap_or_default(),
-        size: std::fs::metadata(&cpl_path).map(|m| m.len()).unwrap_or(0),
-    }];
-    for (id, name, hash, size) in &new_assets {
-        pkl_entries.push(crate::pkl::PklEntry {
-            id: id.clone(),
-            asset_type: "application/mxf".into(),
-            file: config.output_dir.join(name),
-            hash: hash.clone(),
-            size: *size,
-        });
-    }
+    pkl_entries.insert(
+        0,
+        crate::pkl::PklEntry {
+            id: cpl_uuid.clone(),
+            asset_type: "text/xml".into(),
+            file: cpl_path.clone(),
+            hash: crate::hash::hash_file(&cpl_path)?,
+            size: file_size(&cpl_path)?,
+        },
+    );
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
     if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
-        tracing::error!("failed to write assembled PKL");
-        return -1;
+        return Err("failed to write assembled PKL".into());
     }
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &pkl_path, "PKL") {
-        return -1;
+        return Err("signing the PKL failed".into());
     }
 
     // ── ASSETMAP + VOLINDEX ──
-    let mut am_entries = vec![
-        crate::assetmap::AssetMapEntry {
-            id: pkl_uuid,
-            path: file_name(&pkl_path),
-            packing_list: true,
-        },
-        crate::assetmap::AssetMapEntry {
-            id: cpl_uuid,
-            path: file_name(&cpl_path),
-            packing_list: false,
-        },
-    ];
-    for (id, name, _, _) in &new_assets {
-        am_entries.push(crate::assetmap::AssetMapEntry {
-            id: id.clone(),
-            path: name.clone(),
-            packing_list: false,
-        });
-    }
-    if crate::assetmap::generate_assetmap(&am_entries, &config.output_dir, standard, None) != 0 {
-        tracing::error!("failed to write assembled ASSETMAP");
-        return -1;
+    assetmap_entries.splice(
+        0..0,
+        [
+            crate::assetmap::AssetMapEntry {
+                id: pkl_uuid,
+                path: file_name(&pkl_path),
+                packing_list: true,
+            },
+            crate::assetmap::AssetMapEntry {
+                id: cpl_uuid,
+                path: file_name(&cpl_path),
+                packing_list: false,
+            },
+        ],
+    );
+    if crate::assetmap::generate_assetmap(&assetmap_entries, &config.output_dir, standard, None)
+        != 0
+    {
+        return Err("failed to write assembled ASSETMAP".into());
     }
 
+    progress.stage(DONE_PERCENT, "done");
     tracing::info!(
         "assembled {} input(s) into {} ({} reels, {} assets)",
         inputs.len(),
         config.output_dir.display(),
         cpl_config.reels.len(),
-        new_assets.len()
+        pkl_entries.len() - 1
     );
-    0
+    Ok(())
 }
 
-/// Parse one input DCP: exactly one CPL, its reels, picture size and edit rate.
-/// Fails loud on an encrypted CPL (a new CPL id would break its KDM binding).
+/// One CPL over one shared standard, rate and resolution.
+fn check_inputs_agree(inputs: &[InputDcp]) -> Result<(), String> {
+    let first = &inputs[0];
+    let first_size = (first.geometry.stored_width, first.geometry.stored_height);
+    for input in &inputs[1..] {
+        if input.standard != first.standard {
+            return Err(format!(
+                "standard mismatch: {} is {:?} but the first input is {:?}",
+                input.dir.display(),
+                input.standard,
+                first.standard
+            ));
+        }
+        if input.edit_rate != first.edit_rate {
+            return Err(format!(
+                "frame-rate mismatch: {} is '{}' but the first input is '{}'",
+                input.dir.display(),
+                input.edit_rate,
+                first.edit_rate
+            ));
+        }
+        let size = (input.geometry.stored_width, input.geometry.stored_height);
+        if size != first_size {
+            return Err(format!(
+                "resolution mismatch: {} is {}x{} but the first input is {}x{}",
+                input.dir.display(),
+                size.0,
+                size.1,
+                first_size.0,
+                first_size.1
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Copy the source track files byte for byte, reporting progress by bytes.
+fn copy_tracks(
+    copies: &[TrackCopy],
+    output_dir: &Path,
+    progress: &dyn ProgressSink,
+) -> Result<
+    (
+        Vec<crate::pkl::PklEntry>,
+        Vec<crate::assetmap::AssetMapEntry>,
+    ),
+    String,
+> {
+    let total_bytes = copies
+        .iter()
+        .map(|copy| file_size(&copy.source))
+        .sum::<Result<u64, String>>()?;
+    let span = u64::from(COPY_END_PERCENT - COPY_START_PERCENT);
+    let mut copied_bytes = 0u64;
+    let mut pkl_entries = Vec::with_capacity(copies.len());
+    let mut assetmap_entries = Vec::with_capacity(copies.len());
+    for copy in copies {
+        if progress.cancelled() {
+            return Err(crate::dcp::CANCELLED_MESSAGE.into());
+        }
+        let percent = u64::from(COPY_START_PERCENT) + span * copied_bytes / total_bytes.max(1);
+        progress.stage(percent as u32, &format!("copying {}", copy.name));
+        let destination = output_dir.join(&copy.name);
+        copied_bytes += std::fs::copy(&copy.source, &destination).map_err(|e| {
+            format!(
+                "cannot copy {} -> {}: {e}",
+                copy.source.display(),
+                destination.display()
+            )
+        })?;
+        let (hash, size) = match &copy.recorded {
+            Some(recorded) => recorded.clone(),
+            None => (
+                crate::hash::hash_file(&destination)?,
+                file_size(&destination)?,
+            ),
+        };
+        pkl_entries.push(crate::pkl::PklEntry {
+            id: copy.id.clone(),
+            asset_type: "application/mxf".into(),
+            file: destination,
+            hash,
+            size,
+        });
+        assetmap_entries.push(crate::assetmap::AssetMapEntry {
+            id: copy.id.clone(),
+            path: copy.name.clone(),
+            packing_list: false,
+        });
+    }
+    Ok((pkl_entries, assetmap_entries))
+}
+
+fn file_size(path: &Path) -> Result<u64, String> {
+    std::fs::metadata(path)
+        .map(|m| m.len())
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// What the item reels have to match, read off the first input.
+fn item_format(
+    first: &InputDcp,
+    sound_track: Option<&Path>,
+) -> Result<crate::library_reel::JobFormat, String> {
+    let (fps, rate_denominator) = parse_edit_rate(&first.edit_rate);
+    if rate_denominator != 1 {
+        return Err(format!(
+            "library items need a whole frame rate, and {} runs at {}",
+            first.dir.display(),
+            first.edit_rate
+        ));
+    }
+    Ok(crate::library_reel::JobFormat {
+        fps,
+        geometry: first.geometry,
+        sound: sound_track
+            .map(crate::library_reel::job_sound_from_track_file)
+            .transpose()?,
+    })
+}
+
+/// The language the sound track's soundfield group declares, when it has one.
+fn spoken_language(track: &Path) -> Option<String> {
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader.open_read(&track.to_string_lossy()).ok()?;
+    reader
+        .mca_label_subdescriptors()
+        .ok()?
+        .into_iter()
+        .filter(|label| label.kind == asdcplib::pcm::McaLabelKind::SoundfieldGroup)
+        .find_map(|label| label.spoken_language)
+}
+
+/// Parse one input DCP: exactly one CPL, its reels, picture geometry, edit rate
+/// and composition identity. Fails loud on an encrypted CPL (a new CPL id would
+/// break its KDM binding).
 fn parse_input(dir: &Path) -> Result<InputDcp, String> {
     if !dir.is_dir() {
         return Err("not a directory".into());
@@ -336,16 +486,80 @@ fn parse_input(dir: &Path) -> Result<InputDcp, String> {
     if reels.is_empty() {
         return Err("CPL has no reels".into());
     }
-    let (pic_w, pic_h) = parse_screen_aspect(&cpl);
+    let geometry = picture_geometry(&cpl, Path::new(&reels[0].picture_file))?;
     let edit_rate = reels[0].edit_rate.clone();
+    let (ratings, content_version_label) = composition_identity(&cpl)?;
     Ok(InputDcp {
         dir: dir.to_path_buf(),
         standard,
         reels,
-        pic_w,
-        pic_h,
+        geometry,
         edit_rate,
+        ratings,
+        content_version_label,
     })
+}
+
+/// Stored size from the picture track's descriptor, active area from the CPL.
+fn picture_geometry(
+    cpl_xml: &str,
+    picture_file: &Path,
+) -> Result<crate::cpl::PictureGeometry, String> {
+    let mut reader = asdcplib::jp2k::MxfReader::new();
+    reader
+        .open_read(&picture_file.to_string_lossy())
+        .map_err(|e| {
+            format!(
+                "cannot open the picture track {}: {e}",
+                picture_file.display()
+            )
+        })?;
+    let descriptor = reader.picture_descriptor().map_err(|e| {
+        format!(
+            "cannot read the picture descriptor of {}: {e}",
+            picture_file.display()
+        )
+    })?;
+    let (stored_width, stored_height) = (descriptor.stored_width, descriptor.stored_height);
+    let (active_width, active_height) =
+        crate::cpl::active_area_from_cpl(cpl_xml).unwrap_or((stored_width, stored_height));
+    crate::cpl::check_active_area_fits(stored_width, stored_height, active_width, active_height)?;
+    Ok(crate::cpl::PictureGeometry {
+        stored_width,
+        stored_height,
+        active_width,
+        active_height,
+    })
+}
+
+/// The CPL's RatingList and ContentVersion label.
+fn composition_identity(cpl_xml: &str) -> Result<(Vec<Rating>, Option<String>), String> {
+    let doc = roxmltree::Document::parse(cpl_xml).map_err(|e| format!("CPL: {e}"))?;
+    let child_text = |node: roxmltree::Node, name: &str| -> Option<String> {
+        node.children()
+            .find(|n| n.has_tag_name(name))
+            .and_then(|n| n.text())
+            .map(|t| t.trim().to_string())
+    };
+    let root = doc.root_element();
+    let child = |name: &str| root.children().find(|n| n.has_tag_name(name));
+    let ratings = child("RatingList")
+        .map(|list| {
+            list.children()
+                .filter(|n| n.has_tag_name("Rating"))
+                .map(|rating| Rating {
+                    agency: child_text(rating, "Agency").unwrap_or_default(),
+                    label: child_text(rating, "Label").unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let title = child_text(root, "ContentTitleText");
+    // a label equal to the source's title is the writer's default, not a version
+    let content_version_label = child("ContentVersion")
+        .and_then(|version| child_text(version, "LabelText"))
+        .filter(|label| Some(label) != title.as_ref());
+    Ok((ratings, content_version_label))
 }
 
 /// id -> (hash, size) across every PKL in the directory.
@@ -400,26 +614,4 @@ fn parse_edit_rate(s: &str) -> (u32, u32) {
     let num = it.next().and_then(|v| v.parse().ok()).unwrap_or(24);
     let den = it.next().and_then(|v| v.parse().ok()).unwrap_or(1);
     (num, den)
-}
-
-/// Picture dimensions from a CPL's ScreenAspectRatio. SMPTE carries a "w h" pair;
-/// Interop carries a decimal, from which we recover w at 1080p.
-fn parse_screen_aspect(cpl: &str) -> (u32, u32) {
-    let inner = cpl
-        .split_once("<ScreenAspectRatio>")
-        .and_then(|(_, r)| r.split_once("</ScreenAspectRatio>"))
-        .map(|(v, _)| v.trim());
-    match inner {
-        Some(v) if v.contains(char::is_whitespace) => {
-            let mut it = v.split_whitespace();
-            let w = it.next().and_then(|x| x.parse().ok()).unwrap_or(2048);
-            let h = it.next().and_then(|x| x.parse().ok()).unwrap_or(1080);
-            (w, h)
-        }
-        Some(v) => match v.parse::<f64>() {
-            Ok(r) if r > 0.0 => ((r * 1080.0).round() as u32, 1080),
-            _ => (2048, 1080),
-        },
-        None => (2048, 1080),
-    }
 }

@@ -37,7 +37,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **CPL / PKL / ASSETMAP / VOLINDEX** generation
 - **Multi-version packages** via `create --versions <file>`: one package with several CPLs sharing the same picture/sound essence, differing by subtitle and/or audio track (multiple language versions over one master)
 - **Multi-composition packages** via `create-multi --compositions <manifest>`: one CPL per manifest entry, each with its own picture/sound/subtitle, over one shared PKL/ASSETMAP
-- **Assemble** a new OV from existing DCPs via `assemble --input <dcp>... --output --title` (reels in order, essence copied byte-identical by UUID)
+- **Assemble** a new OV from one or more existing DCPs via `assemble --input <dcp>... --output --title` (reels in order, essence copied byte-identical by UUID), with library items as reels before and after them (`--head-item`, `--tail-item`) and the first input's ratings carried or replaced (`--rating`)
 - **Edit** CPL metadata (title/annotation/content-kind/issuer) without re-wrapping essence via `edit --input`
 - **Decrypt** an encrypted DCP to cleartext via `decrypt --input --output` with `--kdm --recipient-key` or `--keys`. Every essence round-trips: picture, sound, subtitle, closed caption and Atmos
 - **Sign-language video** track via `create --sign-language-video <file> --sign-language-lang <rfc5646>` (ISDCF Doc 13, SLVS on sound channel 15)
@@ -626,6 +626,11 @@ dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf \
 # written to ./assembled/Short + Feature
 dcpwizard assemble --input ./short_dcp --input ./feature_dcp \
     --output ./assembled --title "Short + Feature"
+
+# Put a library ident before an existing DCP and change its rating, written as a
+# new OV to ./assembled/Feature UK
+dcpwizard assemble --input ./feature_dcp --head-item "Studio Ident" \
+    --rating "http://www.bbfc.co.uk=12A" --output ./assembled --title "Feature UK"
 
 # Edit a DCP's CPL metadata in place (or into --output); refuses encrypted DCPs
 dcpwizard edit --input "./dcp/My Film" --title "My Film (2024 Restoration)" --content-kind FTR
