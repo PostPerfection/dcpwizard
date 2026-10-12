@@ -10,7 +10,7 @@
 
 use crate::dcp::DcpConfig;
 use crate::library::{AttachedItem, item_frames};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Items are ordinary Rec.709 deliverables, so the compressor runs its own DCI
 /// transform over them, as it does for a `--source-colourspace rec709` feature.
@@ -49,6 +49,30 @@ pub struct JobFormat {
     pub sound: Option<JobSound>,
 }
 
+/// How the item reels are encoded and wrapped, whichever command builds them.
+#[derive(Debug, Clone)]
+pub struct ItemEncodeSettings {
+    pub output_dir: PathBuf,
+    pub max_bitrate_mbps: u32,
+    pub encode_threads: u32,
+    pub detect_picture_findings: bool,
+    pub encrypt: bool,
+    pub audio_language: Option<String>,
+}
+
+impl ItemEncodeSettings {
+    pub fn of_job(config: &DcpConfig) -> Self {
+        Self {
+            output_dir: config.output_dir.clone(),
+            max_bitrate_mbps: config.max_bitrate_mbps,
+            encode_threads: config.encode_threads,
+            detect_picture_findings: config.detect_picture_findings,
+            encrypt: config.encrypt,
+            audio_language: config.audio_language.clone(),
+        }
+    }
+}
+
 /// One conformed item's reel and everything the package has to record about it.
 #[derive(Debug, Default)]
 pub struct ItemReels {
@@ -68,9 +92,9 @@ impl ItemReels {
 }
 
 /// Conform and wrap every item in `items`, in the order given. The MXFs land in
-/// `config.output_dir` beside the feature's; everything else is cleaned up.
+/// `settings.output_dir` beside the feature's; everything else is cleaned up.
 pub fn build_item_reels(
-    config: &DcpConfig,
+    settings: &ItemEncodeSettings,
     items: &[AttachedItem],
     format: &JobFormat,
 ) -> Result<ItemReels, String> {
@@ -78,7 +102,7 @@ pub fn build_item_reels(
     if items.is_empty() {
         return Ok(built);
     }
-    let work_root = config
+    let work_root = settings
         .output_dir
         .join(format!(".dcpwizard_items_{}", uuid::Uuid::new_v4()));
     let result = (|| {
@@ -86,7 +110,7 @@ pub fn build_item_reels(
             let work = work_root.join(&item.item.name);
             std::fs::create_dir_all(&work)
                 .map_err(|e| format!("cannot create {}: {e}", work.display()))?;
-            built.absorb(build_one_item_reel(config, item, format, &work)?);
+            built.absorb(build_one_item_reel(settings, item, format, &work)?);
         }
         Ok(())
     })();
@@ -95,7 +119,7 @@ pub fn build_item_reels(
 }
 
 fn build_one_item_reel(
-    config: &DcpConfig,
+    settings: &ItemEncodeSettings,
     item: &AttachedItem,
     format: &JobFormat,
     work: &Path,
@@ -113,16 +137,16 @@ fn build_one_item_reel(
     let frames = encode_item_picture(
         item,
         format,
-        config.max_bitrate_mbps,
-        config.encode_threads,
-        config.detect_picture_findings,
+        settings.max_bitrate_mbps,
+        settings.encode_threads,
+        settings.detect_picture_findings,
         &j2k_dir,
     )?;
 
     let picture_uuid = uuid::Uuid::new_v4();
     let picture_name = format!("item_picture_{picture_uuid}.mxf");
-    let picture_path = config.output_dir.join(&picture_name);
-    let picture_key = mint_item_key(config, crate::encrypt::KeyType::Mdik, &picture_uuid)?;
+    let picture_path = settings.output_dir.join(&picture_name);
+    let picture_key = mint_item_key(settings, crate::encrypt::KeyType::Mdik, &picture_uuid)?;
     if crate::mxf_wrap::wrap_mxf_files(
         crate::reel::collect_frames(&j2k_dir),
         &picture_path,
@@ -163,13 +187,13 @@ fn build_one_item_reel(
         build_item_sound(item, &sound, format.fps, frames, work, &wav)?;
         let sound_uuid = uuid::Uuid::new_v4();
         let sound_name = format!("item_sound_{sound_uuid}.mxf");
-        let sound_path = config.output_dir.join(&sound_name);
-        let key = mint_item_key(config, crate::encrypt::KeyType::Mdak, &sound_uuid)?;
+        let sound_path = settings.output_dir.join(&sound_name);
+        let key = mint_item_key(settings, crate::encrypt::KeyType::Mdak, &sound_uuid)?;
         let mca_config =
             crate::mxf_wrap::build_mca_config(sound.channels, sound.channels, None, None).map(
                 |labels| postkit::mxf_wrap::McaConfig {
                     labels,
-                    spoken_language: config.audio_language.clone(),
+                    spoken_language: settings.audio_language.clone(),
                     soundfield_group: None,
                 },
             );
@@ -233,11 +257,11 @@ fn build_one_item_reel(
 }
 
 fn mint_item_key(
-    config: &DcpConfig,
+    settings: &ItemEncodeSettings,
     kind: crate::encrypt::KeyType,
     asset: &uuid::Uuid,
 ) -> Result<Option<crate::encrypt::GeneratedKey>, String> {
-    if !config.encrypt {
+    if !settings.encrypt {
         return Ok(None);
     }
     crate::encrypt::generate_content_key(kind, &asset.to_string())
@@ -461,6 +485,36 @@ pub fn job_sound(packaged_audio: &Path) -> Result<JobSound, String> {
     })
 }
 
+/// The sound the item reels have to match, read off the feature's wrapped PCM
+/// MXF.
+pub fn job_sound_from_track_file(track: &Path) -> Result<JobSound, String> {
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader
+        .open_read(&track.to_string_lossy())
+        .map_err(|e| format!("cannot open the sound track {}: {e}", track.display()))?;
+    let descriptor = reader.audio_descriptor().map_err(|e| {
+        format!(
+            "cannot read the audio descriptor of {}: {e}",
+            track.display()
+        )
+    })?;
+    let rate = descriptor.audio_sampling_rate;
+    if descriptor.channel_count == 0 || rate.numerator <= 0 || rate.denominator <= 0 {
+        return Err(format!(
+            "{} declares {} channels at {} {}",
+            track.display(),
+            descriptor.channel_count,
+            rate.numerator,
+            rate.denominator
+        ));
+    }
+    Ok(JobSound {
+        channels: descriptor.channel_count,
+        sample_rate: (rate.numerator / rate.denominator) as u32,
+        bits: descriptor.quantization_bits as u16,
+    })
+}
+
 /// A composition's reels with the job's library items folded around the
 /// feature's, plus what the package has to record for the extra essence.
 #[derive(Debug, Default)]
@@ -476,12 +530,14 @@ pub struct JoinedComposition {
 /// to the caller, which places them over the whole run once this has moved
 /// which reel comes first.
 pub fn join_library_items(
-    config: &DcpConfig,
+    settings: &ItemEncodeSettings,
+    head_items: &[AttachedItem],
+    tail_items: &[AttachedItem],
     format: &JobFormat,
     feature: Vec<crate::cpl::CplReel>,
 ) -> Result<JoinedComposition, String> {
-    let head = build_item_reels(config, &config.head_items, format)?;
-    let tail = build_item_reels(config, &config.tail_items, format)?;
+    let head = build_item_reels(settings, head_items, format)?;
+    let tail = build_item_reels(settings, tail_items, format)?;
     Ok(fold_around_feature(head, feature, tail))
 }
 
@@ -583,7 +639,7 @@ mod tests {
 
     #[test]
     fn nothing_attached_builds_nothing() {
-        let config = DcpConfig::default();
+        let settings = ItemEncodeSettings::of_job(&DcpConfig::default());
         let format = JobFormat {
             fps: 24,
             geometry: crate::cpl::PictureGeometry {
@@ -594,7 +650,7 @@ mod tests {
             },
             sound: None,
         };
-        let built = build_item_reels(&config, &[], &format).unwrap();
+        let built = build_item_reels(&settings, &[], &format).unwrap();
         assert!(built.reels.is_empty());
         assert!(built.pkl.is_empty());
         assert!(built.assetmap.is_empty());

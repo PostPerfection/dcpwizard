@@ -1096,7 +1096,13 @@ pub fn create_dcp_with_progress(
             geometry,
             sound: job_sound,
         };
-        crate::library_reel::join_library_items(config, &format, vec![reel])?
+        crate::library_reel::join_library_items(
+            &crate::library_reel::ItemEncodeSettings::of_job(config),
+            &config.head_items,
+            &config.tail_items,
+            &format,
+            vec![reel],
+        )?
     } else {
         crate::library_reel::JoinedComposition {
             reels: vec![reel],

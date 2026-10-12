@@ -324,6 +324,7 @@ fn assemble_signs_the_composition_it_writes() {
         output_dir: out.clone(),
         title: "Assembled".into(),
         signer: Some(signer.clone()),
+        ..Default::default()
     });
     assert_eq!(code, 0, "signed assemble must succeed");
     assert_package_signed_and_hashed_after_signing(&out, &signer);
@@ -414,6 +415,7 @@ fn a_command_given_no_signer_still_writes_an_unsigned_package() {
         output_dir: out.clone(),
         title: "Unsigned".into(),
         signer: None,
+        ..Default::default()
     });
     assert_eq!(code, 0);
     for prefix in ["CPL_", "PKL_"] {

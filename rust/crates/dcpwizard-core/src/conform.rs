@@ -378,6 +378,7 @@ pub fn assemble_dcp(
             output_dir: output_dir.to_path_buf(),
             title: plan.title.clone(),
             signer: signer.cloned(),
+            ..Default::default()
         })
     };
     let _ = std::fs::remove_dir_all(&work_root);
