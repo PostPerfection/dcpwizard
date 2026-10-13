@@ -514,6 +514,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           OPENSSL_STATIC: "1"
+          # the bundle carries no Homebrew lcms2
+          LCMS2_STATIC: "1"
         with:
           projectPath: gui
           args: ${{ runner.os != 'Windows' && format('--config {0}/ffmpeg-mpv-bundle.json', runner.temp) || '' }}
