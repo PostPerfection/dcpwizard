@@ -15,6 +15,7 @@ import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from ".
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setPreviewedTimelineReel, setProjectReelSeeker } from "./timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
+import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
@@ -1737,6 +1738,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       if (projectRecordPath) addRecentProject(projectRecordPath, title);
       showPostBuildActions(output);
       finishedBuild = { requestText, packagePath: output };
+      rememberFinishedBuild(FINISHED_BUILDS_KEY, output, requestText);
       endBuild(buildTitle);
       unlisten();
       unlistenVal();
@@ -3070,6 +3072,8 @@ async function restoreBuildPanel(saved, projectPath) {
   previewedPackage = null;
   const packagePath = projectPath ? packagePathBeside(projectPath) : null;
   packageBesideProject = packagePath && (await existsInScope(packagePath)) ? packagePath : null;
+  const builtRequestText = packageBesideProject && finishedBuildRequest(FINISHED_BUILDS_KEY, packageBesideProject);
+  finishedBuild = builtRequestText ? { requestText: builtRequestText, packagePath: packageBesideProject } : null;
   clearPreviewSelection();
   stopPreview();
   if (isPreviewVisible()) previewCurrentTarget();
@@ -3084,6 +3088,7 @@ async function restoreBuildPanel(saved, projectPath) {
   const inLibrary = new Set(libraryItems.map((item) => item.name));
   notRestored.push(...joined.filter((name) => !inLibrary.has(name)).map((name) => `library item ${name}`));
   if (document.getElementById("view-verify").classList.contains("active")) showDefaultVerifyPackage();
+  updateBuildButton();
   return notRestored;
 }
 
@@ -3184,6 +3189,7 @@ function endBuild(title) {
 const BUILD_BUTTON_TEXT = "Build DCP";
 const BUILT_BUTTON_TEXT = "DCP Built";
 const FINISHED_BUILD_CHECK_MILLISECONDS = 1000;
+const FINISHED_BUILDS_KEY = "dcpwizard-finished-builds";
 let finishedBuild = null;
 
 function updateBuildButton() {
@@ -3198,7 +3204,10 @@ function updateBuildButton() {
 
 // polled, since the form changes through many paths
 async function refreshFinishedBuild() {
-  if (finishedBuild && !(await existsInScope(finishedBuild.packagePath))) finishedBuild = null;
+  if (finishedBuild && !(await existsInScope(finishedBuild.packagePath))) {
+    forgetFinishedBuild(FINISHED_BUILDS_KEY, finishedBuild.packagePath);
+    finishedBuild = null;
+  }
   updateBuildButton();
 }
 
