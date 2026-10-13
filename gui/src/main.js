@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, previewPlayPause, previewSeek, previewSeekAbsolute, previewFrameStepBack, previewFrameStepForward, PREVIEW_SEEK_SECONDS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -14,7 +14,8 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setPreviewedTimelineReel, setProjectReelSeeker } from "./timeline.js";
-import { initShortcuts, getBinding } from "../../extern/guikit/src/shortcuts.js";
+import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
+import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
@@ -96,57 +97,16 @@ const SHORTCUTS_KEY = "dcpwizard-shortcuts";
 
 const PROJECT_BUTTON_SHORTCUTS = [
   ...PROJECT_FILE_SHORTCUTS,
-  { id: "open-dcp", label: "Open DCP", binding: "Ctrl+Shift+O", buttonId: "btn-open-dcp" },
-  { id: "build", label: "Build DCP", binding: "Ctrl+B", buttonId: "btn-build" },
-  { id: "preview", label: "Preview", binding: "Ctrl+P", buttonId: "btn-preview" },
-  { id: "import-video", label: "Import video", binding: "Ctrl+I", buttonId: "import-video" },
-];
-const THEME_BUTTON_SHORTCUT = { id: "toggle-theme", label: "Toggle light / dark theme", binding: "Ctrl+Shift+T", buttonId: "theme-toggle" };
-const BUTTON_SHORTCUTS = [...PROJECT_BUTTON_SHORTCUTS, THEME_BUTTON_SHORTCUT];
-
-function clickAction({ id, label, binding, buttonId }, category) {
-  return { id, label, category, binding, handler: () => document.getElementById(buttonId)?.click() };
-}
-
-function viewAction(view, label, binding) {
-  return { id: `view-${view}`, label, category: "Views", binding, handler: () => switchView(view) };
-}
-
-function previewAction(id, label, binding, handler) {
-  return { id, label, category: "Preview", binding, when: isPreviewVisible, handler };
-}
-
-function refreshButtonTooltips() {
-  for (const { id, label, buttonId } of BUTTON_SHORTCUTS) {
-    const button = document.getElementById(buttonId);
-    if (!button) continue;
-    const binding = getBinding(id);
-    button.title = binding ? `${label} (${binding})` : label;
-  }
-}
+  { id: "open-dcp", label: "Open DCP", binding: SHARED_BINDINGS.openPackage, buttonId: "btn-open-dcp" },
+  { id: "build", label: "Build DCP", binding: SHARED_BINDINGS.build, buttonId: "btn-build" },
+  { id: "preview", label: "Preview", binding: SHARED_BINDINGS.preview, buttonId: "btn-preview" },
+  { id: "import-video", label: "Import video", binding: SHARED_BINDINGS.importVideo, buttonId: "import-video" },
+].map((shortcut) => ({ ...shortcut, category: "Project" }));
 
 initShortcuts({
   storageKey: SHORTCUTS_KEY,
-  onChange: refreshButtonTooltips,
-  actions: [
-    ...PROJECT_BUTTON_SHORTCUTS.map((shortcut) => clickAction(shortcut, "Project")),
-    viewAction("project", "Project", "Ctrl+1"),
-    viewAction("reels", "Reels & Timeline", "Ctrl+2"),
-    viewAction("verify", "Verify", "Ctrl+3"),
-    viewAction("security", "Encryption & KDM", "Ctrl+4"),
-    viewAction("tools", "Tools", "Ctrl+5"),
-    viewAction("jobs", "Jobs", "Ctrl+6"),
-    viewAction("settings", "Settings", "Ctrl+7"),
-    previewAction("preview-play-pause", "Play / pause", "Space", previewPlayPause),
-    previewAction("preview-back", `Back ${PREVIEW_SEEK_SECONDS} seconds`, "ArrowLeft", () => previewSeek(-PREVIEW_SEEK_SECONDS)),
-    previewAction("preview-forward", `Forward ${PREVIEW_SEEK_SECONDS} seconds`, "ArrowRight", () => previewSeek(PREVIEW_SEEK_SECONDS)),
-    previewAction("preview-frame-back", "Step back one frame", ",", previewFrameStepBack),
-    previewAction("preview-frame-forward", "Step forward one frame", ".", previewFrameStepForward),
-    previewAction("preview-start", "Go to start", "Home", () => previewSeekAbsolute(0)),
-    clickAction(THEME_BUTTON_SHORTCUT, "Appearance"),
-  ],
+  actions: [...PROJECT_BUTTON_SHORTCUTS, ...sidebarViewShortcuts(switchView), ...PREVIEW_SHORTCUTS, ...POST_BUILD_SHORTCUTS, THEME_SHORTCUT],
 });
-refreshButtonTooltips();
 
 // === Preferences ===
 const PREFS_KEY = "dcpwizard-preferences";

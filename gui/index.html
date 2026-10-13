@@ -14,20 +14,20 @@
     </div>
   </div>
 
-  <div id="hints-dialog" class="hints-dialog" hidden>
+  <div id="hints-dialog" class="hints-dialog" hidden role="dialog">
     <div class="hints-panel">
       <h2>Before you build</h2>
       <p class="hints-lead">These will build, but they are worth a look first.</p>
       <ul id="hints-list" class="hints-list"></ul>
       <label class="hints-silence"><input type="checkbox" id="hints-silence"> Don't show hints again</label>
       <div class="hints-actions">
-        <button type="button" id="hints-back" class="btn-secondary">Go back</button>
-        <button type="button" id="hints-build" class="btn-primary">Build anyway</button>
+        <button type="button" id="hints-back" class="btn-secondary" data-dialog-cancel>Go back</button>
+        <button type="button" id="hints-build" class="btn-primary" data-dialog-default>Build anyway</button>
       </div>
     </div>
   </div>
 
-  <div id="content-keys-dialog" class="content-keys-dialog" hidden>
+  <div id="content-keys-dialog" class="content-keys-dialog" hidden role="dialog">
     <div class="content-keys-panel">
       <h2>Content keys</h2>
       <p class="content-keys-lead">This package is encrypted. Choose the KDM and the recipient private key it was issued to, or the KEYS.json the DCP was built with.</p>
@@ -54,8 +54,8 @@
       </div>
       <ul id="content-keys-refusals" class="content-keys-refusals"></ul>
       <div class="content-keys-actions">
-        <button type="button" id="content-keys-cancel" class="btn-secondary">Cancel</button>
-        <button type="button" id="content-keys-play" class="btn-primary">Play</button>
+        <button type="button" id="content-keys-cancel" class="btn-secondary" data-dialog-cancel>Cancel</button>
+        <button type="button" id="content-keys-play" class="btn-primary" data-dialog-default>Play</button>
       </div>
     </div>
   </div>
@@ -113,12 +113,12 @@
           <span id="project-name" class="project-name">Untitled</span>
         </div>
         <div class="toolbar-right">
-          <button id="btn-project-menu" class="toolbar-btn" title="Project" aria-expanded="false">Project ▾</button>
-          <div id="project-menu" class="project-menu" hidden>
-            <button id="btn-new-project" class="project-menu-item" title="New project">New…</button>
-            <button id="btn-project-open" class="project-menu-item" title="Open project">Open…</button>
-            <button id="btn-project-save" class="project-menu-item" title="Save project">Save</button>
-            <button id="btn-project-save-as" class="project-menu-item" title="Save project as">Save As…</button>
+          <button id="btn-project-menu" class="toolbar-btn" title="Project" aria-expanded="false" data-key="p" aria-controls="project-menu" aria-haspopup="menu">Project ▾</button>
+          <div id="project-menu" class="project-menu" hidden role="menu">
+            <button id="btn-new-project" class="project-menu-item" title="New project" role="menuitem" data-key="n">New…</button>
+            <button id="btn-project-open" class="project-menu-item" title="Open project" role="menuitem" data-key="o">Open…</button>
+            <button id="btn-project-save" class="project-menu-item" title="Save project" role="menuitem" data-key="s">Save</button>
+            <button id="btn-project-save-as" class="project-menu-item" title="Save project as" role="menuitem" data-key="a">Save As…</button>
             <div id="recent-list" class="recent-list"></div>
           </div>
           <button id="btn-open-dcp" class="toolbar-btn" title="Open DCP">Open DCP</button>
@@ -141,9 +141,9 @@
                   <h2>Assets</h2>
                   <div class="panel-actions">
                     <input id="asset-filter" type="text" class="asset-filter" placeholder="Filter assets…" title="Filter assets by name">
-                    <button id="import-video" class="btn-sm">+ Video</button>
-                    <button id="import-audio" class="btn-sm">+ Audio</button>
-                    <button id="import-subtitle" class="btn-sm">+ Subtitle</button>
+                    <button id="import-video" class="btn-sm" data-shared-action="add-video">+ Video</button>
+                    <button id="import-audio" class="btn-sm" data-shared-action="add-audio">+ Audio</button>
+                    <button id="import-subtitle" class="btn-sm" data-shared-action="add-subtitle">+ Subtitle</button>
                   </div>
                 </div>
                 <div id="asset-list" class="asset-list">
@@ -156,17 +156,17 @@
               <section class="panel compositions-panel">
                 <div class="panel-header">
                   <h2>Compositions (CPLs)</h2>
-                  <button id="add-cpl" class="btn-sm">+ CPL</button>
+                  <button id="add-cpl" class="btn-sm" data-shared-action="add-cpl">+ CPL</button>
                 </div>
                 <div id="cpl-tabs" class="cpl-tabs">
-                  <button class="cpl-tab active" data-cpl="0">Main</button>
+                  <button class="cpl-tab active" data-cpl="0" data-no-key>Main</button>
                 </div>
               </section>
 
               <section class="panel reels-panel">
                 <div class="panel-header">
                   <h2>Reels</h2>
-                  <button id="add-reel" class="btn-sm">+ Reel</button>
+                  <button id="add-reel" class="btn-sm" data-key="r">+ Reel</button>
                 </div>
                 <div id="reel-list" class="reel-list">
                   <div class="reel" data-reel="1">
@@ -194,7 +194,7 @@
             </div>
 
             <!-- Right: Properties panel -->
-            <aside class="properties-panel" id="properties">
+            <aside class="properties-panel" id="properties" data-submit="btn-build">
               <div class="panel-header">
                 <h2>Properties</h2>
               </div>
@@ -230,10 +230,10 @@
                       <option value="">Manual (no profile)</option>
                     </select>
                     <div class="preset-actions">
-                      <button id="prop-preset-save" class="btn-sm" type="button">Save as preset…</button>
-                      <button id="prop-preset-delete" class="btn-sm" type="button" disabled>Delete preset</button>
-                      <button id="prop-preset-export" class="btn-sm" type="button">Export…</button>
-                      <button id="prop-preset-import" class="btn-sm" type="button">Import…</button>
+                      <button id="prop-preset-save" class="btn-sm" type="button" data-key="e">Save as preset…</button>
+                      <button id="prop-preset-delete" class="btn-sm" type="button" disabled data-key="d">Delete preset</button>
+                      <button id="prop-preset-export" class="btn-sm" type="button" data-key="x">Export…</button>
+                      <button id="prop-preset-import" class="btn-sm" type="button" data-key="i">Import…</button>
                     </div>
                     <p class="field-hint" id="prop-profile-hint"></p>
                   </div>
@@ -308,7 +308,7 @@
                   <p class="field-hint">These go into the CPL's composition metadata. A blank field writes nothing, and a blank version number writes 1.</p>
                   <div class="panel-header">
                     <h2>Ratings</h2>
-                    <button id="prop-add-rating" class="btn-sm" type="button">+ Rating</button>
+                    <button id="prop-add-rating" class="btn-sm" type="button" data-key="n">+ Rating</button>
                   </div>
                   <div id="prop-rating-list" class="rating-list"></div>
                 </fieldset>
@@ -378,7 +378,7 @@
                     <label for="prop-auto-crop-threshold">Auto-crop black level (0 to 1)</label>
                     <div class="input-with-btn">
                       <input id="prop-auto-crop-threshold" type="number" step="0.01" min="0" max="1" value="0.1">
-                      <button id="prop-auto-crop" class="btn-sm">Auto-crop</button>
+                      <button id="prop-auto-crop" class="btn-sm" data-shared-action="auto-crop">Auto-crop</button>
                     </div>
                     <p class="field-hint" id="prop-crop-plan"></p>
                   </div>
@@ -535,7 +535,7 @@
                   <legend>Markers</legend>
                   <div id="prop-markers" class="marker-list"></div>
                   <div class="prop-field">
-                    <button id="prop-add-marker" class="btn-sm" type="button">+ Marker</button>
+                    <button id="prop-add-marker" class="btn-sm" type="button" data-key="k">+ Marker</button>
                   </div>
                   <p class="field-hint">No rows means FFOC and LFOC at the first and last frame. Rows you add replace that pair.</p>
                 </fieldset>
@@ -550,7 +550,7 @@
                       <option value="anti-piracy">Anti-piracy</option>
                     </select>
                     <input id="library-hold" type="number" min="0.1" step="0.5" class="library-hold" placeholder="Hold s" title="How long a still image is held, in seconds. A video carries its own length.">
-                    <button id="library-import" class="btn-sm" type="button">+ Import</button>
+                    <button id="library-import" class="btn-sm" type="button" data-key="t">+ Import</button>
                   </div>
                   <div id="library-list" class="asset-list library-list"></div>
                   <div class="library-joins">
@@ -641,8 +641,8 @@
                     <div class="input-with-btn loudness-row">
                       <input id="prop-loudness" type="text" placeholder="leqm=85 or lufs=-20">
                       <div class="loudness-actions">
-                        <button id="prop-measure-sound" class="btn-sm" type="button">Measure</button>
-                        <button id="prop-gain-to-target" class="btn-sm" type="button" disabled>Set gain to reach target</button>
+                        <button id="prop-measure-sound" class="btn-sm" type="button" data-shared-action="measure">Measure</button>
+                        <button id="prop-gain-to-target" class="btn-sm" type="button" disabled data-key="g">Set gain to reach target</button>
                       </div>
                     </div>
                     <p class="field-hint" id="prop-loudness-source"></p>
@@ -879,16 +879,16 @@
         </div>
 
         <!-- VERIFY VIEW -->
-        <div class="view" id="view-verify">
+        <div class="view" id="view-verify" data-submit="verify-run">
           <section class="panel">
             <div class="panel-header">
               <h2>Validate DCP</h2>
               <div class="panel-actions">
-                <button id="verify-browse" class="btn-sm">Select DCP…</button>
-                <button id="verify-run" class="btn-sm primary" disabled>Validate</button>
-                <button id="verify-cancel" class="btn-sm" hidden>Cancel</button>
-                <button id="verify-save-report" class="btn-sm" disabled>Save report…</button>
-                <button id="verify-save-pdf" class="btn-sm" hidden disabled>Save PDF…</button>
+                <button id="verify-browse" class="btn-sm" data-shared-action="select-package">Select DCP…</button>
+                <button id="verify-run" class="btn-sm primary" disabled data-shared-action="validate">Validate</button>
+                <button id="verify-cancel" class="btn-sm" hidden data-shared-action="cancel">Cancel</button>
+                <button id="verify-save-report" class="btn-sm" disabled data-key="r">Save report…</button>
+                <button id="verify-save-pdf" class="btn-sm" hidden disabled data-key="f">Save PDF…</button>
               </div>
             </div>
             <div class="prop-field">
@@ -911,7 +911,7 @@
           <p class="field-hint" id="kdm-signer-line">No signing certificate in Settings yet.</p>
           <p class="field-hint">Encrypt while you build: tick Encrypt in Properties and keep the keys file outside the package. The signing chain comes from Settings.</p>
           <div class="split-panels">
-            <section class="panel">
+            <section class="panel" data-submit="run-kdm">
               <h2>Make a KDM</h2>
               <div class="prop-field">
                 <label>Encrypted DCP</label>
@@ -989,10 +989,10 @@
                   <button id="kdm-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="run-kdm" class="btn-primary" disabled>Make KDM</button>
+              <button id="run-kdm" class="btn-primary" disabled data-key="k">Make KDM</button>
               <div id="kdm-results" class="results-box"></div>
             </section>
-            <section class="panel">
+            <section class="panel" data-submit="run-rewrap">
               <h2>From a DKDM</h2>
               <p class="field-hint">A DKDM is a KDM made out to you. This issues a new one to a screen, and keeps the original window if you leave the dates empty.</p>
               <div class="prop-field">
@@ -1059,7 +1059,7 @@
                   <button id="dkdm-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="run-rewrap" class="btn-primary" disabled>Make KDM</button>
+              <button id="run-rewrap" class="btn-primary" disabled data-key="m">Make KDM</button>
               <div id="rewrap-results" class="results-box"></div>
             </section>
           </div>
@@ -1068,7 +1068,7 @@
         <!-- TOOLS VIEW -->
         <div class="view" id="view-tools">
           <div class="split-panels">
-            <section class="panel">
+            <section class="panel" data-submit="run-encode">
               <h2>Encode to JPEG 2000</h2>
               <div class="prop-field">
                 <label>Input (image sequence folder)</label>
@@ -1108,11 +1108,11 @@
                   <option value="60">60 fps (HFR, 2K)</option>
                 </select>
               </div>
-              <button id="run-encode" class="btn-primary" disabled>Encode</button>
+              <button id="run-encode" class="btn-primary" disabled data-key="e">Encode</button>
               <div id="encode-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="tc-start">
               <h2>Transcode Video</h2>
               <p class="field-hint">Convert video files to image sequences for DCP encoding.</p>
               <div class="prop-field">
@@ -1148,11 +1148,11 @@
                   </select>
                 </div>
               </div>
-              <button id="tc-start" class="btn-primary" disabled>Transcode</button>
+              <button id="tc-start" class="btn-primary" disabled data-shared-action="transcode">Transcode</button>
               <div id="tc-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="loud-measure">
               <h2>Loudness Measurement</h2>
               <p class="field-hint">Measure audio loudness per EBU R128 / SMPTE ST 2095.</p>
               <div class="prop-field">
@@ -1162,11 +1162,11 @@
                   <button id="loud-browse" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="loud-measure" class="btn-primary" disabled>Measure</button>
+              <button id="loud-measure" class="btn-primary" disabled data-shared-action="measure">Measure</button>
               <div id="loud-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="copy-start">
               <h2>Copy DCP</h2>
               <p class="field-hint">Copy a DCP to an external drive with verification.</p>
               <div class="prop-field">
@@ -1184,11 +1184,11 @@
                 </div>
               </div>
               <p class="field-hint">Every file is hash-verified against the source after copy.</p>
-              <button id="copy-start" class="btn-primary" disabled>Copy DCP</button>
+              <button id="copy-start" class="btn-primary" disabled data-key="y">Copy DCP</button>
               <div id="copy-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="report-start">
               <h2>QC Report</h2>
               <p class="field-hint">Generate a quality-control report for an existing DCP.</p>
               <div class="prop-field">
@@ -1198,11 +1198,11 @@
                   <button id="report-browse" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="report-start" class="btn-primary" disabled>Generate Report</button>
+              <button id="report-start" class="btn-primary" disabled data-key="g">Generate Report</button>
               <div id="report-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="srt-convert">
               <h2>SRT → SMPTE Subtitle Conversion</h2>
               <p class="field-hint">Convert SRT subtitles to SMPTE 428-7 Timed Text (CineCanvas) XML.</p>
               <div class="prop-field">
@@ -1237,19 +1237,19 @@
                   <button id="srt-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="srt-convert" class="btn-primary" disabled>Convert</button>
+              <button id="srt-convert" class="btn-primary" disabled data-key="v">Convert</button>
               <div id="srt-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="subextract-start">
               <h2>Subtitle Extraction</h2>
               <p class="field-hint">Export timed text from a DCP (or a subtitle asset) to SRT or plain text.</p>
               <div class="prop-field">
                 <label>Input DCP Folder or Subtitle Asset</label>
                 <div class="input-with-btn">
                   <input id="subextract-input" type="text" placeholder="Select DCP folder or subtitle file…" readonly>
-                  <button id="subextract-browse-dir" class="btn-sm">Folder</button>
-                  <button id="subextract-browse-file" class="btn-sm">File</button>
+                  <button id="subextract-browse-dir" class="btn-sm" data-key="f">Folder</button>
+                  <button id="subextract-browse-file" class="btn-sm" data-key="i">File</button>
                 </div>
               </div>
               <div class="field-row">
@@ -1268,11 +1268,11 @@
                   </div>
                 </div>
               </div>
-              <button id="subextract-start" class="btn-primary" disabled>Extract</button>
+              <button id="subextract-start" class="btn-primary" disabled data-key="x">Extract</button>
               <div id="subextract-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="burnin-start">
               <h2>Subtitle Burn-in</h2>
               <p class="field-hint">Burn subtitles into the picture track (hard-subs).</p>
               <div class="prop-field">
@@ -1296,11 +1296,11 @@
                   <button id="burnin-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="burnin-start" class="btn-primary" disabled>Burn In</button>
+              <button id="burnin-start" class="btn-primary" disabled data-shared-action="burn-in">Burn In</button>
               <div id="burnin-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="convert-start">
               <h2>Target Conversion</h2>
               <p class="field-hint">Scale, crop, or letterbox video to DCI container sizes.</p>
               <div class="prop-field">
@@ -1338,11 +1338,11 @@
                   <button id="convert-browse-output" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="convert-start" class="btn-primary" disabled>Convert</button>
+              <button id="convert-start" class="btn-primary" disabled data-key="n">Convert</button>
               <div id="convert-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="ingest-start">
               <h2>Re-ingest Package (rebuild ASSETMAP/PKL)</h2>
               <p class="field-hint">Regenerate a package's ASSETMAP and PKL to cover every asset file present, without re-wrapping. Fixes exported OV/VF folders whose ASSETMAP/PKL omit hardlinked assets. Replaces the existing files.</p>
               <div class="prop-field">
@@ -1352,19 +1352,19 @@
                   <button id="ingest-browse-dir" class="btn-sm">…</button>
                 </div>
               </div>
-              <button id="ingest-start" class="btn-primary" disabled>Rebuild ASSETMAP &amp; PKL</button>
+              <button id="ingest-start" class="btn-primary" disabled data-key="r">Rebuild ASSETMAP &amp; PKL</button>
               <div id="ingest-results" class="results-box"></div>
             </section>
 
-            <section class="panel">
+            <section class="panel" data-submit="export-start">
               <h2>Export DCP</h2>
               <p class="field-hint">Decode a one-reel DCP to a movie file or a PNG sequence.</p>
               <div class="prop-field">
                 <label>Input (DCP folder, CPL or picture MXF)</label>
                 <div class="input-with-btn">
                   <input id="export-input" type="text" placeholder="Select DCP…" readonly>
-                  <button id="export-browse-folder" class="btn-sm">DCP folder</button>
-                  <button id="export-browse-file" class="btn-sm">CPL or MXF</button>
+                  <button id="export-browse-folder" class="btn-sm" data-key="d">DCP folder</button>
+                  <button id="export-browse-file" class="btn-sm" data-key="l">CPL or MXF</button>
                 </div>
               </div>
               <div class="field-row">
@@ -1387,7 +1387,7 @@
                 <label>Output</label>
                 <div class="input-with-btn">
                   <input id="export-output" type="text" placeholder="Choose output…" readonly>
-                  <button id="export-browse-output" class="btn-sm">Save as</button>
+                  <button id="export-browse-output" class="btn-sm" data-key="s">Save as</button>
                 </div>
               </div>
               <div class="prop-field">
@@ -1420,20 +1420,20 @@
                 </div>
               </div>
               <div class="field-row">
-                <button id="export-start" class="btn-primary">Export</button>
-                <button id="export-cancel" class="btn-sm" disabled>Cancel</button>
+                <button id="export-start" class="btn-primary" data-key="o">Export</button>
+                <button id="export-cancel" class="btn-sm" disabled data-shared-action="cancel">Cancel</button>
               </div>
               <div class="progress-section">
                 <progress id="export-progress" max="100" value="0"></progress>
                 <span id="export-progress-text" class="progress-stats"></span>
               </div>
-              <div id="export-results" class="results-box"><span id="export-result-text"></span> <button id="export-reveal" class="btn-sm" hidden>Show in folder</button></div>
+              <div id="export-results" class="results-box"><span id="export-result-text"></span> <button id="export-reveal" class="btn-sm" hidden data-shared-action="show-in-folder">Show in folder</button></div>
             </section>
           </div>
         </div>
 
         <!-- VERSION FILE VIEW -->
-        <div class="view" id="view-vf">
+        <div class="view" id="view-vf" data-submit="vf-create">
           <section class="panel">
             <div class="panel-header">
               <h2>Version File (Supplemental DCP)</h2>
@@ -1460,16 +1460,16 @@
             </div>
             <div class="panel-header">
               <h2>Replacement Reels</h2>
-              <button id="vf-add-repl" class="btn-sm">+ Reel</button>
+              <button id="vf-add-repl" class="btn-sm" data-key="r">+ Reel</button>
             </div>
             <div id="vf-repl-list" class="vf-repl-list"></div>
-            <button id="vf-create" class="btn-primary" disabled>Create Version File</button>
+            <button id="vf-create" class="btn-primary" disabled data-key="c">Create Version File</button>
             <div id="vf-results" class="results-box"></div>
           </section>
         </div>
 
         <!-- REBUILD DCP VIEW -->
-        <div class="view" id="view-rebuild">
+        <div class="view" id="view-rebuild" data-submit="rebuild-start">
           <section class="panel">
             <div class="panel-header">
               <h2>Rebuild DCP</h2>
@@ -1520,7 +1520,7 @@
             </div>
             <div class="panel-header">
               <h2>Ratings</h2>
-              <button id="rebuild-add-rating" class="btn-sm" type="button">+ Rating</button>
+              <button id="rebuild-add-rating" class="btn-sm" type="button" data-key="n">+ Rating</button>
             </div>
             <div id="rebuild-rating-list" class="rating-list"></div>
             <div class="panel-header">
@@ -1528,8 +1528,8 @@
             </div>
             <div class="library-import">
               <select id="rebuild-library-item" title="An item from the ident library"></select>
-              <button id="rebuild-add-head" class="btn-sm" type="button">Add to head</button>
-              <button id="rebuild-add-tail" class="btn-sm" type="button">Add to tail</button>
+              <button id="rebuild-add-head" class="btn-sm" type="button" data-key="e">Add to head</button>
+              <button id="rebuild-add-tail" class="btn-sm" type="button" data-key="l">Add to tail</button>
             </div>
             <div class="library-joins">
               <div class="library-join" data-placement="head">
@@ -1542,14 +1542,14 @@
               </div>
             </div>
             <div class="field-row">
-              <button id="rebuild-start" class="btn-primary" disabled>Rebuild</button>
-              <button id="rebuild-cancel" class="btn-sm" hidden>Cancel</button>
+              <button id="rebuild-start" class="btn-primary" disabled data-key="b">Rebuild</button>
+              <button id="rebuild-cancel" class="btn-sm" hidden data-shared-action="cancel">Cancel</button>
             </div>
             <div class="progress-section">
               <progress id="rebuild-progress" max="100" value="0"></progress>
               <span id="rebuild-progress-text" class="progress-stats"></span>
             </div>
-            <div id="rebuild-results" class="results-box"><span id="rebuild-result-text"></span> <button id="rebuild-reveal" class="btn-sm" hidden>Show in folder</button></div>
+            <div id="rebuild-results" class="results-box"><span id="rebuild-result-text"></span> <button id="rebuild-reveal" class="btn-sm" hidden data-shared-action="show-in-folder">Show in folder</button></div>
           </section>
         </div>
 
@@ -1559,7 +1559,7 @@
             <div class="panel-header">
               <h2>Jobs</h2>
               <div class="panel-actions">
-                <button id="jobs-refresh" class="btn-sm">Refresh</button>
+                <button id="jobs-refresh" class="btn-sm" data-shared-action="refresh-jobs">Refresh</button>
                 <span id="jobs-status" class="status-badge">Ready</span>
               </div>
             </div>
@@ -1578,7 +1578,7 @@
             <div class="panel-header">
               <h2>Settings</h2>
             </div>
-            <form id="settings-form" class="settings-grid">
+            <form id="settings-form" class="settings-grid" data-submit="set-save">
               <fieldset>
                 <legend>Defaults</legend>
                 <div class="prop-field">
@@ -1659,15 +1659,15 @@
                   </div>
                 </div>
                 <div class="prop-field">
-                  <button type="button" id="set-create-signing-chain" class="btn-sm">Create signing chain…</button>
+                  <button type="button" id="set-create-signing-chain" class="btn-sm" data-key="g">Create signing chain…</button>
                 </div>
                 <div class="prop-field">
                   <label for="set-recipient-cert">Recipient Certificate</label>
                   <div class="input-with-btn">
                     <input type="text" id="set-recipient-cert" placeholder="/path/to/recipient.pem">
                     <button type="button" id="set-browse-recipient-cert" class="btn-sm">…</button>
-                    <button type="button" id="set-export-recipient-cert" class="btn-sm">Export certificate…</button>
-                    <button type="button" id="set-import-dcpomatic" class="btn-sm">Import from DCP-o-matic…</button>
+                    <button type="button" id="set-export-recipient-cert" class="btn-sm" data-key="x">Export certificate…</button>
+                    <button type="button" id="set-import-dcpomatic" class="btn-sm" data-key="i">Import from DCP-o-matic…</button>
                   </div>
                 </div>
                 <div class="prop-field">
@@ -1678,7 +1678,7 @@
                   </div>
                 </div>
                 <div class="prop-field">
-                  <button type="button" id="set-create-recipient" class="btn-sm">Create recipient certificate…</button>
+                  <button type="button" id="set-create-recipient" class="btn-sm" data-key="e">Create recipient certificate…</button>
                 </div>
               </fieldset>
               <fieldset>
@@ -1707,7 +1707,7 @@
                   <label for="set-gpu-license">Grok License</label>
                   <div class="input-with-btn">
                     <input type="password" id="set-gpu-license" autocomplete="off" spellcheck="false">
-                    <button type="button" id="set-gpu-license-show" class="btn-sm">Show</button>
+                    <button type="button" id="set-gpu-license-show" class="btn-sm" data-shared-action="show-gpu-license">Show</button>
                   </div>
                 </div>
                 <div class="prop-field">
@@ -1720,8 +1720,8 @@
                 <div id="component-versions">Loading...</div>
               </fieldset>
               <div class="form-actions">
-                <button type="submit" class="btn-primary">Save</button>
-                <button type="button" id="set-reset" class="btn-secondary">Reset</button>
+                <button type="submit" class="btn-primary" id="set-save" data-shared-action="save-settings">Save</button>
+                <button type="button" id="set-reset" class="btn-secondary" data-shared-action="reset-settings">Reset</button>
               </div>
             </form>
           </section>
