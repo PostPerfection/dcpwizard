@@ -1541,6 +1541,18 @@ for (const id of ISDCF_PREVIEW_CONTROLS) {
 renderRatings();
 
 // Build and Measure both send this request
+function currentJobRequest() {
+  const reel = project.reels[0];
+  return jobRequest({
+    reel,
+    video: reel?.picture?.path || "",
+    title: document.getElementById("prop-title")?.value?.trim() || "",
+    output: document.getElementById("prop-output")?.value || "",
+    encrypt: document.getElementById("prop-encrypt")?.checked || false,
+    keyOut: document.getElementById("prop-key-out")?.value || "",
+  });
+}
+
 function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
   const { audioPath, audioChannelFiles } = soundSource(reel?.sound);
   return {
@@ -1681,16 +1693,7 @@ document.getElementById("prop-measure-sound")?.addEventListener("click", async (
   lastSoundMeasurement = null;
   refreshGainToTarget();
   try {
-    lastSoundMeasurement = await invoke("measure_sound", {
-      request: jobRequest({
-        reel,
-        video: reel.picture?.path || "",
-        title: document.getElementById("prop-title")?.value?.trim() || "",
-        output: document.getElementById("prop-output")?.value || "",
-        encrypt: document.getElementById("prop-encrypt")?.checked || false,
-        keyOut: document.getElementById("prop-key-out")?.value || "",
-      }),
-    });
+    lastSoundMeasurement = await invoke("measure_sound", { request: currentJobRequest() });
     fields.source.textContent = sourceLine(lastSoundMeasurement);
     fields.delivered.textContent = deliveredLine(lastSoundMeasurement);
     fields.steps.textContent = measurementSteps(lastSoundMeasurement);
@@ -1734,7 +1737,6 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
     return;
   }
 
-  const video = reel.picture.path;
   const outputEl = document.getElementById("prop-output");
   let output = outputEl?.value || await defaultOutputFolder();
   if (outputEl) outputEl.value = output;
@@ -1754,6 +1756,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   }
   let projectRecordPath = null;
   let jobId = null;
+  let requestText = null;
 
   const unlisten = await listen("pipeline-progress", (event) => {
     const p = event.payload;
@@ -1773,6 +1776,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       notifyBuildComplete(true, title);
       if (projectRecordPath) addRecentProject(projectRecordPath, title);
       showPostBuildActions(output);
+      finishedBuild = { requestText, packagePath: output };
       endBuild(buildTitle);
       unlisten();
       unlistenVal();
@@ -1811,9 +1815,9 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
 
   try {
     beginBuild(buildTitle);
-    const submit = (hintsAccepted) => invoke("submit_job", {
-      request: { ...jobRequest({ reel, video, title, output, encrypt, keyOut }), hintsAccepted },
-    });
+    const request = currentJobRequest();
+    requestText = JSON.stringify(request);
+    const submit = (hintsAccepted) => invoke("submit_job", { request: { ...request, hintsAccepted } });
     let result = await submit(!getPrefs().showHintsBeforeBuild);
     if (result.jobId === null) {
       if (!await showHintsDialog(result.hints)) {
@@ -3217,13 +3221,32 @@ function endBuild(title) {
   refreshDiskSpace();
 }
 
-function updateToolbarState() {
+const BUILD_BUTTON_TEXT = "Build DCP";
+const BUILT_BUTTON_TEXT = "DCP Built";
+const FINISHED_BUILD_CHECK_MILLISECONDS = 1000;
+let finishedBuild = null;
+
+function updateBuildButton() {
+  const buildBtn = document.getElementById("btn-build");
+  if (!buildBtn) return;
   const hasVideo = project.reels.some(r => r.picture);
   const title = document.getElementById("prop-title")?.value?.trim();
-  const hasTitle = !!title;
-  const buildBtn = document.getElementById("btn-build");
+  const alreadyBuilt = finishedBuild !== null && JSON.stringify(currentJobRequest()) === finishedBuild.requestText;
+  buildBtn.disabled = !(hasVideo && title) || buildsInFlight.buildInFlight(title) || alreadyBuilt;
+  buildBtn.textContent = alreadyBuilt ? BUILT_BUTTON_TEXT : BUILD_BUTTON_TEXT;
+}
+
+// polled, since the form changes through many paths
+async function refreshFinishedBuild() {
+  if (finishedBuild && !(await existsInScope(finishedBuild.packagePath))) finishedBuild = null;
+  updateBuildButton();
+}
+
+setInterval(refreshFinishedBuild, FINISHED_BUILD_CHECK_MILLISECONDS);
+
+function updateToolbarState() {
+  updateBuildButton();
   const previewBtn = document.getElementById("btn-preview");
-  if (buildBtn) buildBtn.disabled = !(hasVideo && hasTitle) || buildsInFlight.buildInFlight(title);
   if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath);
   refreshMarkerFromPlayerButtons();
 }
