@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## [1.8.0] - 2026-10-13
+## [1.8.1] - 2026-10-13
 
 ### Added
 - **Keyboard shortcuts for every button**: each button in a view has an Alt+letter, underlined while Alt is held and named in its tooltip, and the letters for actions IMF Wizard also has match it. Ctrl+Enter runs the action of the focused section, Alt+Down in a path field opens its file dialog, Escape leaves a text field, and Alt+P opens the Project menu, which the arrow keys, Enter and N, O, S and A drive. Ctrl chords now work while a text field has focus. Ctrl+1 to Ctrl+9 follow the sidebar, so Version File is Ctrl+6, Rebuild DCP Ctrl+7, Jobs Ctrl+8 and Settings Ctrl+9. A finished build plays with Ctrl+Shift+P, queues with Ctrl+Shift+A, opens in Verify with Ctrl+Shift+E and shows in its folder with Ctrl+Shift+F, and F toggles full screen in the preview. A shortcut you rebound keeps its keys when a new default would take them, and the default shows as unassigned.
