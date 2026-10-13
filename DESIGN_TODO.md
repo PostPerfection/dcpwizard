@@ -45,7 +45,7 @@ user-facing surface is here.
   picture is upside down). Windows is still owed that pass.
 - Windows release builds are unproven until the next tag run. Watch for grok's
   msvc install dropping more dlls that grokj2k.dll depends on, in which case
-  release.yml and gui-release.yml should copy bin/*.dll instead of the one file.
+  release.yml should copy bin/*.dll instead of the one file.
   A local windows tauri build fails at bundle time unless the dll is staged at
   gui/src-tauri/grokj2k.dll.
 - TMS upload over sftp is untested past the transport boundary. Every test hands
@@ -183,14 +183,14 @@ one side, mirror the other:
   the DCI HDR addendum), so there is nothing to mirror. What is shared arrives
   through postkit instead: upmix would port to imfwizard's panel unchanged, and the
   source colour path and the codestream cap reach it by bumping its postkit pin.
-- .github/workflows/ci.yml, release.yml, gui-release.yml: copies across dcpwizard,
+- .github/workflows/ci.yml, release.yml: copies across dcpwizard,
   imfwizard, dcpdoctor differing by binary/artifact names + per-app build deps.
   Separate git repos, so no shared reusable-workflow without a central repo. Keep
   aligned by hand. Every job that compiles the rust workspace sets grok up through
   PostPerfection/setup-grok@v1 at grok-ref v20.4.4, windows on a separate msvc
   build of the same tag. All three platforms are required in ci, none are
   continue-on-error.
-  imfwizard sets grok up in ci, release and gui-release the same way, and links
+  imfwizard sets grok up in ci and release the same way, and links
   grok-ffi as this workspace does, so a postkit change that needs grok reaches
   both wizards.
   dcpdoctor links no grok and sets it up in none of its workflows.
