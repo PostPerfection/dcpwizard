@@ -26,6 +26,8 @@ const CAPTION_LANGUAGE: &str = "en";
 const CAPTION_SRT: &str = "1\n00:00:00,100 --> 00:00:00,900\nA caption\n";
 // assemble names the tracks it moves into the output in its stage messages
 const MOVING_STAGE_PREFIX: &str = "moving";
+// where the re-encode ends and the assemble starts on the rebuild's percent
+const REENCODE_END_PERCENT: u32 = 90;
 
 fn make_content_frames(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
@@ -314,6 +316,12 @@ fn a_new_container_re_encodes_the_picture_and_leaves_the_source_alone() {
     );
     let percents = progress.percents.lock().unwrap().clone();
     assert!(percents.is_sorted(), "progress only rises: {percents:?}");
+    assert!(
+        percents
+            .iter()
+            .any(|percent| (1..REENCODE_END_PERCENT).contains(percent)),
+        "the encoded frames move the percent: {percents:?}"
+    );
     assert_eq!(percents.last(), Some(&100));
     assert_eq!(
         file_hashes(&source),

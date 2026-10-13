@@ -1,10 +1,10 @@
 use dcpwizard_core::export::{ExportConfig, ExportFormat};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
+
+use crate::cancellable_run::CancellableRun;
 
 const DEFAULT_CRF: u32 = 18;
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
@@ -39,30 +39,7 @@ pub struct ExportProgress {
 }
 
 #[derive(Default)]
-pub struct ExportState {
-    cancel: Arc<AtomicBool>,
-    running: AtomicBool,
-}
-
-struct RunningExport<'a> {
-    state: &'a ExportState,
-}
-
-impl Drop for RunningExport<'_> {
-    fn drop(&mut self) {
-        self.state.running.store(false, Ordering::Release);
-    }
-}
-
-impl ExportState {
-    fn claim(&self) -> Result<RunningExport<'_>, String> {
-        self.running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| ALREADY_RUNNING.to_string())?;
-        self.cancel.store(false, Ordering::Release);
-        Ok(RunningExport { state: self })
-    }
-}
+pub struct ExportState(CancellableRun);
 
 fn optional_path(path: Option<String>) -> Option<PathBuf> {
     path.filter(|path| !path.is_empty()).map(PathBuf::from)
@@ -95,8 +72,8 @@ pub async fn export_dcp(
     request: ExportRequest,
 ) -> Result<(), String> {
     let config = request.into_config()?;
-    let _running = state.claim()?;
-    let cancel = state.cancel.clone();
+    let _running = state.0.claim(ALREADY_RUNNING)?;
+    let cancel = state.0.cancel_flag();
     let progress_app = app.clone();
     let exported = tokio::task::spawn_blocking(move || {
         let started = Instant::now();
@@ -134,12 +111,13 @@ pub async fn export_dcp(
 
 #[tauri::command]
 pub fn export_cancel(state: State<'_, ExportState>) {
-    state.cancel.store(true, Ordering::Release);
+    state.0.cancel();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     fn request(format: &str) -> ExportRequest {
         ExportRequest {
@@ -206,17 +184,20 @@ mod tests {
     #[test]
     fn a_second_export_is_refused_while_one_runs_and_allowed_after() {
         let state = ExportState::default();
-        let running = state.claim().unwrap();
-        assert_eq!(state.claim().err(), Some(ALREADY_RUNNING.to_string()));
+        let running = state.0.claim(ALREADY_RUNNING).unwrap();
+        assert_eq!(
+            state.0.claim(ALREADY_RUNNING).err(),
+            Some(ALREADY_RUNNING.to_string())
+        );
         drop(running);
-        assert!(state.claim().is_ok());
+        assert!(state.0.claim(ALREADY_RUNNING).is_ok());
     }
 
     #[test]
     fn a_new_export_starts_with_the_cancel_flag_clear() {
         let state = ExportState::default();
-        state.cancel.store(true, Ordering::Release);
-        let _running = state.claim().unwrap();
-        assert!(!state.cancel.load(Ordering::Acquire));
+        state.0.cancel();
+        let _running = state.0.claim(ALREADY_RUNNING).unwrap();
+        assert!(!state.0.cancel_flag().load(Ordering::Acquire));
     }
 }

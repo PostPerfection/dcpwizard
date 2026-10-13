@@ -7,6 +7,8 @@ use crate::j2k_transcode::{
 use crate::library::AttachedItem;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // a dot keeps the re-encoded intermediate out of folder listings
 const INTERMEDIATE_DIR_PREFIX: &str = ".rebuild_";
@@ -107,22 +109,14 @@ fn reencode_then_assemble(
 ) -> Result<(), String> {
     transcode_dcp_with_progress(
         transcode,
-        &PhaseProgress {
-            sink: progress,
-            start_percent: 0,
-            end_percent: TRANSCODE_END_PERCENT,
-        },
+        &PhaseProgress::new(progress, 0, TRANSCODE_END_PERCENT),
     )?;
     assemble_into(
         config,
         &transcode.output_dir,
         package_dir,
         true,
-        &PhaseProgress {
-            sink: progress,
-            start_percent: TRANSCODE_END_PERCENT,
-            end_percent: WHOLE_PERCENT,
-        },
+        &PhaseProgress::new(progress, TRANSCODE_END_PERCENT, WHOLE_PERCENT),
     )?;
     std::fs::remove_dir_all(&transcode.output_dir).map_err(|e| {
         format!(
@@ -170,18 +164,49 @@ struct PhaseProgress<'a> {
     sink: &'a dyn ProgressSink,
     start_percent: u32,
     end_percent: u32,
+    last_message: Mutex<String>,
+    // frames reach the end of the phase before the transcode's packaging stage does
+    highest_percent: AtomicU32,
+}
+
+impl<'a> PhaseProgress<'a> {
+    fn new(sink: &'a dyn ProgressSink, start_percent: u32, end_percent: u32) -> Self {
+        Self {
+            sink,
+            start_percent,
+            end_percent,
+            last_message: Mutex::default(),
+            highest_percent: AtomicU32::new(start_percent),
+        }
+    }
+
+    fn report(&self, phase_percent: u32, message: &str) {
+        let span = self.end_percent - self.start_percent;
+        let scaled = self.start_percent + phase_percent.min(WHOLE_PERCENT) * span / WHOLE_PERCENT;
+        let percent = self
+            .highest_percent
+            .fetch_max(scaled, Ordering::Relaxed)
+            .max(scaled);
+        self.sink.stage(percent, message);
+    }
 }
 
 impl ProgressSink for PhaseProgress<'_> {
     fn stage(&self, percent: u32, message: &str) {
-        let span = self.end_percent - self.start_percent;
-        let scaled = percent.min(WHOLE_PERCENT) * span / WHOLE_PERCENT;
-        self.sink.stage(self.start_percent + scaled, message);
+        *self.last_message.lock().expect("progress message lock") = message.to_string();
+        self.report(percent, message);
     }
     fn cancelled(&self) -> bool {
         self.sink.cancelled()
     }
     fn frames(&self, done: u64, total: u64) {
         self.sink.frames(done, total);
+        let phase_percent = done * u64::from(WHOLE_PERCENT) / total.max(1);
+        let message = self
+            .last_message
+            .lock()
+            .expect("progress message lock")
+            .clone();
+        self.report(phase_percent as u32, &message);
     }
 }

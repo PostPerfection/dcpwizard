@@ -19,12 +19,14 @@ const MAIN_WINDOW_MINIMUM_HEIGHT: f64 = 500.0;
 #[cfg(target_os = "linux")]
 const MAIN_WINDOW_BACKGROUND: tauri::window::Color = tauri::window::Color(0, 0, 0, 255);
 
+mod cancellable_run;
 mod crash_log;
 mod export;
 mod library;
 mod pipeline;
 mod preferences;
 mod presets;
+mod rebuild;
 mod timeline;
 mod verify_report;
 
@@ -68,6 +70,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(job_queue)
         .manage(export::ExportState::default())
+        .manage(rebuild::RebuildState::default())
         .manage(guikit::launch_project::LaunchProject::default())
         .invoke_handler(tauri::generate_handler![
             guikit::preview::preview_load,
@@ -136,6 +139,9 @@ pub fn run() {
             pipeline::create_vf,
             export::export_dcp,
             export::export_cancel,
+            rebuild::rebuild_inspect,
+            rebuild::rebuild_dcp,
+            rebuild::rebuild_cancel,
             library::library_list,
             library::library_add,
             library::library_remove,
