@@ -581,6 +581,7 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     assert len(reels) == 2, reels
 
     # opening a project clears the preview selection
+    window.click("#btn-project-menu")
     choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
     wait_until(
         "the opened project never reached the Recent list",
@@ -669,7 +670,7 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
     # cover if it were the webview's prompt
     window.press(PROJECT_CHORD)
     wait_for_view(session, PROJECT_VIEW)
-    window.click("#btn-recent-projects")
+    window.click("#btn-project-menu")
     window.click(".recent-retitle")
     wait_until(
         "the retitle dialog never opened",
@@ -692,7 +693,7 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
 # the success path needs grok's plugin and a licence, hand tested
 def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window, tmp_path):
     session = window.session
-    window.press("ctrl+7")
+    window.press("ctrl+9")
     wait_for_view(session, "view-settings")
 
     window.click("#set-gpu")
@@ -780,7 +781,7 @@ def test_a_saved_preset_puts_back_the_values_it_holds(window, tmp_path):
 
 def test_the_settings_page_lists_the_component_versions(window):
     session = window.session
-    window.press("ctrl+7")
+    window.press("ctrl+9")
     wait_for_view(session, "view-settings")
 
     rows = wait_until(
@@ -944,6 +945,7 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     )
 
     second_path = tmp_path / f"{SECOND_PROJECT_TITLE}.{PROJECT_WIZARD}"
+    window.click("#btn-project-menu")
     save_in_dialog(window, "#btn-new-project", second_path)
     wait_for_status(session, f"Saved {second_path}", REACTION_TIMEOUT_SECONDS)
     assert session.property("#prop-title", "value") == SECOND_PROJECT_TITLE
@@ -952,6 +954,7 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     assert session.execute(DETECTED_FIELDS) == []
     assert session.property(DETECTED_HINT, "hidden") is True
 
+    window.click("#btn-project-menu")
     choose_in_dialog(window, "#btn-project-open", project_path)
     wait_for_status(session, f"Opened {project_path.name}", REACTION_TIMEOUT_SECONDS)
     assert session.property("#prop-title", "value") == PROJECT_TITLE
@@ -1501,13 +1504,14 @@ def test_the_verify_view_checks_the_opened_package(window, one_reel_cpl):
 
 def test_the_verify_view_checks_the_package_played_from_recent(window, two_reel_dcp):
     session = window.session
+    window.click("#btn-project-menu")
     choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
     wait_until(
         "the opened project never reached the Recent list",
         lambda: session.find(".recent-queue"),
         REACTION_TIMEOUT_SECONDS,
     )
-    window.click("#btn-recent-projects")
+    window.click("#btn-project-menu")
     window.click(".recent-queue")
     window.click("#playlist .playlist-title")
     wait_until(
@@ -1528,11 +1532,11 @@ def test_the_verify_view_checks_the_package_played_from_recent(window, two_reel_
 
 # the row's own buttons queue, retitle or delete the package instead of opening it
 def open_from_recent(window, project_path):
-    window.click("#btn-recent-projects")
+    window.click("#btn-project-menu")
     window.click(f'.recent-item[data-path="{project_path}"] .recent-title')
     wait_until(
-        "the Recent list stayed open after a row was clicked",
-        lambda: window.session.property("#recent-list", "hidden") is True,
+        "the project menu stayed open after a recent row was clicked",
+        lambda: window.session.property("#project-menu", "hidden") is True,
         REACTION_TIMEOUT_SECONDS,
     )
 
@@ -1547,6 +1551,7 @@ def wait_for_verify_path(session, path):
 
 def test_the_verify_view_checks_the_package_of_a_project_opened_from_recent(window, two_reel_dcp):
     session = window.session
+    window.click("#btn-project-menu")
     choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
     wait_until(
         "the opened project never reached the Recent list",
@@ -1563,6 +1568,7 @@ def test_the_verify_view_checks_the_package_of_a_project_opened_from_recent(wind
 
 def test_a_project_opened_from_recent_refreshes_the_verify_view_in_place(window, two_reel_dcp, tmp_path):
     session = window.session
+    window.click("#btn-project-menu")
     choose_in_dialog(window, "#btn-project-open", two_reel_dcp.project_path)
     wait_until(
         "the opened project never reached the Recent list",
