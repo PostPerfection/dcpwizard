@@ -53,21 +53,22 @@ pub struct AssembleConfig {
 
 /// One parsed input DCP: its reels, picture geometry, edit rate and the
 /// composition identity the new CPL carries from the first input.
-struct InputDcp {
-    dir: PathBuf,
-    standard: crate::Standard,
-    reels: Vec<TimelineEntry>,
-    geometry: crate::cpl::PictureGeometry,
-    edit_rate: String,
-    identity: CompositionIdentity,
+pub(crate) struct InputDcp {
+    pub(crate) dir: PathBuf,
+    pub(crate) standard: crate::Standard,
+    pub(crate) reels: Vec<TimelineEntry>,
+    pub(crate) geometry: crate::cpl::PictureGeometry,
+    pub(crate) edit_rate: String,
+    pub(crate) identity: CompositionIdentity,
 }
 
-/// What a CPL says the composition is, apart from its title and reels.
-struct CompositionIdentity {
+/// What a CPL says the composition is, apart from its reels.
+pub(crate) struct CompositionIdentity {
+    pub(crate) title: String,
     // empty when the CPL has none, which the CPL writer turns into "feature"
-    content_kind: String,
-    ratings: Vec<Rating>,
-    content_version_label: Option<String>,
+    pub(crate) content_kind: String,
+    pub(crate) ratings: Vec<Rating>,
+    pub(crate) content_version_label: Option<String>,
 }
 
 /// A source track file and the name it is copied to in the output.
@@ -503,7 +504,7 @@ fn spoken_language(track: &Path) -> Option<String> {
 /// Parse one input DCP: exactly one CPL, its reels, picture geometry, edit rate
 /// and composition identity. Fails loud on an encrypted CPL (a new CPL id would
 /// break its KDM binding).
-fn parse_input(dir: &Path) -> Result<InputDcp, String> {
+pub(crate) fn parse_input(dir: &Path) -> Result<InputDcp, String> {
     if !dir.is_dir() {
         return Err("not a directory".into());
     }
@@ -532,6 +533,18 @@ fn parse_input(dir: &Path) -> Result<InputDcp, String> {
     let reels = get_timeline(cpl_path);
     if reels.is_empty() {
         return Err("CPL has no reels".into());
+    }
+    if reels.iter().any(|reel| !reel.ccap_asset_id.is_empty()) {
+        return Err(
+            "carries closed captions, which assemble does not copy, so it is refused".into(),
+        );
+    }
+    if reels.iter().any(|reel| !reel.aux_data_asset_id.is_empty()) {
+        return Err(
+            "carries an auxiliary data track such as Atmos, which assemble does not copy, so it \
+             is refused"
+                .into(),
+        );
     }
     let geometry = picture_geometry(&cpl, Path::new(&reels[0].picture_file))?;
     let edit_rate = reels[0].edit_rate.clone();
@@ -578,7 +591,7 @@ fn picture_geometry(
     })
 }
 
-fn composition_identity(cpl_xml: &str) -> Result<CompositionIdentity, String> {
+pub(crate) fn composition_identity(cpl_xml: &str) -> Result<CompositionIdentity, String> {
     let doc = roxmltree::Document::parse(cpl_xml).map_err(|e| format!("CPL: {e}"))?;
     let child_text = |node: roxmltree::Node, name: &str| -> Option<String> {
         node.children()
@@ -605,6 +618,7 @@ fn composition_identity(cpl_xml: &str) -> Result<CompositionIdentity, String> {
         .and_then(|version| child_text(version, "LabelText"))
         .filter(|label| Some(label) != title.as_ref());
     Ok(CompositionIdentity {
+        title: title.unwrap_or_default(),
         content_kind: child_text(root, "ContentKind").unwrap_or_default(),
         ratings,
         content_version_label,
@@ -658,7 +672,7 @@ fn unique_name(filename: &str, id: &str, used: &mut HashSet<String>) -> String {
     candidate
 }
 
-fn parse_edit_rate(s: &str) -> (u32, u32) {
+pub(crate) fn parse_edit_rate(s: &str) -> (u32, u32) {
     let mut it = s.split_whitespace();
     let num = it.next().and_then(|v| v.parse().ok()).unwrap_or(24);
     let den = it.next().and_then(|v| v.parse().ok()).unwrap_or(1);

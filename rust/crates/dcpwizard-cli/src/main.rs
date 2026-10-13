@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
+use dcpwizard_core::dcp::{NO_CONTAINER, resolve_container};
 use dcpwizard_core::job_log;
 
 mod preset_arguments;
@@ -2778,43 +2779,6 @@ fn delivery_profile(name: &str) -> Result<dcpwizard_core::profiles::Profile, Str
     })
 }
 
-/// Resolve container dimensions from a preset name or a custom WxH.
-///
-/// `dims` (e.g. "1920x1080") wins over a `preset`; both absent yields (0,0)
-/// meaning "use the full-container resolution default". Custom dims are validated
-/// against the 2K/4K bounds.
-fn resolve_container(
-    preset: Option<&str>,
-    dims: Option<&str>,
-    is_4k: bool,
-) -> Result<(u32, u32), String> {
-    if let Some(spec) = dims {
-        let (w, h) = spec
-            .split_once(['x', 'X'])
-            .ok_or_else(|| format!("--container-dims '{spec}' must be WxH (e.g. 1920x1080)"))?;
-        let w: u32 = w
-            .trim()
-            .parse()
-            .map_err(|_| format!("invalid width in --container-dims '{spec}'"))?;
-        let h: u32 = h
-            .trim()
-            .parse()
-            .map_err(|_| format!("invalid height in --container-dims '{spec}'"))?;
-        dcpwizard_core::dcp::validate_container_dims(w, h, is_4k)?;
-        return Ok((w, h));
-    }
-    match preset {
-        Some("2k-scope") => Ok((2048, 858)),
-        Some("2k-flat") => Ok((1998, 1080)),
-        Some("2k-full") => Ok((2048, 1080)),
-        Some("4k-scope") => Ok((4096, 1716)),
-        Some("4k-flat") => Ok((3996, 2160)),
-        Some("4k-full") => Ok((4096, 2160)),
-        Some(value) => Err(format!("Unknown container: {value}")),
-        None => Ok((0, 0)),
-    }
-}
-
 /// ffprobe chapter boundaries for `video` at `fps`, or a loud error.
 fn video_chapter_boundaries(video: &Path, fps: u32) -> Result<Vec<u64>, String> {
     let out = std::process::Command::new("ffprobe")
@@ -2965,10 +2929,6 @@ fn build_sign_language_audio(
     )?;
     Ok((combined, main_channels))
 }
-
-/// What `resolve_container` answers when neither `--container` nor
-/// `--container-dims` was given.
-const NO_CONTAINER: (u32, u32) = (0, 0);
 
 /// The raster `create` has to land the picture on: a named container is itself
 /// the coded raster, and `--twok`/`--fourk` alone force the full DCI frame.

@@ -180,6 +180,49 @@ pub fn validate_container_dims(width: u32, height: u32, is_4k: bool) -> Result<(
     Ok(())
 }
 
+// the names `--container` takes, and the raster each one is
+pub const NAMED_CONTAINERS: [(&str, (u32, u32)); 6] = [
+    ("2k-scope", (2048, 858)),
+    ("2k-flat", (1998, 1080)),
+    ("2k-full", (2048, 1080)),
+    ("4k-scope", (4096, 1716)),
+    ("4k-flat", (3996, 2160)),
+    ("4k-full", (4096, 2160)),
+];
+
+// what resolve_container answers when neither a name nor a size was given
+pub const NO_CONTAINER: (u32, u32) = (0, 0);
+
+pub fn resolve_container(
+    preset: Option<&str>,
+    dims: Option<&str>,
+    is_4k: bool,
+) -> Result<(u32, u32), String> {
+    if let Some(spec) = dims {
+        let (w, h) = spec
+            .split_once(['x', 'X'])
+            .ok_or_else(|| format!("--container-dims '{spec}' must be WxH (e.g. 1920x1080)"))?;
+        let w: u32 = w
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid width in --container-dims '{spec}'"))?;
+        let h: u32 = h
+            .trim()
+            .parse()
+            .map_err(|_| format!("invalid height in --container-dims '{spec}'"))?;
+        validate_container_dims(w, h, is_4k)?;
+        return Ok((w, h));
+    }
+    let Some(name) = preset else {
+        return Ok(NO_CONTAINER);
+    };
+    NAMED_CONTAINERS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, raster)| *raster)
+        .ok_or_else(|| format!("Unknown container: {name}"))
+}
+
 /// Dolby Atmos IAB bitstream data-essence UL, as used in real Atmos DCP AuxData.
 const ATMOS_DATA_TYPE_UL: &str = "urn:smpte:ul:060e2b34.04010105.0e090604.00000000";
 
@@ -1377,6 +1420,45 @@ mod tests {
         assert!(validate_container_dims(1921, 1080, false).is_err());
         assert!(validate_container_dims(1920, 1081, false).is_err());
         assert!(validate_container_dims(0, 1080, false).is_err());
+    }
+
+    #[test]
+    fn every_named_container_resolves_to_its_dci_raster() {
+        let expected = [
+            ("2k-scope", (2048, 858)),
+            ("2k-flat", (1998, 1080)),
+            ("2k-full", (2048, 1080)),
+            ("4k-scope", (4096, 1716)),
+            ("4k-flat", (3996, 2160)),
+            ("4k-full", (4096, 2160)),
+        ];
+        for (name, raster) in expected {
+            for is_4k in [false, true] {
+                assert_eq!(
+                    resolve_container(Some(name), None, is_4k),
+                    Ok(raster),
+                    "{name}"
+                );
+            }
+        }
+        assert_eq!(resolve_container(None, None, false), Ok(NO_CONTAINER));
+        let unknown = resolve_container(Some("8k-full"), None, false).unwrap_err();
+        assert!(unknown.contains("8k-full"), "{unknown}");
+    }
+
+    #[test]
+    fn a_custom_size_wins_over_a_name_and_is_held_to_the_resolution() {
+        assert_eq!(
+            resolve_container(Some("2k-scope"), Some("1920x1080"), false),
+            Ok((1920, 1080))
+        );
+        assert_eq!(
+            resolve_container(None, Some("3840X2160"), true),
+            Ok((3840, 2160))
+        );
+        assert!(resolve_container(None, Some("3840x2160"), false).is_err());
+        assert!(resolve_container(None, Some("1920"), false).is_err());
+        assert!(resolve_container(None, Some("wide x 1080"), false).is_err());
     }
 
     #[test]

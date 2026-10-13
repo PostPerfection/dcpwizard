@@ -64,6 +64,7 @@ pub mod preview;
 pub mod probe;
 pub mod profiles;
 pub mod qc;
+pub mod rebuild;
 pub mod reel;
 pub mod report;
 pub mod rest_api;

@@ -349,10 +349,14 @@ pub fn transcode_dcp_with_progress(
     } else {
         cpl.content_kind.clone()
     };
+    // only the picture changes, so the source's ratings and version still describe it
+    let identity = crate::assemble::composition_identity(&cpl_content)?;
     let cpl_config = crate::cpl::CplConfig {
         title: cpl.content_title.clone(),
         content_kind,
         rating: String::new(),
+        ratings: identity.ratings,
+        content_version_label: identity.content_version_label,
         reels: cpl_reels,
         standard,
         // only the picture is re-encoded, so the source's sound layout still holds
