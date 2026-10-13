@@ -118,12 +118,14 @@ fn reencode_then_assemble(
         true,
         &PhaseProgress::new(progress, TRANSCODE_END_PERCENT, WHOLE_PERCENT),
     )?;
-    std::fs::remove_dir_all(&transcode.output_dir).map_err(|e| {
-        format!(
+    // a leftover intermediate must not delete the finished package
+    if let Err(e) = std::fs::remove_dir_all(&transcode.output_dir) {
+        tracing::warn!(
             "cannot remove the re-encoded intermediate {}: {e}",
             transcode.output_dir.display()
-        )
-    })
+        );
+    }
+    Ok(())
 }
 
 fn assemble_into(
