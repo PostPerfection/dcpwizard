@@ -1,3 +1,5 @@
+import { ratingRowsFrom } from "./rating-rows.js";
+
 const VALUE = "value";
 const CHECKED = "checked";
 
@@ -246,7 +248,7 @@ export function restoreFormState(savedForm, defaults, { elementById, project, ma
   project.activeComposition = form.project.activeComposition;
 
   markerRows.splice(0, markerRows.length, ...form.markerRows.map(({ label, position }, index) => ({ id: index + 1, label, position })));
-  ratings.splice(0, ratings.length, ...form.ratings.map(({ agency, label }, index) => ({ id: index + 1, agency, label })));
+  ratings.splice(0, ratings.length, ...ratingRowsFrom(form.ratings));
   joinedItems.head = [...form.headItems];
   joinedItems.tail = [...form.tailItems];
   return { form, notRestored };

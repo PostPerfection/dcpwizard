@@ -27,7 +27,10 @@ import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
+import { escapeHtml } from "../../extern/guikit/src/html.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
+import { filledRatings, nextRatingRowId, ratingRowsFrom } from "./rating-rows.js";
+import { CUSTOM_CONTAINER, rebuildProgressText, rebuildReady, rebuildRequestFrom, sourceSummary } from "./rebuild-form.js";
 import { exportRequestFrom, exportProgressText, exportProgressPercent, withMovieExtension, movieExtensions, isMovieFormat, takesCrf } from "./export-form.js";
 import { contentKeysFrom } from "./content-keys-form.js";
 import { prefilledRecipientKey } from "./recipient-identity.js";
@@ -1390,51 +1393,59 @@ document.getElementById("prop-markers")?.addEventListener("click", (e) => {
 
 // === ISDCF naming and metadata ===
 
-let ratingNextId = 1;
 const ratings = [];
 
-function renderRatings() {
-  const list = document.getElementById("prop-rating-list");
-  if (!list) return;
-  list.innerHTML = ratings.map(rating => `
+function renderRatingRows(list, rows) {
+  list.innerHTML = rows.map(rating => `
     <div class="field-row rating-row" data-id="${rating.id}">
       <div class="prop-field">
         <label>Agency (URI)</label>
-        <input type="text" class="rating-agency" value="${rating.agency}" placeholder="http://www.mpaa.org/2003-ratings">
+        <input type="text" class="rating-agency" value="${escapeHtml(rating.agency)}" placeholder="http://www.mpaa.org/2003-ratings">
       </div>
       <div class="prop-field">
         <label>Label</label>
-        <input type="text" class="rating-label" value="${rating.label}" placeholder="PG-13">
+        <input type="text" class="rating-label" value="${escapeHtml(rating.label)}" placeholder="PG-13">
       </div>
       <button class="btn-sm rating-remove" type="button" title="Remove rating">✕</button>
     </div>
   `).join("");
-  refreshIsdcfPreview();
 }
 
-document.getElementById("prop-add-rating")?.addEventListener("click", () => {
-  ratings.push({ id: ratingNextId++, agency: "", label: "" });
-  renderRatings();
-});
+function wireRatingRows({ listId, addButtonId, rows, onChange }) {
+  const list = document.getElementById(listId);
+  const redraw = () => {
+    renderRatingRows(list, rows);
+    onChange();
+  };
+  document.getElementById(addButtonId).addEventListener("click", () => {
+    rows.push({ id: nextRatingRowId(rows), agency: "", label: "" });
+    redraw();
+  });
+  // An edit must not re-render or the field being typed into loses focus.
+  list.addEventListener("input", (e) => {
+    const row = e.target.closest(".rating-row");
+    const rating = rows.find(r => r.id === parseInt(row?.dataset.id));
+    if (!rating) return;
+    if (e.target.classList.contains("rating-agency")) rating.agency = e.target.value;
+    if (e.target.classList.contains("rating-label")) rating.label = e.target.value;
+    onChange();
+  });
+  list.addEventListener("click", (e) => {
+    if (!e.target.classList.contains("rating-remove")) return;
+    const row = e.target.closest(".rating-row");
+    const index = rows.findIndex(r => r.id === parseInt(row?.dataset.id));
+    if (index < 0) return;
+    rows.splice(index, 1);
+    redraw();
+  });
+  return redraw;
+}
 
-// Rows are re-rendered, so edits and removal go through delegation. An edit must
-// not re-render or the field being typed into loses focus.
-document.getElementById("prop-rating-list")?.addEventListener("input", (e) => {
-  const row = e.target.closest(".rating-row");
-  const rating = ratings.find(r => r.id === parseInt(row?.dataset.id));
-  if (!rating) return;
-  if (e.target.classList.contains("rating-agency")) rating.agency = e.target.value;
-  if (e.target.classList.contains("rating-label")) rating.label = e.target.value;
-  refreshIsdcfPreview();
-});
-
-document.getElementById("prop-rating-list")?.addEventListener("click", (e) => {
-  if (!e.target.classList.contains("rating-remove")) return;
-  const row = e.target.closest(".rating-row");
-  const index = ratings.findIndex(r => r.id === parseInt(row?.dataset.id));
-  if (index < 0) return;
-  ratings.splice(index, 1);
-  renderRatings();
+const renderRatings = wireRatingRows({
+  listId: "prop-rating-list",
+  addButtonId: "prop-add-rating",
+  rows: ratings,
+  onChange: refreshIsdcfPreview,
 });
 
 function namingMetadata() {
@@ -1443,9 +1454,7 @@ function namingMetadata() {
     studio: document.getElementById("prop-studio")?.value || null,
     territoryType: document.getElementById("prop-territory-type")?.value || "specific",
     contentVersions: document.getElementById("prop-content-versions")?.value || null,
-    ratings: ratings
-      .filter(rating => rating.agency.trim() && rating.label.trim())
-      .map(rating => ({ agency: rating.agency.trim(), label: rating.label.trim() })),
+    ratings: filledRatings(ratings),
     tempVersion: document.getElementById("prop-temp-version")?.checked || false,
     preRelease: document.getElementById("prop-pre-release")?.checked || false,
     redBand: document.getElementById("prop-red-band")?.checked || false,
@@ -2592,6 +2601,115 @@ document.getElementById("vf-create")?.addEventListener("click", async () => {
 
 renderVfReplacements();
 
+// === Rebuild DCP ===
+const REBUILD_RUNNING_TEXT = "Rebuilding\u2026";
+const REBUILT_PREFIX = "Rebuilt into ";
+const rebuildRatings = [];
+let rebuildSourceReadable = false;
+
+function rebuildFields() {
+  return {
+    source: document.getElementById("rebuild-source").value,
+    outputParent: document.getElementById("rebuild-output").value,
+    title: document.getElementById("rebuild-title").value,
+    container: document.getElementById("rebuild-container").value,
+    containerDims: document.getElementById("rebuild-container-dims").value,
+    bitRate: document.getElementById("rebuild-bit-rate").value,
+  };
+}
+
+function checkRebuildReady() {
+  document.getElementById("rebuild-start").disabled = !rebuildReady(rebuildFields(), rebuildSourceReadable);
+}
+
+const renderRebuildRatings = wireRatingRows({
+  listId: "rebuild-rating-list",
+  addButtonId: "rebuild-add-rating",
+  rows: rebuildRatings,
+  onChange: () => {},
+});
+
+function showRebuildResult(text, packagePath) {
+  const box = document.getElementById("rebuild-results");
+  const reveal = document.getElementById("rebuild-reveal");
+  box.classList.add("visible");
+  document.getElementById("rebuild-result-text").textContent = text;
+  reveal.hidden = !packagePath;
+  reveal.dataset.path = packagePath || "";
+}
+
+function setRebuildRunning(running) {
+  document.getElementById("rebuild-start").disabled = running;
+  document.getElementById("rebuild-cancel").hidden = !running;
+}
+
+async function inspectRebuildSource(source) {
+  const summary = document.getElementById("rebuild-source-summary");
+  summary.classList.add("visible");
+  rebuildSourceReadable = false;
+  try {
+    const read = await invoke("rebuild_inspect", { dcpDir: source });
+    summary.textContent = sourceSummary(read);
+    document.getElementById("rebuild-title").value = read.title;
+    rebuildRatings.splice(0, rebuildRatings.length, ...ratingRowsFrom(read.ratings));
+    rebuildSourceReadable = true;
+  } catch (error) {
+    summary.textContent = String(error);
+    rebuildRatings.splice(0, rebuildRatings.length);
+  }
+  renderRebuildRatings();
+  checkRebuildReady();
+}
+
+document.getElementById("rebuild-browse-source").addEventListener("click", async () => {
+  const directory = await open({ directory: true });
+  if (!directory) return;
+  document.getElementById("rebuild-source").value = directory;
+  await inspectRebuildSource(directory);
+});
+document.getElementById("rebuild-browse-output").addEventListener("click", async () => {
+  const directory = await open({ directory: true });
+  if (!directory) return;
+  document.getElementById("rebuild-output").value = directory;
+  checkRebuildReady();
+});
+document.getElementById("rebuild-title").addEventListener("input", checkRebuildReady);
+document.getElementById("rebuild-container").addEventListener("change", (event) => {
+  document.getElementById("rebuild-container-dims-field").hidden = event.target.value !== CUSTOM_CONTAINER;
+});
+
+listen("rebuild-progress", (event) => {
+  document.getElementById("rebuild-progress").value = event.payload.percent;
+  document.getElementById("rebuild-progress-text").textContent = rebuildProgressText(event.payload);
+});
+
+document.getElementById("rebuild-start").addEventListener("click", async () => {
+  const { request, refusals } = rebuildRequestFrom(rebuildFields(), rebuildJoinedItems, rebuildRatings);
+  if (refusals) {
+    showRebuildResult(refusals.join("\n"));
+    return;
+  }
+  setRebuildRunning(true);
+  document.getElementById("rebuild-progress").value = 0;
+  document.getElementById("rebuild-progress-text").textContent = "";
+  showRebuildResult(REBUILD_RUNNING_TEXT);
+  try {
+    const packagePath = await invoke("rebuild_dcp", { request });
+    showRebuildResult(`${REBUILT_PREFIX}${packagePath}`, packagePath);
+  } catch (error) {
+    showRebuildResult(String(error));
+  } finally {
+    setRebuildRunning(false);
+    checkRebuildReady();
+  }
+});
+
+document.getElementById("rebuild-cancel").addEventListener("click", () => invoke("rebuild_cancel"));
+
+document.getElementById("rebuild-reveal").addEventListener("click", (event) => {
+  revealItemInDir(event.target.dataset.path);
+});
+
 // === Export DCP ===
 const EXPORT_FIELD_IDS = {
   input: "export-input",
@@ -2969,7 +3087,6 @@ async function restoreBuildPanel(saved, projectPath) {
   nextAssetId = Math.max(0, ...project.assets.map((asset) => asset.id)) + 1;
   nextCplId = Math.max(0, ...project.compositions.map((composition) => composition.id)) + 1;
   markerNextId = markerRows.length + 1;
-  ratingNextId = ratings.length + 1;
   const profileSelect = document.getElementById("prop-profile");
   profileSelect.value = "";
   profileSelect.dispatchEvent(new Event("change"));
@@ -3216,6 +3333,9 @@ async function probeVideo(path) {
 // draws and which items the next build joins on, in the order they were dropped.
 let libraryItems = [];
 const joinedItems = { head: [], tail: [] };
+const rebuildJoinedItems = { head: [], tail: [] };
+const PROJECT_JOIN_BOXES = "library";
+const REBUILD_JOIN_BOXES = "rebuild";
 const LIBRARY_KIND_LABELS = {
   "head-ident": "Head ident",
   "tail-ident": "Tail ident",
@@ -3232,8 +3352,10 @@ async function refreshLibrary() {
   }
   // an item removed from the library cannot stay attached to the next build
   const names = new Set(libraryItems.map(i => i.name));
-  for (const placement of ["head", "tail"]) {
-    joinedItems[placement] = joinedItems[placement].filter(n => names.has(n));
+  for (const target of [joinedItems, rebuildJoinedItems]) {
+    for (const placement of ["head", "tail"]) {
+      target[placement] = target[placement].filter(n => names.has(n));
+    }
   }
   renderLibrary();
 }
@@ -3273,14 +3395,16 @@ function renderLibrary() {
       });
     });
   }
-  renderJoinedItems();
+  renderRebuildLibraryPicker();
+  renderJoinedItems(joinedItems, PROJECT_JOIN_BOXES);
+  renderJoinedItems(rebuildJoinedItems, REBUILD_JOIN_BOXES);
 }
 
-function renderJoinedItems() {
+function renderJoinedItems(target, idPrefix) {
   for (const placement of ["head", "tail"]) {
-    const box = document.getElementById(`library-${placement}-items`);
+    const box = document.getElementById(`${idPrefix}-${placement}-items`);
     if (!box) continue;
-    const names = joinedItems[placement];
+    const names = target[placement];
     box.innerHTML = names.length === 0
       ? '<div class="library-join-empty">Drop items here</div>'
       : names.map((name, index) => `
@@ -3293,8 +3417,8 @@ function renderJoinedItems() {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const [from, index] = el.dataset.detach.split(":");
-        joinedItems[from].splice(parseInt(index), 1);
-        renderJoinedItems();
+        target[from].splice(parseInt(index), 1);
+        renderJoinedItems(target, idPrefix);
       });
     });
     box.querySelectorAll(".library-chip").forEach(chip => {
@@ -3307,29 +3431,51 @@ function renderJoinedItems() {
       chip.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropAndRedraw(e.dataTransfer.getData("text/plain"), placement, parseInt(chip.dataset.index));
+        dropAndRedraw(target, idPrefix, e.dataTransfer.getData("text/plain"), placement, parseInt(chip.dataset.index));
       });
     });
   }
 }
 
-function dropAndRedraw(payload, placement, at) {
-  dropIntoJoin(joinedItems, payload, placement, at);
-  renderJoinedItems();
+function dropAndRedraw(target, idPrefix, payload, placement, at) {
+  dropIntoJoin(target, payload, placement, at);
+  renderJoinedItems(target, idPrefix);
 }
 
-document.querySelectorAll(".library-join-items").forEach(box => {
-  box.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    box.classList.add("drop-target");
+function wireJoinBoxes(target, idPrefix) {
+  for (const placement of ["head", "tail"]) {
+    const box = document.getElementById(`${idPrefix}-${placement}-items`);
+    box.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      box.classList.add("drop-target");
+    });
+    box.addEventListener("dragleave", () => box.classList.remove("drop-target"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault();
+      box.classList.remove("drop-target");
+      dropAndRedraw(target, idPrefix, e.dataTransfer.getData("text/plain"), placement, null);
+    });
+  }
+}
+
+wireJoinBoxes(joinedItems, PROJECT_JOIN_BOXES);
+wireJoinBoxes(rebuildJoinedItems, REBUILD_JOIN_BOXES);
+
+function renderRebuildLibraryPicker() {
+  const picker = document.getElementById("rebuild-library-item");
+  picker.replaceChildren(...libraryItems.map((item) => new Option(item.name, item.name)));
+  const empty = libraryItems.length === 0;
+  for (const id of ["rebuild-add-head", "rebuild-add-tail"]) document.getElementById(id).disabled = empty;
+}
+
+for (const placement of ["head", "tail"]) {
+  document.getElementById(`rebuild-add-${placement}`).addEventListener("click", () => {
+    const name = document.getElementById("rebuild-library-item").value;
+    if (!name) return;
+    rebuildJoinedItems[placement].push(name);
+    renderJoinedItems(rebuildJoinedItems, REBUILD_JOIN_BOXES);
   });
-  box.addEventListener("dragleave", () => box.classList.remove("drop-target"));
-  box.addEventListener("drop", (e) => {
-    e.preventDefault();
-    box.classList.remove("drop-target");
-    dropAndRedraw(e.dataTransfer.getData("text/plain"), box.dataset.placement, null);
-  });
-});
+}
 
 document.getElementById("library-import")?.addEventListener("click", async () => {
   const file = await open({

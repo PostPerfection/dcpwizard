@@ -89,6 +89,9 @@
         <button class="sidebar-btn" data-view="vf" title="Version File (Supplemental DCP)">
           <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
         </button>
+        <button class="sidebar-btn" data-view="rebuild" title="Rebuild DCP">
+          <svg viewBox="0 0 24 24"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+        </button>
         <button class="sidebar-btn" data-view="jobs" title="Jobs">
           <svg viewBox="0 0 24 24"><path d="M4 6h18V4H4v2zm0 5h18V9H4v2zm0 5h18v-2H4v2zm0 5h18v-2H4v2z"/></svg>
         </button>
@@ -1460,6 +1463,91 @@
             <div id="vf-repl-list" class="vf-repl-list"></div>
             <button id="vf-create" class="btn-primary" disabled>Create Version File</button>
             <div id="vf-results" class="results-box"></div>
+          </section>
+        </div>
+
+        <!-- REBUILD DCP VIEW -->
+        <div class="view" id="view-rebuild">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Rebuild DCP</h2>
+            </div>
+            <p class="field-hint">Write a new OV from an existing DCP with a new title, ratings, container or bit rate, and library items before or after it. The picture is re-encoded only for a new container or bit rate. The source DCP is never changed.</p>
+            <div class="prop-field">
+              <label>Source DCP</label>
+              <div class="input-with-btn">
+                <input id="rebuild-source" type="text" placeholder="Select DCP folder…" readonly>
+                <button id="rebuild-browse-source" class="btn-sm">…</button>
+              </div>
+            </div>
+            <div id="rebuild-source-summary" class="results-box"></div>
+            <div class="prop-field">
+              <label for="rebuild-title">Title</label>
+              <input id="rebuild-title" type="text" placeholder="Title of the new DCP">
+            </div>
+            <div class="prop-field">
+              <label>Output Folder</label>
+              <div class="input-with-btn">
+                <input id="rebuild-output" type="text" placeholder="Select output folder…" readonly>
+                <button id="rebuild-browse-output" class="btn-sm">…</button>
+              </div>
+              <p class="field-hint">The new DCP is written to a new folder inside this one, named after the title.</p>
+            </div>
+            <div class="field-row">
+              <div class="prop-field">
+                <label for="rebuild-container">Container</label>
+                <select id="rebuild-container">
+                  <option value="keep">Keep source</option>
+                  <option value="2k-scope">2K Scope (2048×858)</option>
+                  <option value="2k-flat">2K Flat (1998×1080)</option>
+                  <option value="2k-full">2K Full (2048×1080)</option>
+                  <option value="4k-scope">4K Scope (4096×1716)</option>
+                  <option value="4k-flat">4K Flat (3996×2160)</option>
+                  <option value="4k-full">4K Full (4096×2160)</option>
+                  <option value="custom">Custom WxH</option>
+                </select>
+              </div>
+              <div class="prop-field" id="rebuild-container-dims-field" hidden>
+                <label for="rebuild-container-dims">Size (WxH)</label>
+                <input id="rebuild-container-dims" type="text" placeholder="1920x1080">
+              </div>
+              <div class="prop-field">
+                <label for="rebuild-bit-rate">Bit rate (Mbit/s)</label>
+                <input id="rebuild-bit-rate" type="number" min="1" placeholder="Source">
+              </div>
+            </div>
+            <div class="panel-header">
+              <h2>Ratings</h2>
+              <button id="rebuild-add-rating" class="btn-sm" type="button">+ Rating</button>
+            </div>
+            <div id="rebuild-rating-list" class="rating-list"></div>
+            <div class="panel-header">
+              <h2>Library Items</h2>
+            </div>
+            <div class="library-import">
+              <select id="rebuild-library-item" title="An item from the ident library"></select>
+              <button id="rebuild-add-head" class="btn-sm" type="button">Add to head</button>
+              <button id="rebuild-add-tail" class="btn-sm" type="button">Add to tail</button>
+            </div>
+            <div class="library-joins">
+              <div class="library-join" data-placement="head">
+                <span class="library-join-label">Head: plays before the DCP</span>
+                <div id="rebuild-head-items" class="library-join-items" data-placement="head"></div>
+              </div>
+              <div class="library-join" data-placement="tail">
+                <span class="library-join-label">Tail: plays after the DCP</span>
+                <div id="rebuild-tail-items" class="library-join-items" data-placement="tail"></div>
+              </div>
+            </div>
+            <div class="field-row">
+              <button id="rebuild-start" class="btn-primary" disabled>Rebuild</button>
+              <button id="rebuild-cancel" class="btn-sm" hidden>Cancel</button>
+            </div>
+            <div class="progress-section">
+              <progress id="rebuild-progress" max="100" value="0"></progress>
+              <span id="rebuild-progress-text" class="progress-stats"></span>
+            </div>
+            <div id="rebuild-results" class="results-box"><span id="rebuild-result-text"></span> <button id="rebuild-reveal" class="btn-sm" hidden>Show in folder</button></div>
           </section>
         </div>
 

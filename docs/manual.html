@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DCP Wizard manual</title>
-    <meta name="description" content="Build, encrypt and validate a DCP, make KDMs, encode, convert and copy, work with subtitles, export, make a Version File, and change the settings.">
+    <meta name="description" content="Build, encrypt and validate a DCP, make KDMs, encode, convert and copy, work with subtitles, export, make a Version File, rebuild a DCP, and change the settings.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -99,7 +99,7 @@
 </nav>
 <main>
     <h1>Manual</h1>
-    <p>Twenty-one jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
+    <p>Twenty-two jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
     <ol class="contents">
         <li><a href="#build">Build a DCP</a></li>
         <li><a href="#encrypt">Encrypt it</a></li>
@@ -121,6 +121,7 @@
         <li><a href="#ingest">Re-ingest a package</a></li>
         <li><a href="#export">Export a DCP</a></li>
         <li><a href="#vf">Make a Version File</a></li>
+        <li><a href="#rebuild">Rebuild a DCP</a></li>
         <li><a href="#settings">Change the settings</a></li>
     </ol>
 
@@ -333,6 +334,15 @@ dcpwizard export --input ./dcp/Locked --keys ~/keys/locked.json -o locked.mp4</p
 <pre>dcpwizard create-vf --ov "./dcp/Two Reels" --output ./vf \
   --replace-picture 2=./j2k-reel2 --replace-sound 2=reel2.wav
 dcpwizard verify "./vf/Two Reels_VF" --strict --ov "./dcp/Two Reels"</pre>
+
+    <h2 id="rebuild">Rebuild a DCP</h2>
+    <h3>In the app</h3>
+    <p>Open Rebuild DCP and pick the Source DCP folder. Its title, standard, picture size and active area, frame rate, reels and kind are listed under it, and its title and ratings fill Title and Ratings. A DCP with more than one CPL, an encrypted one, or one with closed captions or an Atmos track is refused there with the reason. Change Title, edit, add or remove Ratings, pick an Output Folder and press Rebuild. Container fits the picture into another container with black bars, Custom WxH takes any size up to 4K, and Bit rate sets the picture's Mbit/s and the library items'. Only a new container or a bit rate re-encodes the picture, otherwise its track is copied byte for byte. Pick a library item and press Add to head or Add to tail to play it before or after the DCP, and drag the chips to reorder them. The new OV goes in a new folder named after Title, and the source is never changed. Cancel stops the rebuild and removes what it wrote.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard assemble --input "./dcp/My Film" --output ./rebuilt --title "My Film UK" \
+  --rating "http://www.bbfc.co.uk=12A" --head-item "Studio Ident"
+dcpwizard transcode-dcp --input "./dcp/My Film" --output ./scope --container 2k-scope
+dcpwizard assemble --input ./scope --output ./rebuilt --title "My Film Scope"</pre>
 
     <h2 id="settings">Change the settings</h2>
     <h3>In the app</h3>

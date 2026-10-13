@@ -1,3 +1,4 @@
+import hashlib
 import html
 import json
 import os
@@ -152,6 +153,18 @@ TOOLS_CHORD = "ctrl+5"
 TOOLS_VIEW = "view-tools"
 EXPORT_FINISHED_PREFIX = "Exported to "
 EXPORT_RUNNING_TEXT = "Exporting\u2026"
+
+REBUILD_VIEW_BUTTON = '.sidebar-btn[data-view="rebuild"]'
+REBUILD_VIEW = "view-rebuild"
+REBUILD_TIMEOUT_SECONDS = 300
+REBUILT_PREFIX = "Rebuilt into "
+REBUILD_RUNNING_TEXT = "Rebuilding\u2026"
+REBUILT_TITLE = "Film Rebuilt"
+RATING_AGENCY = "http://www.bbfc.co.uk"
+SOURCE_RATING_LABEL = "12A"
+REBUILT_RATING_LABEL = "15"
+KEEP_CONTAINER = "keep"
+HASH_CHUNK_BYTES = 1024 * 1024
 
 # the composition metadata fields, what each is given, and the CPL element it lands in
 COMPOSITION_METADATA = [
@@ -1349,6 +1362,105 @@ def test_the_export_tool_writes_a_prores_from_a_dcp(window, one_reel_cpl, tmp_pa
         REACTION_TIMEOUT_SECONDS,
     )
     assert counted_video_frames(output) == frames
+
+
+REBUILD_RATING_ROWS = """
+return [...document.querySelectorAll("#rebuild-rating-list .rating-row")].map((row) => [
+  row.querySelector(".rating-agency").value,
+  row.querySelector(".rating-label").value,
+]);
+"""
+
+
+def rebuild_result(session):
+    return session.property("#rebuild-result-text", "textContent")
+
+
+# the CLI's assemble gives the one-reel package a rating to change
+def rated_package(package, root):
+    output = root / "rated"
+    assembled = subprocess.run(
+        (
+            str(cli_binary()),
+            "assemble",
+            "--input", str(package),
+            "--output", str(output),
+            "--title", FIXTURE_TITLE,
+            "--rating", f"{RATING_AGENCY}={SOURCE_RATING_LABEL}",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=CREATE_TIMEOUT_SECONDS,
+    )
+    assert assembled.returncode == 0, assembled.stderr[-4000:]
+    return output / FIXTURE_TITLE
+
+
+def only_cpl(package):
+    cpls = list(package.glob("CPL_*.xml"))
+    assert len(cpls) == 1, sorted(package.iterdir())
+    return cpls[0]
+
+
+def picture_track_hash(package):
+    picture_id = only_text(named(ElementTree.parse(only_cpl(package)).getroot(), "MainPicture")[0], "Id")
+    assets = named(ElementTree.parse(package / "ASSETMAP.xml").getroot(), "Asset")
+    [path] = [only_text(asset, "Path") for asset in assets if only_text(asset, "Id") == picture_id]
+    digest = hashlib.sha1()
+    with open(package / path, "rb") as track:
+        while chunk := track.read(HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cpl_ratings(package):
+    root = ElementTree.parse(only_cpl(package)).getroot()
+    return [(only_text(rating, "Agency"), only_text(rating, "Label")) for rating in named(root, "Rating")]
+
+
+def test_a_dcp_is_rebuilt_with_a_new_title_and_rating(window, one_reel_cpl, tmp_path):
+    session = window.session
+    source = rated_package(one_reel_cpl.parent, tmp_path)
+    output = tmp_path / "rebuilt"
+    output.mkdir()
+
+    window.click(REBUILD_VIEW_BUTTON)
+    wait_for_view(session, REBUILD_VIEW)
+    assert session.property("#rebuild-start", "disabled") is True
+    choose_in_dialog(window, "#rebuild-browse-source", source)
+    wait_until(
+        "the source's title never reached the title field",
+        lambda: session.property("#rebuild-title", "value") == FIXTURE_TITLE,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    summary = session.property("#rebuild-source-summary", "textContent")
+    assert "Reels: 1," in summary, summary
+    assert session.execute(REBUILD_RATING_ROWS) == [[RATING_AGENCY, SOURCE_RATING_LABEL]]
+    assert session.property("#rebuild-container", "value") == KEEP_CONTAINER
+
+    type_into_field(window, "#rebuild-title", REBUILT_TITLE)
+    type_into_field(window, "#rebuild-rating-list .rating-label", REBUILT_RATING_LABEL)
+    choose_in_dialog(window, "#rebuild-browse-output", output)
+    wait_until(
+        "the Rebuild button stayed disabled",
+        lambda: session.property("#rebuild-start", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property("#rebuild-output", "value") == str(output)
+
+    window.click("#rebuild-start")
+    result = wait_until(
+        "the rebuild never finished",
+        lambda: rebuild_result(session) not in ("", REBUILD_RUNNING_TEXT) and rebuild_result(session),
+        REBUILD_TIMEOUT_SECONDS,
+    )
+    package = output / REBUILT_TITLE
+    assert result == f"{REBUILT_PREFIX}{package}"
+    assert sorted(path.name for path in output.iterdir()) == [REBUILT_TITLE]
+    assert only_text(ElementTree.parse(only_cpl(package)).getroot(), "ContentTitleText") == REBUILT_TITLE
+    assert cpl_ratings(package) == [(RATING_AGENCY, REBUILT_RATING_LABEL)]
+    assert picture_track_hash(package) == picture_track_hash(source)
+    assert session.property("#rebuild-reveal", "hidden") is False
 
 
 def verify_status(session):
