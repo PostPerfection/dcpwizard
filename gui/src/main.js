@@ -26,6 +26,7 @@ import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPU
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
+import { initProjectPropertiesLayout } from "./project-properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
@@ -53,6 +54,7 @@ import {
   signingChainFrom,
 } from "./kdm-form.js";
 initAssetStripResize("dcpwizard");
+initProjectPropertiesLayout("dcpwizard");
 
 // === Browse wrapper (remembers last directory) ===
 const LAST_BROWSE_DIR_KEY = "dcpwizard-last-browse-dir";
@@ -358,11 +360,13 @@ function showHintsDialog(hints) {
     list.appendChild(item);
   }
   silence.checked = false;
+  coverPreviewSurface();
   dialog.hidden = false;
 
   return new Promise((resolve) => {
     const close = (build) => {
       dialog.hidden = true;
+      uncoverPreviewSurface();
       if (silence.checked) savePrefs({ ...getPrefs(), showHintsBeforeBuild: false });
       loadSettings();
       document.getElementById("hints-build").removeEventListener("click", onBuild);

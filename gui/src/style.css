@@ -110,6 +110,90 @@
   min-width: 0;
 }
 
+.properties-position {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.properties-position select {
+  padding: 3px 6px;
+}
+
+.properties-resize-handle {
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.properties-resize-handle[hidden] {
+  display: none;
+}
+
+.properties-resize-handle::before {
+  content: "";
+  width: 4px;
+  height: 48px;
+  border-radius: var(--radius);
+  background: var(--border-light);
+}
+
+.properties-resize-handle:hover::before,
+.properties-resize-handle:focus::before {
+  background: var(--primary);
+}
+
+#view-project .workspace.properties-on-right {
+  flex-direction: row;
+  min-height: 0;
+}
+
+#view-project .workspace.properties-on-right .workspace-main {
+  flex: 1 1 auto;
+  width: auto;
+  height: auto;
+  min-width: 0;
+}
+
+#view-project .workspace.properties-on-right > .asset-strip-handle {
+  display: none;
+}
+
+#view-project .workspace.properties-on-right .properties-panel {
+  flex: 0 0 var(--project-properties-width, 360px);
+  width: var(--project-properties-width, 360px);
+  min-width: 280px;
+  min-height: 0;
+  max-width: 60%;
+}
+
+#view-project .workspace.properties-on-right .properties-content {
+  display: block;
+}
+
+#view-project .workspace.properties-on-right .properties-content fieldset {
+  margin-bottom: 16px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+#view-project .workspace.properties-on-right .properties-content legend {
+  float: none;
+  width: auto;
+}
+
+#view-project .workspace.properties-on-right .properties-content legend + * {
+  clear: none;
+}
+
 /* the loudness buttons wrap under the field together on a narrow panel */
 .input-with-btn.loudness-row {
   flex-wrap: wrap;
@@ -391,4 +475,3 @@
   color: var(--text-muted);
   padding: 8px 4px;
 }
-
