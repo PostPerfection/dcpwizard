@@ -571,6 +571,34 @@ fn certificate_inspect_lists_every_certificate_in_the_file() {
 }
 
 #[test]
+fn certificate_inspect_passes_a_lone_leaf_with_its_issuer_rules_not_checked() {
+    let dir = TempDir::new().unwrap();
+    let certs = dir.path().join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    assert_eq!(postkit::certificate::generate_chain("Acme", &certs), 0);
+
+    let output = cmd()
+        .args([
+            "certificate",
+            "inspect",
+            certs.join("signer.pem").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Chain check: passed\n"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "Not checked: ST 430-2 rule 17 (issuer): {}\n",
+            postkit::certificate::NO_CHAIN_REASON
+        )),
+        "{text}"
+    );
+}
+
+#[test]
 fn create_rejects_a_key_that_does_not_match_the_certificate() {
     let dir = TempDir::new().unwrap();
     let certs = dir.path().join("certs");

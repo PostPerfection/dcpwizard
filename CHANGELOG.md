@@ -11,7 +11,7 @@
 
 ### Changed
 - **A KDM is used only when its signature checks out**: `decrypt --kdm`, `create-vf --ov-kdm`, `kdm-rewrap`, and every other path that decrypts a KDM's keys verify the KDM's XML signature first and refuse a KDM with no signature or one edited after signing. The signature is checked against the certificate the KDM carries.
-- **`certificate inspect` shows the whole file**: every certificate in a PEM file is listed leaf first with its full subject and issuer, key usage, roles and thumbprint, followed by the chain check. A file that is not a certificate, or that holds a private key, now fails with exit code 1.
+- **`certificate inspect` shows the whole file**: every certificate in a PEM file is listed leaf first with its full subject and issuer, key usage, roles and thumbprint, followed by the chain check. A file that is not a certificate, or that holds a private key, now fails with exit code 1. A certificate alone, without its issuers, passes with ST 430-2 rules 14, 15, 17 and 18 listed as not checked because there is no chain.
 - **`cert-fetch` downloads through postkit's `kdm_distribution::certificate_fetch`**: its flags and output are unchanged, except that a failed vendor login reads `authentication failed (check the vendor user and password)`, and a Barco fetch with a curl that has no sftp, as Windows and macOS ship, says so instead of `download failed (curl exit 1)`. A Dolby or Doremi certificate is written with its chain, leaf first, when a `.dcicerts.zip` or `.certs.zip` beside it holds one.
 
 ## [1.9.0] - 2026-10-15
