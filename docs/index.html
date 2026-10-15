@@ -384,7 +384,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎞️</div>
             <h3>Start from your master</h3>
-            <p>Drop in a ProRes, H.264, H.265, or DNxHR movie (.mov, .mp4, .mxf), or a DPX, TIFF, EXR, or PNG frame sequence, graded in Rec.709, P3-D65, or P3-DCI. DCP Wizard handles the conversion to cinema JPEG 2000 for you.</p>
+            <p>Drop in a ProRes, H.264, H.265, or DNxHR movie (.mov, .mp4, .mxf), or a DPX, TIFF, EXR, or PNG frame sequence, graded in Rec.709, DCI-P3, P3-D65, Rec.2020, or ARRI LogC3. DCP Wizard handles the conversion to cinema JPEG 2000 for you. A JPEG 2000 picture MXF is wrapped as it is, with no encode.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🎬</div>
@@ -403,17 +403,17 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🖥️</div>
             <h3>2K and 4K, 24 to 60 fps</h3>
-            <p>2K and 4K at standard rates, plus high frame rate up to 60 fps at 2K.</p>
+            <p>2K and 4K at 24, 25, and 30 fps, plus 48, 50, and 60 fps at 2K. Interop stops at 48 fps.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">⚙️</div>
             <h3>JPEG 2000 on every core</h3>
-            <p>Encode through Grok on all available CPU cores. The job log is written beside the package. Grok's GPU accelerator plugin is a separate commercial product and is not in the released builds.</p>
+            <p>Encode through Grok on every CPU core, or on the thread count you set in Settings or with <code>--threads</code>. The job log is written beside the package. Grok's GPU accelerator plugin is a separate commercial product and is not in the released builds.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🖼️</div>
             <h3>Hit the right frame</h3>
-            <p>Scope, flat, or full. Crop, auto-crop, fill, rotate, flip, or letterbox so the source lands on the DCI raster the container asks for.</p>
+            <p>Scope, flat, or full, picked from the source's aspect unless you name one. Crop, auto-crop, fill, rotate, flip, scale, offset, or letterbox so the source lands on the DCI raster the container asks for. Preview in container plays the frame the build will write.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🎬</div>
@@ -423,7 +423,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">📍</div>
             <h3>CPL markers</h3>
-            <p>FFOC and LFOC go in by default. Place any of the ten ST 429-10 markers, end credits and intermission included, from the build panel or with <code>create --marker</code>.</p>
+            <p>FFOC and LFOC go in by default. Place any of the ten defined markers, end credits and intermission included, from the build panel or with <code>create --marker</code>.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(52,211,153,0.15);">🌍</div>
@@ -433,7 +433,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">⚡</div>
             <h3>Pre-build check</h3>
-            <p>Every reason a job cannot be packaged is raised before the encode starts, so a bad title or a bad subtitle fails in a second instead of after an hour of JPEG 2000. Advisory hints (channel count, first cue too early, unusual frame rate) show in a dialog you can build through.</p>
+            <p>Every reason a job cannot be packaged is raised before the encode starts, so a bad title or a bad subtitle fails in a second instead of after an hour of JPEG 2000. Advisory hints (channel count, first subtitle too early, unusual frame rate) show in a dialog you can build through.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">🏷️</div>
@@ -445,6 +445,35 @@
             <h3>Idents and rating cards</h3>
             <p>Keep a library of head idents, tail idents, rating cards, and anti-piracy clips. They join as their own reels, conformed to the feature's raster, rate, and sound layout at build time.</p>
         </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(34,211,238,0.15);">🔁</div>
+            <h3>Rebuild an existing DCP</h3>
+            <p>Write a new OV from a finished DCP with a new title and ratings, idents before or after it, and another container or bit rate. The picture is re-encoded only for a new container or bit rate, otherwise it is copied byte for byte. The source DCP is never changed.</p>
+        </div>
+    </div>
+
+    <h3 class="group-title">Work in the app</h3>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(167,139,250,0.15);">🗂️</div>
+            <h3>Projects</h3>
+            <p>Save the whole build panel as a <code>.dcpwizard</code> project file and open it again from the Project menu. Every build saves a copy beside the package, and unsaved changes come back as a draft on the next launch.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(74,222,128,0.15);">💾</div>
+            <h3>Saved presets</h3>
+            <p>Save the settings you reuse across films as a named preset, beside the built-in delivery profiles. Export and import them between machines, or build from one with <code>create --preset</code>.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(251,191,36,0.15);">📋</div>
+            <h3>Build queue</h3>
+            <p>Press Build DCP again while a build runs and the next one waits in Jobs. Reorder or cancel queued builds. Jobs from the command-line daemon show in the same list.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(56,189,248,0.15);">⌨️</div>
+            <h3>Keyboard shortcuts</h3>
+            <p>Buttons carry an Alt+letter, Ctrl+1 to Ctrl+9 open the views, and Ctrl+Enter runs the focused section. Ctrl+K lists every shortcut and lets you change it.</p>
+        </div>
     </div>
 
     <h3 class="group-title">Sound and subtitles</h3>
@@ -452,7 +481,12 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,191,36,0.15);">🔊</div>
             <h3>Immersive sound</h3>
-            <p>Package Dolby Atmos alongside your PCM mix. Map any source channel to any DCP lane, fill a stereo source out to 6, 8, or 16 channels without upmixing, or label HI, VI, and sign-language video (ISDCF Doc 13).</p>
+            <p>Package Dolby Atmos alongside your PCM mix. Map any source channel to any DCP lane, fill a stereo source out to 6, 8, or 16 channels without upmixing, or label HI, VI, and sign-language video (ISDCF Doc 13). Mono WAVs named like <code>mix_L.wav</code> and <code>mix_R.wav</code> become one channel set, each file on its lane.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(74,222,128,0.15);">🎚️</div>
+            <h3>Gain, fades, and loudness</h3>
+            <p>Set a gain, or a Leq(m) or LUFS loudness target held under a true-peak ceiling. Fade the sound and the picture in and out. Measure runs the build's sound steps and graphs the loudness of the track the package will carry.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">📝</div>
@@ -471,12 +505,17 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
             <h3>Source and package preview</h3>
-            <p>Play the source or the finished DCP in the app. JPEG 2000 decodes in process through a CPU worker pool. Grok handles DCP directories, CPLs, picture MXFs, and codestream folders. Other sources use libmpv.</p>
+            <p>Play the source or the finished DCP in the app. DCP directories, CPLs, picture MXFs, and codestream folders decode in process through Grok. Other sources use libmpv. An encrypted DCP plays once you give it the KDM and recipient key, or the keys file from the build.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(34,211,238,0.15);">📋</div>
             <h3>Play, inspect, queue</h3>
-            <p>A finished build offers Play, Inspect (the Verify view, already running), and Reveal. Queue packages from Recent Projects or a finished build and they play one after another.</p>
+            <p>A finished build offers Play, Queue, Inspect (the Verify view, already running), and Reveal. Queue packages from the Project menu's recent list or a finished build and they play one after another.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon" style="background: rgba(251,191,36,0.15);">📊</div>
+            <h3>Full screen and level meter</h3>
+            <p>Play full screen with the controls hidden until the pointer moves. A level meter shows each channel's level, peak, and clipping as the sound plays.</p>
         </div>
     </div>
 
@@ -494,7 +533,7 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(251,113,133,0.15);">🔐</div>
             <h3>Encryption and KDMs</h3>
-            <p>Encrypt every essence: picture, sound, subtitles, closed captions, and Atmos, each with its own key. Cut a KDM per screen, batch a whole release, email KDMs from a cinema list, or re-wrap from a distribution KDM when a new venue is added. The steps are in the <a href="manual.html">manual</a>.</p>
+            <p>Encrypt every essence: picture, sound, subtitles, closed captions, and Atmos, each with its own key. Make a KDM or re-wrap a DKDM from the Encryption &amp; KDM screen. From the command line, batch a whole release, email KDMs from a cinema list, and import cinemas from ST 430-7 or ST 430-16 FLMs. The steps are in the <a href="manual.html">manual</a>.</p>
         </div>
     </div>
 
@@ -503,17 +542,17 @@
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(74,222,128,0.15);">✅</div>
             <h3>Built-in quality check</h3>
-            <p>DCP Doctor checks your package against SMPTE Bv2.1 and hands you an HTML report, including JPEG 2000 forensics and Leq(m) sound level against the content kind's limit, so problems surface before the package leaves your desk.</p>
+            <p>Validate runs DCP Doctor's strict SMPTE check and its Bv2.1 profile check, and reads every picture frame's codestream against the DCI size cap. A bar shows its progress and Cancel stops it. Save the findings as an HTML report, or as a PDF on Linux. The separate QC report adds the Leq(m) sound level against the content kind's limit.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(56,189,248,0.15);">📤</div>
             <h3>Verified copy to drive</h3>
-            <p>Copy to a CRU or USB cinema drive with a free-space check and a post-copy hash check, or upload the finished package to a theatre management system over sftp.</p>
+            <p>Copy to a CRU or USB cinema drive with a free-space check and a post-copy hash check, or upload the finished package to a theatre management system over sftp or ftp.</p>
         </div>
         <div class="feature-card">
             <div class="feature-icon" style="background: rgba(167,139,250,0.15);">▶️</div>
             <h3>Export for review</h3>
-            <p>Turn a finished DCP back into ProRes or H.264 to screen internally or send out for approval.</p>
+            <p>Turn a finished DCP, any number of reels, encrypted or not, back into ProRes, H.264, H.265, DNxHR, or a PNG sequence to screen internally or send out for approval.</p>
         </div>
     </div>
 </section>
@@ -559,7 +598,6 @@
             <tr><td>Multi-CPL timeline</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Up to 4K</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Frame rates 24–60 fps (2K HFR)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
-            <tr><td>High bitrate encode</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Stereoscopic 3D</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>DPX / TIFF / PNG / QuickTime input</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Scale / Crop / Letterbox</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -572,7 +610,7 @@
             <tr><td>Closed captions (ST 429-12)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Subtitle burn-in during encode</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Integrated quality check</td><td class="yes">✓ (DCP Doctor)</td><td class="yes">✓ (Fraunhofer)</td></tr>
-            <tr><td>KDM (SMPTE, also for Interop DCPs)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+            <tr><td>KDM (SMPTE ST 430-1)</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>AES-128 essence encryption</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>DKDM re-wrap</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             <tr><td>Desktop app</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -590,7 +628,7 @@
             <tr><td>Content version tracking</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Accessibility track check (CVAA / EAA / AODA / Ofcom)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>DCI HDR Addendum DCP from HDR10, HLG, PQ P3-D65, or Dolby Vision 8.1</td><td class="yes">✓</td><td class="no">✗</td></tr>
-            <tr><td>Timeline conform (EDL / FCP7 XML)</td><td class="yes">✓</td><td class="no">✗</td></tr>
+            <tr><td>Timeline conform (EDL / FCP7 XML / FCPX)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Version dashboard &amp; distribution matrix</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td>Open source (AGPL-3.0)</td><td class="yes">✓</td><td class="no">✗</td></tr>
             <tr><td><strong>Price</strong></td><td class="yes"><strong>Free</strong></td><td class="no"><strong>Commercial</strong></td></tr>
@@ -626,7 +664,7 @@
         <div class="prereq"><span class="tag required">Required</span><span>Grok (JPEG 2000)</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>OpenSSL</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>Xerces-C</span></div>
-        <div class="prereq"><span class="tag optional">Optional</span><span>ffmpeg (transcoding)</span></div>
+        <div class="prereq"><span class="tag required">Required</span><span>ffmpeg 8 program at run time (sound, stills, probes)</span></div>
         <div class="prereq"><span class="tag required">Required</span><span>FFmpeg 8.1.3 LGPL and libmpv from ffmpeg-mpv-builds</span></div>
     </div>
 

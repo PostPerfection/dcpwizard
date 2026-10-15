@@ -99,7 +99,7 @@
 </nav>
 <main>
     <h1>Manual</h1>
-    <p>Twenty-two jobs. Each one is the app first, then the same job from a terminal. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
+    <p>Twenty-four jobs. Each one is the app first, then the same job from a terminal where it has one. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
     <ol class="contents">
         <li><a href="#build">Build a DCP</a></li>
         <li><a href="#encrypt">Encrypt it</a></li>
@@ -109,6 +109,7 @@
         <li><a href="#batch">Build several DCPs</a></li>
         <li><a href="#verify">Validate a DCP</a></li>
         <li><a href="#timeline">See the reels on the Timeline</a></li>
+        <li><a href="#play">Play a package</a></li>
         <li><a href="#encode">Encode to JPEG 2000</a></li>
         <li><a href="#transcode">Transcode a video to frames</a></li>
         <li><a href="#loudness">Measure loudness</a></li>
@@ -122,6 +123,7 @@
         <li><a href="#export">Export a DCP</a></li>
         <li><a href="#vf">Make a Version File</a></li>
         <li><a href="#rebuild">Rebuild a DCP</a></li>
+        <li><a href="#keyboard">Use the keyboard</a></li>
         <li><a href="#settings">Change the settings</a></li>
     </ol>
 
@@ -226,7 +228,7 @@ dcpwizard preferences import-dcpomatic</pre>
 
     <h2 id="batch">Build several DCPs</h2>
     <h3>In the app</h3>
-    <p>Build DCP adds the build to Jobs. Builds run one at a time, in the order you pressed Build DCP. While the first one runs, change the Title, or open the next project from the Project menu, or choose New and add its assets, and press Build DCP again. It shows in Jobs as queued and starts when the one before it finishes. Build DCP is greyed only while the Title matches a build that is queued or running, since two builds with one title would write the same folder.</p>
+    <p>Build DCP adds the build to Jobs. Builds run one at a time, in the order you pressed Build DCP. While the first one runs, change the Title, or open the next project from the Project menu, or choose New and add its assets, and press Build DCP again. It shows in Jobs as queued and starts when the one before it finishes. Build DCP is greyed while the Title matches a build that is queued or running, since two builds with one title would write the same folder. After a build finishes, the button reads DCP Built and stays greyed until you change the project or a setting the build reads, or delete the built folder. Reopening the project keeps it that way.</p>
     <p>Open Jobs from the sidebar to see each build's state and progress. Press ✕ on a queued or running row to cancel it. A queued row has Run next, Earlier and Later buttons, which reorder the queue. The running build never moves.</p>
     <h3>From a terminal</h3>
 <pre># Build a package from every master that lands in ./incoming
@@ -254,6 +256,13 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
     <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. The Picture and Sound tracks show one block per reel of the package's first CPL, with the reel's length. Click the ruler or a track to move the preview to that point. With no package open it shows the project's own reels, picture, sound and subtitle, each as long as its video.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard info "./dcp/Two Reels"</pre>
+
+    <h2 id="play">Play a package</h2>
+    <h3>In the app</h3>
+    <p>Select an asset, or press Open DCP and pick a package, then press ▶ Preview. A DCP, a CPL, a picture MXF or a folder of codestreams plays through grok, and anything else through libmpv. An encrypted package opens the Content keys dialog. Pick the KDM and the Recipient Private Key it was issued to, or the KEYS.json from the build, and press Play. The keys are reused for that package until the app closes.</p>
+    <p>The QC strip under the picture has Safe, Aspect, Cross and Thirds overlays, Crop for the crop the build applies, Sub and CC to show the subtitle and closed caption tracks, and Decode to play at full, half or quarter size. ⛶ in the preview header, or F, fills the screen. The controls and the cursor hide three seconds after the pointer last moved and come back on a pointer move or a key press. Press ⛶ again or Escape to return to the window.</p>
+    <p>Open Player under the preview and tick Level meter to see one bar per channel, named by its lane, with the peak held for a second and a clip mark at 0 dBFS. On a DCP the bars follow the sound as it plays. On any other file they run 0.3 to 0.6 s ahead of what you hear.</p>
+    <p>Queue, beside Play after a build, and + beside a project in the Project menu's recent list, add the package to the playlist under the transport bar. Click a row to play it, and the next row starts when it ends. ↑ and ↓ reorder the rows and ✕ removes one. The playlist lasts until the app closes.</p>
 
     <h2 id="encode">Encode to JPEG 2000</h2>
     <h3>In the app</h3>
@@ -343,6 +352,11 @@ dcpwizard verify "./vf/Two Reels_VF" --strict --ov "./dcp/Two Reels"</pre>
   --rating "http://www.bbfc.co.uk=12A" --head-item "Studio Ident"
 dcpwizard transcode-dcp --input "./dcp/My Film" --output ./scope --container 2k-scope
 dcpwizard assemble --input ./scope --output ./rebuilt --title "My Film Scope"</pre>
+
+    <h2 id="keyboard">Use the keyboard</h2>
+    <h3>In the app</h3>
+    <p>Hold Alt to see the underlined letter on a button, and press Alt with that letter to press it. Ctrl+1 to Ctrl+9 open the sidebar views from the top, so Version File is Ctrl+6, Rebuild DCP Ctrl+7, Jobs Ctrl+8 and Settings Ctrl+9. Ctrl+Enter runs the action of the section the focus is in. In a path field Alt+Down opens its file dialog, and Escape leaves a text field. Alt+P opens the Project menu, where N, O, S and A run New, Open, Save and Save As and the arrow keys pick a recent project. After a build, Ctrl+Shift+P plays it, Ctrl+Shift+A queues it, Ctrl+Shift+E opens it in Verify and Ctrl+Shift+F shows its folder.</p>
+    <p>Ctrl+K lists every shortcut. Click one and press the new keys. Backspace clears it and Escape cancels. ↺ puts one shortcut back to its default and Reset all puts back every one. Your changes are saved.</p>
 
     <h2 id="settings">Change the settings</h2>
     <h3>In the app</h3>
