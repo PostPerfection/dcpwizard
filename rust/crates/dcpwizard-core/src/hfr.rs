@@ -47,11 +47,19 @@ const HFR_RATES_2K_ONLY: [u32; 3] = [48, 50, 60];
 // the addendum's other 2K rates, which ST 429-2 §8.1 gives no composition edit rate value for
 const RATES_ABOVE_THE_ST_429_2_CAP: [u32; 3] = [96, 100, 120];
 
-/// Convert a probed source rate into the integer DCP edit rate. A 24000/1001
-/// source is deliberately played at 24 fps and requires matching audio pull-up.
+const NTSC_RATE_DENOMINATOR: u32 = 1_001;
+const NTSC_RATE_NUMERATOR_SCALE: u32 = 1_000;
+
+/// Convert a probed source rate into the integer DCP edit rate. An N*1000/1001
+/// source whose N is a DCP rate is deliberately played at N fps and requires
+/// matching audio pull-up.
 pub fn source_rate_to_dcp(fps_num: u32, fps_den: u32) -> (u32, bool) {
-    if fps_num == 24_000 && fps_den == 1_001 {
-        return (24, true);
+    let pulled_up_rate = fps_num / NTSC_RATE_NUMERATOR_SCALE;
+    let is_ntsc_rate = fps_den == NTSC_RATE_DENOMINATOR
+        && fps_num.is_multiple_of(NTSC_RATE_NUMERATOR_SCALE)
+        && FrameRate::from_u32(pulled_up_rate).is_some();
+    if is_ntsc_rate {
+        return (pulled_up_rate, true);
     }
     (fps_num / fps_den.max(1), false)
 }
@@ -67,8 +75,8 @@ pub struct SourceConform {
     pub audio_pull_up: bool,
 }
 
-/// What it takes to package a source at the requested DCP edit rate: today only
-/// a 24000/1001 source at 24 fps needs anything, and it plays 0.1% faster with
+/// What it takes to package a source at the requested DCP edit rate: only an
+/// N*1000/1001 source at N fps needs anything, and it plays 0.1% faster with
 /// the sound pulled up to match, the way DCP-o-matic conforms it.
 pub fn conform_source_to_dcp(fps_num: u32, fps_den: u32, dcp_fps: u32) -> SourceConform {
     let (source_dcp_fps, needs_pull_up) = source_rate_to_dcp(fps_num, fps_den);
@@ -81,7 +89,7 @@ pub fn conform_source_to_dcp(fps_num: u32, fps_den: u32, dcp_fps: u32) -> Source
     }
 }
 
-/// Speed the sound up by 1000/1001 to match a 23.976 picture packaged at 24 fps:
+/// Speed the sound up by 1000/1001 to match an N*1000/1001 picture packaged at N fps:
 /// reinterpret the samples at 48048 Hz, then resample back to the 48 kHz a DCP
 /// sound track carries.
 pub fn audio_pull_up(input: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
@@ -98,7 +106,7 @@ pub fn audio_pull_up(input: &std::path::Path, output: &std::path::Path) -> Resul
         .map_err(|error| format!("failed to run ffmpeg for audio pull-up: {error}"))?;
     if !result.status.success() {
         return Err(format!(
-            "23.976-to-24 audio pull-up failed: {}",
+            "1000/1001 audio pull-up failed: {}",
             String::from_utf8_lossy(&result.stderr)
         ));
     }
@@ -230,26 +238,34 @@ mod tests {
     }
 
     #[test]
-    fn ntsc_film_maps_to_24_with_audio_pull_up() {
+    fn ntsc_rates_map_to_their_dcp_rate_with_audio_pull_up() {
         assert_eq!(source_rate_to_dcp(24_000, 1_001), (24, true));
+        assert_eq!(source_rate_to_dcp(30_000, 1_001), (30, true));
+        assert_eq!(source_rate_to_dcp(48_000, 1_001), (48, true));
+        assert_eq!(source_rate_to_dcp(60_000, 1_001), (60, true));
         assert_eq!(source_rate_to_dcp(24, 1), (24, false));
+        assert_eq!(source_rate_to_dcp(60, 1), (60, false));
+        assert_eq!(source_rate_to_dcp(120_000, 1_001), (119, false));
     }
 
     #[test]
-    fn only_ntsc_film_at_24_is_conformed() {
-        let conform = conform_source_to_dcp(24_000, 1_001, 24);
-        assert_eq!(
-            conform.read_source_at,
-            Some(postkit::encode::FrameRate::whole(24))
-        );
-        assert!(conform.audio_pull_up);
+    fn only_an_ntsc_rate_at_its_dcp_rate_is_conformed() {
+        for (fps_num, dcp_fps) in [(24_000, 24), (30_000, 30), (48_000, 48), (60_000, 60)] {
+            let conform = conform_source_to_dcp(fps_num, 1_001, dcp_fps);
+            assert_eq!(
+                conform.read_source_at,
+                Some(postkit::encode::FrameRate::whole(dcp_fps))
+            );
+            assert!(conform.audio_pull_up, "{fps_num}/1001 at {dcp_fps} fps");
+        }
 
         for (fps_num, fps_den, dcp_fps) in [
             (24_000, 1_001, 25),
             (24_000, 1_001, 48),
             (24, 1, 24),
             (25, 1, 24),
-            (30_000, 1_001, 30),
+            (30_000, 1_001, 24),
+            (60_000, 1_001, 30),
         ] {
             assert_eq!(
                 conform_source_to_dcp(fps_num, fps_den, dcp_fps),

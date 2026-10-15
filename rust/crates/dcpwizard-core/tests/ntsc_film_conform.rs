@@ -1,4 +1,4 @@
-//! A 24000/1001 source packaged at 24 fps: the picture is read 1:1 and plays
+//! An N*1000/1001 source packaged at N fps: the picture is read 1:1 and plays
 //! 0.1% faster, and the sound is pulled up by the same 1000/1001, so both tracks
 //! hold exactly as many frames as the source did.
 
@@ -10,14 +10,12 @@ use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
-const DCP_FPS: u32 = 24;
-const SOURCE_FRAMES: u32 = 1001;
-/// The source runs 1001/24000 s per frame, and the sound covers all of it:
-/// 1001 * 1001 * 48000 / 24000 samples.
-const SOURCE_SAMPLES: u64 = 1001 * 1001 * 2;
+const NTSC_RATE_DENOMINATOR: u32 = 1_001;
 const AUDIO_SAMPLE_RATE: u64 = 48_000;
+// aresample can land a sample either side of the exact count
+const PULL_UP_SAMPLE_TOLERANCE: u64 = 2;
 
-fn make_ntsc_clip(path: &Path) {
+fn make_ntsc_clip(path: &Path, fps_num: u32, frames: u32) {
     let ok = std::process::Command::new("ffmpeg")
         .args([
             "-y",
@@ -26,9 +24,9 @@ fn make_ntsc_clip(path: &Path) {
             "-f",
             "lavfi",
             "-i",
-            &format!("testsrc=size={WIDTH}x{HEIGHT}:rate=24000/1001"),
+            &format!("testsrc=size={WIDTH}x{HEIGHT}:rate={fps_num}/{NTSC_RATE_DENOMINATOR}"),
             "-frames:v",
-            &SOURCE_FRAMES.to_string(),
+            &frames.to_string(),
             "-pix_fmt",
             "yuv420p",
         ])
@@ -37,16 +35,15 @@ fn make_ntsc_clip(path: &Path) {
         .expect("run ffmpeg");
     assert!(
         ok.status.success() && path.exists(),
-        "{}
+        "ffmpeg wrote no {fps_num}/{NTSC_RATE_DENOMINATOR} clip
   stdout: {}
   stderr: {}",
-        "ffmpeg wrote no 23.976 clip",
         String::from_utf8_lossy(&ok.stdout).trim(),
         String::from_utf8_lossy(&ok.stderr).trim(),
     );
 }
 
-fn make_sine(path: &Path) {
+fn make_sine(path: &Path, samples: u64) {
     let ok = std::process::Command::new("ffmpeg")
         .args([
             "-y",
@@ -57,7 +54,7 @@ fn make_sine(path: &Path) {
             "-i",
             "sine=frequency=440:sample_rate=48000",
             "-af",
-            &format!("atrim=end_sample={SOURCE_SAMPLES}"),
+            &format!("atrim=end_sample={samples}"),
             "-ac",
             "2",
             "-c:a",
@@ -111,19 +108,30 @@ fn wav_sample_count(path: &Path) -> u64 {
         .expect("a sample count")
 }
 
-#[test]
-fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
+fn package_ntsc_source(fps_num: u32, dcp_fps: u32, source_frames: u32) {
     let dir = tempfile::tempdir().unwrap();
     let clip = dir.path().join("ntsc.mp4");
     let sine = dir.path().join("sound.wav");
-    make_ntsc_clip(&clip);
-    make_sine(&sine);
+    // the sound covers the whole source, which runs 1001/fps_num s a frame
+    let source_samples =
+        u64::from(source_frames) * u64::from(NTSC_RATE_DENOMINATOR) * AUDIO_SAMPLE_RATE
+            / u64::from(fps_num);
+    make_ntsc_clip(&clip, fps_num, source_frames);
+    make_sine(&sine, source_samples);
 
     let probed = dcpwizard_core::probe::probe_video(&clip).expect("probe the source");
-    assert_eq!((probed.fps_num, probed.fps_den), (24_000, 1_001));
+    assert_eq!(
+        (probed.fps_num, probed.fps_den),
+        (fps_num, NTSC_RATE_DENOMINATOR)
+    );
+    assert_eq!(
+        dcpwizard_core::hfr::source_rate_to_dcp(probed.fps_num, probed.fps_den),
+        (dcp_fps, true),
+        "the source's own rate picks the DCP rate"
+    );
 
     let conform =
-        dcpwizard_core::hfr::conform_source_to_dcp(probed.fps_num, probed.fps_den, DCP_FPS);
+        dcpwizard_core::hfr::conform_source_to_dcp(probed.fps_num, probed.fps_den, dcp_fps);
     assert!(conform.audio_pull_up);
 
     let work = dir.path().join("encode");
@@ -131,7 +139,7 @@ fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
         &clip,
         &work,
         &postkit::pipeline::EncodeRunOptions {
-            fps: postkit::encode::FrameRate::whole(DCP_FPS),
+            fps: postkit::encode::FrameRate::whole(dcp_fps),
             read_source_at: conform.read_source_at,
             ..postkit::pipeline::EncodeRunOptions::default()
         },
@@ -143,26 +151,26 @@ fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
     .expect("the conformed encode runs");
     assert_eq!(
         encoded.frames_encoded,
-        u64::from(SOURCE_FRAMES),
+        u64::from(source_frames),
         "every source frame is packaged once, none duplicated"
     );
 
     let pulled_up = dir.path().join("pullup.wav");
     dcpwizard_core::hfr::audio_pull_up(&sine, &pulled_up).expect("pull the sound up");
     let samples = wav_sample_count(&pulled_up);
-    let picture_samples = u64::from(SOURCE_FRAMES) * AUDIO_SAMPLE_RATE / u64::from(DCP_FPS);
+    let picture_samples = u64::from(source_frames) * AUDIO_SAMPLE_RATE / u64::from(dcp_fps);
     assert!(
-        samples.abs_diff(picture_samples) <= AUDIO_SAMPLE_RATE / u64::from(DCP_FPS),
+        samples.abs_diff(picture_samples) <= PULL_UP_SAMPLE_TOLERANCE,
         "{samples} samples against {picture_samples} of picture"
     );
 
     let out = dir.path().join("dcp");
     let config = DcpConfig {
-        title: "NTSC Film".into(),
+        title: "NTSC Conform".into(),
         standard: dcpwizard_core::Standard::Smpte,
         resolution: dcpwizard_core::Resolution::TwoK,
         content_type: dcpwizard_core::ContentType::Test,
-        frame_rate_num: DCP_FPS,
+        frame_rate_num: dcp_fps,
         frame_rate_den: 1,
         output_dir: out.clone(),
         j2k_dir: Some(encoded.j2k_dir),
@@ -171,30 +179,35 @@ fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
     };
     assert_eq!(create_dcp(&config), 0, "the conformed DCP must package");
 
+    let cpl = dcpwizard_core::info::inspect_dcp(&out).expect("read the CPL back");
+    assert_eq!(cpl.frame_rate, format!("{dcp_fps} 1"));
+    assert_eq!(cpl.duration_frames, i64::from(source_frames));
+
     let mut picture = asdcplib::jp2k::MxfReader::new();
     picture
         .open_read(find_essence(&out, "picture").to_str().unwrap())
         .expect("open picture MXF");
+    let picture = picture.picture_descriptor().expect("picture descriptor");
     assert_eq!(
-        picture
-            .picture_descriptor()
-            .expect("picture descriptor")
-            .container_duration,
-        SOURCE_FRAMES,
-        "an fps filter on its own would have made {}",
-        SOURCE_FRAMES + 1
+        (picture.edit_rate.numerator, picture.edit_rate.denominator),
+        (dcp_fps as i32, 1)
+    );
+    assert_eq!(
+        picture.container_duration, source_frames,
+        "an fps filter on its own would have retimed the source onto {dcp_fps} fps"
     );
 
     let mut sound = asdcplib::pcm::MxfReader::new();
     sound
         .open_read(find_essence(&out, "sound").to_str().unwrap())
         .expect("open sound MXF");
+    let sound = sound.audio_descriptor().expect("audio descriptor");
     assert_eq!(
-        sound
-            .audio_descriptor()
-            .expect("audio descriptor")
-            .container_duration,
-        SOURCE_FRAMES,
+        (sound.edit_rate.numerator, sound.edit_rate.denominator),
+        (dcp_fps as i32, 1)
+    );
+    assert_eq!(
+        sound.container_duration, source_frames,
         "the pulled-up sound covers the picture to the frame"
     );
 
@@ -204,4 +217,20 @@ fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
         "verify errors: {:?}",
         result.errors
     );
+}
+
+#[test]
+fn a_23_976_source_packages_1001_frames_of_picture_and_sound_at_24_fps() {
+    // one frame in every 1001 is where a plain fps filter would duplicate
+    package_ntsc_source(24_000, 24, 1001);
+}
+
+#[test]
+fn a_29_97_source_packages_every_frame_of_picture_and_sound_at_30_fps() {
+    package_ntsc_source(30_000, 30, 60);
+}
+
+#[test]
+fn a_59_94_source_packages_every_frame_of_picture_and_sound_at_60_fps() {
+    package_ntsc_source(60_000, 60, 120);
 }

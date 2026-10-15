@@ -1,3 +1,5 @@
+import { pulledUpRate } from "./pulled-up-rate.js";
+
 export const COLOUR_NOT_DECLARED = "colour space not declared";
 
 const BITS_PER_MEGABIT = 1_000_000;
@@ -42,11 +44,11 @@ function framesPerSecond(rate) {
   return numerator / denominator;
 }
 
-// 23.976 matches no option
 function detectedFramerate(rate, framerateOptions) {
-  const match = /^(\d+)\/1$/.exec(rate ?? "");
-  if (!match) return null;
-  return framerateOptions.find((option) => parseInt(option) === parseInt(match[1])) ?? null;
+  const whole = /^(\d+)\/1$/.exec(rate ?? "");
+  const dcpRate = whole ? Number(whole[1]) : pulledUpRate(rate);
+  if (!dcpRate) return null;
+  return framerateOptions.find((option) => parseInt(option) === dcpRate) ?? null;
 }
 
 function decimal(value, decimals) {

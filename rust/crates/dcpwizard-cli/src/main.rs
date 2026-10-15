@@ -5489,7 +5489,7 @@ fn run() {
                         if let Err(error) = dcpwizard_core::hfr::audio_pull_up(&input, &output) {
                             exit_failed(error);
                         }
-                        tracing::info!("Applied 23.976-to-24 audio pull-up");
+                        tracing::info!("Applied the 1000/1001 audio pull-up");
                         Some(output)
                     }
                     (_, audio_path) => audio_path,
@@ -6147,7 +6147,7 @@ fn run() {
                         tracing::error!("{error}");
                         std::process::exit(1);
                     }
-                    tracing::info!("Applied 23.976-to-24 audio pull-up");
+                    tracing::info!("Applied the 1000/1001 audio pull-up");
                     Some(pulled_up)
                 }
                 (_, audio_path) => audio_path,

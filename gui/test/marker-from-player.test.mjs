@@ -27,6 +27,19 @@ test('a 23.976 source packaged at 24 counts its own frames, so an hour in stays 
   assert.equal(frame, sourceFrame);
 });
 
+test('a 59.94 source packaged at 60 counts its own frames', () => {
+  const sourceFrame = 216000;
+  const frame = compositionFrameAt({
+    ...UNTRIMMED,
+    durationSeconds: 7200,
+    sourceRate: '60000/1001',
+    editRate: 60,
+    positionSeconds: (sourceFrame * 1001) / 60000,
+  });
+
+  assert.equal(frame, sourceFrame);
+});
+
 test('a source at another rate is retimed onto the edit rate by its timestamps', () => {
   assert.equal(compositionFrameAt({ ...UNTRIMMED, sourceRate: '25/1', positionSeconds: 2 }), 48);
 });

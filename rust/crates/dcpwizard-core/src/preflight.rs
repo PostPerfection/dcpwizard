@@ -337,7 +337,28 @@ fn check_hdr_source_path(plan: &CreatePlan) -> Result<(), String> {
 }
 
 fn check_fps_resolution(plan: &CreatePlan) -> Result<(), String> {
-    crate::hfr::validate_fps_resolution(plan.fps, plan.four_k, plan.standard == Standard::Smpte)
+    let refusal = crate::hfr::validate_fps_resolution(
+        plan.fps,
+        plan.four_k,
+        plan.standard == Standard::Smpte,
+    );
+    let conformed_source = plan
+        .source
+        .as_ref()
+        .filter(|_| plan.picture_kind == PictureKind::Video)
+        .filter(|info| {
+            crate::hfr::conform_source_to_dcp(info.fps_num, info.fps_den, plan.fps).audio_pull_up
+        });
+    let Some(source) = conformed_source else {
+        return refusal;
+    };
+    refusal.map_err(|refusal| {
+        format!(
+            "{refusal} (the {:.3} fps source packages at {} fps)",
+            f64::from(source.fps_num) / f64::from(source.fps_den),
+            plan.fps
+        )
+    })
 }
 
 fn check_still_length(plan: &CreatePlan) -> Result<(), String> {
@@ -888,6 +909,46 @@ mod tests {
             fps: PICTURE_MXF_FPS,
             ..plan_with_picture(mxf)
         }
+    }
+
+    #[test]
+    fn a_59_94_source_refused_at_60_fps_names_its_own_rate() {
+        let plan = CreatePlan {
+            picture_kind: PictureKind::Video,
+            source: Some(postkit::probe::VideoInfo {
+                codec_name: "h264".to_string(),
+                width: 3840,
+                height: 2160,
+                fps_num: 60_000,
+                fps_den: 1_001,
+                has_audio: false,
+                total_frames: 120,
+                pix_fmt: "yuv420p".to_string(),
+                color_space: "bt709".to_string(),
+                color_range: "tv".to_string(),
+                color_transfer: "bt709".to_string(),
+                color_primaries: "bt709".to_string(),
+                bit_rate: None,
+            }),
+            fps: 60,
+            ..Default::default()
+        };
+        let four_k = CreatePlan {
+            four_k: true,
+            ..plan.clone()
+        };
+        let interop = CreatePlan {
+            standard: Standard::Interop,
+            ..plan.clone()
+        };
+        for refused in [four_k, interop] {
+            let refusal = check_fps_resolution(&refused).unwrap_err();
+            assert!(
+                refusal.contains("60 fps") && refusal.contains("59.940 fps source"),
+                "{refusal}"
+            );
+        }
+        assert_eq!(check_fps_resolution(&plan), Ok(()));
     }
 
     #[test]

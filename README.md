@@ -23,6 +23,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **SMPTE & Interop** standard support
 - **2K and 4K** resolution (2048×1080, 4096×2160)
 - **Frame rates** 24, 25, 30 fps (2K/4K); HFR 48, 50, 60 fps (2K only)
+- **NTSC source rates**: a 23.976, 29.97, 47.952 or 59.94 fps source is packaged at 24, 30, 48 or 60 fps, every frame once, playing 0.1% faster with the sound pulled up by the same 1000/1001. A 59.94 source at 60 fps is held to the 2K SMPTE limits of any 60 fps package
 - **Reel splitting** via `create --reel-length <minutes>` (multi-reel CPL, sample-accurate audio and per-reel subtitle boundaries)
 - **Explicit reel splits** via `create --split-at <tc>[,<tc>...]` (HH:MM:SS or HH:MM:SS:FF) or `create --split-chapters` (source chapter marks via ffprobe)
 - **Custom picture container** via `create --container <2k-scope|...>` or `create --container-dims WxH` (even, within the 2K/4K bound): the container is the raster the picture is encoded at, so a scope package is 2048x858 frames, the CPL's stored area, active area and aspect all read back from that essence, and the container names the 2K or 4K family without `--twok`/`--fourk`

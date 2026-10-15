@@ -2512,7 +2512,7 @@ fn count_frames(j2k_dir: &std::path::Path) -> u64 {
 
 /// Create-time audio processing: filename channel routing of mono WAVs, then
 /// stereo-to-5.1 upmix, then the picture/sound delay, then loudness
-/// normalization, then the 23.976-to-24 pull-up the conform asks for.
+/// normalization, then the 1000/1001 pull-up the conform asks for.
 /// Same order as the CLI create path. Intermediates go under `<output>/audio_work`.
 fn prepare_audio(
     job: &JobConfig,
@@ -2589,7 +2589,7 @@ fn prepare_audio(
         std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
         let out = work_dir.join("pullup.wav");
         dcpwizard_core::hfr::audio_pull_up(input, &out)?;
-        log("[AUDIO] Applied 23.976-to-24 audio pull-up");
+        log("[AUDIO] Applied the 1000/1001 audio pull-up");
         audio_path = Some(out);
     }
 

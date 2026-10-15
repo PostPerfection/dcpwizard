@@ -50,9 +50,13 @@ test("a clip with no colour tags leaves the colour space alone and says so", () 
   assert.ok(values.hint.includes(COLOUR_NOT_DECLARED), values.hint);
 });
 
-test("a whole frame rate picks its option and 23.976 picks none", () => {
+test("a whole frame rate picks its option and an NTSC rate picks the rate it is packaged at", () => {
   assert.equal(detected({ fps: "25/1" }).framerate, "25");
-  assert.equal(detected({ fps: "24000/1001" }).framerate, null);
+  assert.equal(detected({ fps: "24000/1001" }).framerate, "24");
+  assert.equal(detected({ fps: "30000/1001" }).framerate, "30");
+  assert.equal(detected({ fps: "48000/1001" }).framerate, "48");
+  assert.equal(detected({ fps: "60000/1001" }).framerate, "60");
+  assert.equal(detected({ fps: "120000/1001" }).framerate, null);
 });
 
 test("the hint lists size, rate, colour and bit rate", () => {

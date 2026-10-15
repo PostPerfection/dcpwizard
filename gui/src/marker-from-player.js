@@ -1,6 +1,4 @@
-// conform_source_to_dcp packages this source at 24 fps frame for frame, any other source is retimed onto the edit rate
-const CONFORMED_SOURCE_RATE = "24000/1001";
-const CONFORMED_EDIT_RATE = 24;
+import { pulledUpRate } from "./pulled-up-rate.js";
 
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
@@ -43,7 +41,8 @@ function rateValue(rate) {
 // the frame the build turns the source frame at positionSeconds into, counted in the composition
 export function compositionFrameAt({ positionSeconds, durationSeconds, sourceRate, editRate, trimStartFrames, trimEndFrames, padHeadFrames }) {
   if (!(durationSeconds > 0)) throw new Error("The preview has not loaded the video yet");
-  const conformed = sourceRate === CONFORMED_SOURCE_RATE && editRate === CONFORMED_EDIT_RATE;
+  // any source but a conformed one is retimed onto the edit rate
+  const conformed = pulledUpRate(sourceRate) === editRate;
   const readRate = conformed ? rateValue(sourceRate) : editRate;
   const sourceFrames = Math.round(durationSeconds * readRate);
   // at the end of the file the player reports the whole duration, one frame past the last

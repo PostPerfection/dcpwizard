@@ -60,7 +60,7 @@ pub struct HintFacts {
     /// The frame rate the source runs at, when the picture is a video.
     pub source_fps: Option<f64>,
     /// Whether the job conforms the source by playing it faster with the sound
-    /// pulled up to match, which is what a 23.976 source at 24 fps gets.
+    /// pulled up to match, which is what an N*1000/1001 source at N fps gets.
     pub conforms_with_pull_up: bool,
     pub stereo_3d: bool,
     pub video_bit_rate_mbps: u32,
@@ -273,10 +273,11 @@ fn source_rate_hint(facts: &HintFacts) -> Option<Hint> {
 }
 
 fn pull_up_hint(facts: &HintFacts) -> Option<Hint> {
-    facts.conforms_with_pull_up.then(|| Hint {
+    let source_fps = facts.source_fps.filter(|_| facts.conforms_with_pull_up)?;
+    Some(Hint {
         text: format!(
-            "The 23.976 source will play at {} fps, 0.1% faster, and the sound is pulled up by \
-             the same amount to stay in sync. No frame is duplicated or dropped.",
+            "The {source_fps:.3} fps source will play at {} fps, 0.1% faster, and the sound is \
+             pulled up by the same amount to stay in sync. No frame is duplicated or dropped.",
             facts.fps
         ),
     })
@@ -818,6 +819,21 @@ mod tests {
             texts(&pulled_up)
         );
         assert!(mentions(&pulled_up, "pulled up"));
+        assert!(mentions(
+            &pulled_up,
+            "The 23.976 fps source will play at 24 fps"
+        ));
+
+        let ntsc_video = HintFacts {
+            fps: 30,
+            source_fps: Some(30000.0 / 1001.0),
+            ..pulled_up.clone()
+        };
+        assert!(
+            mentions(&ntsc_video, "The 29.970 fps source will play at 30 fps"),
+            "{:?}",
+            texts(&ntsc_video)
+        );
 
         let matched = HintFacts {
             conforms_with_pull_up: false,
