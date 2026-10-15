@@ -35,6 +35,8 @@ esac
 
 export PKG_CONFIG_PATH="$FFMPEG_MPV_DIR/lib/pkgconfig:$GROK_LIBRARY_DIRECTORY/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export DYLD_LIBRARY_PATH="$FFMPEG_MPV_DIR/lib:$GROK_LIBRARY_DIRECTORY${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+# without it ffmpeg-sys-next can link the system FFmpeg
+export FFMPEG_DIR="$FFMPEG_MPV_DIR"
 
 cargo build --release -p dcpwizard-cli --manifest-path "$ROOT/rust/Cargo.toml"
 "$ROOT/scripts/setup-tauri-bin.sh"

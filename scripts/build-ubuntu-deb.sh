@@ -87,6 +87,8 @@ fi
 # these win over the host grok paths in the committed cargo [env] config
 export PKG_CONFIG_PATH="$FFMPEG_MPV_DIR/lib/pkgconfig:$GROK_LIBRARY_DIRECTORY/pkgconfig"
 export LD_LIBRARY_PATH="$FFMPEG_MPV_DIR/lib:$GROK_LIBRARY_DIRECTORY"
+# without it ffmpeg-sys-next can link the system FFmpeg
+export FFMPEG_DIR="$FFMPEG_MPV_DIR"
 
 cd /wizard
 cargo build --release -p dcpwizard-cli --manifest-path rust/Cargo.toml
