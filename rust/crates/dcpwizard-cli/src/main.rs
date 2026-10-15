@@ -5,6 +5,7 @@ use dcpwizard_core::dcp::{NO_CONTAINER, resolve_container};
 use dcpwizard_core::job_log;
 
 mod preset_arguments;
+mod vendor_credentials;
 mod verify_progress;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -3923,18 +3924,22 @@ fn run_cert_fetch(
     password_file: Option<PathBuf>,
     output: String,
 ) -> i32 {
-    let v = match dcpwizard_core::cert_fetch::parse_vendor(&vendor) {
+    use postkit::kdm_distribution::certificate_fetch::{
+        CertificateRequest, Vendor, VendorServers, fetch, needs_credentials, parse_vendor,
+        validate_serial,
+    };
+    let v = match parse_vendor(&vendor) {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("{e}");
             return 1;
         }
     };
-    let creds = match dcpwizard_core::cert_fetch::resolve_credentials(
+    let creds = match vendor_credentials::resolve_credentials(
         user,
         password_on_command_line,
         password_file.as_deref(),
-        std::env::var(dcpwizard_core::cert_fetch::VENDOR_PASSWORD_ENVIRONMENT_VARIABLE).ok(),
+        std::env::var(vendor_credentials::VENDOR_PASSWORD_ENVIRONMENT_VARIABLE).ok(),
     ) {
         Ok(creds) => creds,
         Err(e) => {
@@ -3942,13 +3947,30 @@ fn run_cert_fetch(
             return 1;
         }
     };
-    match dcpwizard_core::cert_fetch::fetch(
-        v,
-        &serial,
-        device_type.as_deref(),
-        creds.as_ref(),
-        &PathBuf::from(&output),
-    ) {
+    // checked here so these errors name this command's flags
+    let flag_error = if let Err(e) = validate_serial(&serial) {
+        Some(e)
+    } else if needs_credentials(v) && creds.is_none() {
+        Some(format!(
+            "this vendor needs a vendor account: pass --user with --password-file <path> or {}",
+            vendor_credentials::VENDOR_PASSWORD_ENVIRONMENT_VARIABLE
+        ))
+    } else if v == Vendor::Qube && device_type.is_none() {
+        Some("qube requires --type (the device type, e.g. QXPD)".to_string())
+    } else {
+        None
+    };
+    if let Some(e) = flag_error {
+        tracing::error!("{e}");
+        return 1;
+    }
+    let request = CertificateRequest {
+        vendor: v,
+        serial: &serial,
+        qube_type: device_type.as_deref(),
+        credentials: creds.as_ref(),
+    };
+    match fetch(&request, &VendorServers::default(), &PathBuf::from(&output)) {
         Ok(summary) => {
             println!("downloaded {summary} -> {output}");
             0

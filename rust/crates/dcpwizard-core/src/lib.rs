@@ -8,7 +8,6 @@ pub mod audio_fallback;
 pub mod audio_map;
 pub mod audio_route;
 pub mod burnin;
-pub mod cert_fetch;
 pub mod certificate;
 pub mod combine;
 pub mod conform;
