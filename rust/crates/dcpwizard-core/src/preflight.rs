@@ -474,7 +474,6 @@ fn check_reel_splitting(plan: &CreatePlan) -> Result<(), String> {
     check_reel_split_support(&ReelSplitContent {
         splitting: plan.reel_length_minutes > 0 || !plan.reel_split_frames.is_empty(),
         stereo_3d: plan.right_eye.is_some(),
-        atmos: plan.atmos.is_some(),
         hdr_dci: plan.hdr_dci,
         markers: !plan.markers.is_empty(),
     })
@@ -541,7 +540,6 @@ pub fn check_library_item_support(content: &LibraryItemContent) -> Result<(), St
 pub struct ReelSplitContent {
     pub splitting: bool,
     pub stereo_3d: bool,
-    pub atmos: bool,
     pub hdr_dci: bool,
     pub markers: bool,
 }
@@ -552,8 +550,8 @@ pub fn check_reel_split_support(content: &ReelSplitContent) -> Result<(), String
     if !content.splitting {
         return Ok(());
     }
-    if content.stereo_3d || content.atmos {
-        return Err("stereoscopic 3D and Atmos are not supported with reel splitting".to_string());
+    if content.stereo_3d {
+        return Err("stereoscopic 3D is not supported with reel splitting".to_string());
     }
     if content.hdr_dci {
         return Err("--hdr-dci is not supported with reel splitting".to_string());
@@ -697,13 +695,11 @@ fn check_atmos(plan: &CreatePlan) -> Result<(), String> {
         return Ok(());
     };
     check_atmos_path(atmos)?;
+    let source = crate::atmos_track::AtmosSource::open(atmos, plan.fps)?;
     let Some(picture_frames) = planned_picture_frames(plan) else {
         return Ok(());
     };
-    check_atmos_frame_count(
-        crate::mxf_wrap::collect_inputs(atmos)?.len() as u64,
-        picture_frames,
-    )
+    check_atmos_frame_count(source.frame_count(), picture_frames)
 }
 
 /// Parse every timed-text file with the reader the wrap uses, so a file the
@@ -757,8 +753,8 @@ pub fn check_atmos_frame_count(atmos_frames: u64, picture_frames: u64) -> Result
         return Ok(());
     }
     Err(format!(
-        "Atmos track is {atmos_frames} frames but the picture is {picture_frames}; \
-         pass a directory with one Atmos frame file per picture frame"
+        "Atmos track is {atmos_frames} frames but the picture is {picture_frames}. The Atmos \
+         track file or frame directory has to hold one frame per picture frame"
     ))
 }
 
@@ -1157,6 +1153,74 @@ mod tests {
 
         std::fs::write(atmos.join("atmos_2.bin"), b"frame").unwrap();
         assert_eq!(check_before_encode(&plan), Ok(()));
+    }
+
+    fn write_atmos_track_file(
+        dir: &Path,
+        frames: usize,
+        fps: u32,
+        encryption: Option<postkit::mxf_wrap::MxfEncryption>,
+    ) -> PathBuf {
+        let frame_files: Vec<PathBuf> = (0..frames)
+            .map(|frame| {
+                let path = dir.join(format!("atmos_{frame}.bin"));
+                // asdcplib aborts encrypting a frame shorter than one AES block
+                std::fs::write(&path, [0u8; 64]).unwrap();
+                path
+            })
+            .collect();
+        let track_file = dir.join(format!("atmos_{frames}_frames_at_{fps}.mxf"));
+        crate::mxf_wrap::wrap_mxf_files(
+            frame_files,
+            &track_file,
+            crate::mxf_wrap::MxfType::Atmos,
+            fps,
+            encryption,
+            None,
+            None,
+        )
+        .unwrap();
+        track_file
+    }
+
+    #[test]
+    fn an_atmos_track_file_is_measured_against_the_picture_and_can_be_split() {
+        let dir = tempfile::tempdir().unwrap();
+        let codestreams = dir.path().join("j2k");
+        write_codestreams(&codestreams, 3, 1920, 1080);
+
+        let mut plan = plan_with_picture(codestreams);
+        plan.atmos = Some(write_atmos_track_file(dir.path(), 2, 24, None));
+        let error = only_refusal(&plan);
+        assert!(error.contains("2 frames but the picture is 3"), "{error}");
+
+        plan.atmos = Some(write_atmos_track_file(dir.path(), 3, 24, None));
+        plan.reel_length_minutes = 20;
+        assert_eq!(check_before_encode(&plan), Ok(()));
+    }
+
+    #[test]
+    fn an_atmos_track_file_at_another_edit_rate_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = plan_with_picture(dir.path().join("j2k"));
+        plan.atmos = Some(write_atmos_track_file(dir.path(), 3, 25, None));
+
+        let error = only_refusal(&plan);
+        assert!(error.contains("25/1") && error.contains("24/1"), "{error}");
+    }
+
+    #[test]
+    fn an_encrypted_atmos_track_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = plan_with_picture(dir.path().join("j2k"));
+        let encryption = postkit::mxf_wrap::MxfEncryption {
+            content_key: [7; 16],
+            key_id: [9; 16],
+        };
+        plan.atmos = Some(write_atmos_track_file(dir.path(), 3, 24, Some(encryption)));
+
+        let error = only_refusal(&plan);
+        assert!(error.contains("decrypt it first"), "{error}");
     }
 
     #[test]

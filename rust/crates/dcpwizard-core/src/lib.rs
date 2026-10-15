@@ -2,6 +2,7 @@ pub mod aaf_import;
 pub mod accessibility;
 pub mod assemble;
 pub mod assetmap;
+pub(crate) mod atmos_track;
 pub mod audio_adjust;
 pub mod audio_fallback;
 pub mod audio_map;

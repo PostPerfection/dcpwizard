@@ -1091,7 +1091,7 @@ enum Commands {
         /// Right-eye video/J2K for a stereoscopic 3D DCP (main input is left eye)
         #[arg(long)]
         right_eye: Option<String>,
-        /// Dolby Atmos / DCData bitstream to wrap as a ST 429-18 auxiliary track
+        /// Dolby Atmos (IAB) track file, or a directory with one frame file per picture frame, packaged as a ST 429-18 auxiliary track
         #[arg(long)]
         atmos: Option<String>,
         /// Sound channel index (0-based) carrying the Hearing Impaired (HI) track

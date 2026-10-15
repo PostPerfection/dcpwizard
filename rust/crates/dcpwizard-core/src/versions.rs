@@ -14,9 +14,6 @@ use crate::reel::{ReelRange, WavInfo, collect_frames, plan_reel_ranges, register
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Dolby Atmos IAB bitstream data-essence UL, as used in real Atmos DCP AuxData.
-const ATMOS_DATA_TYPE_UL: &str = "urn:smpte:ul:060e2b34.04010105.0e090604.00000000";
-
 /// One language/subtitle version layered over the shared master.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +105,8 @@ struct ReelEssence {
     base_sound_uuid: Option<String>,
     base_sound_key_id: Option<String>,
     base_sound_key_info: Option<ContentKey>,
+    atmos_aux_data: Option<crate::cpl::AuxData>,
+    atmos_key_info: Option<ContentKey>,
 }
 
 /// A wrapped sound track for one reel of one version.
@@ -197,10 +196,18 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
     }
     let total_frames = frames.len() as u64;
     let ranges = plan_reel_ranges(total_frames, fps, config.reel_length_minutes);
-    if config.atmos_path.is_some() && ranges.len() > 1 {
-        tracing::error!("Atmos is not supported with reel splitting");
-        return -1;
-    }
+    let atmos_source = match config.atmos_path.as_ref() {
+        Some(path) => {
+            match crate::atmos_track::AtmosSource::open_covering(path, fps, total_frames) {
+                Ok(source) => Some(source),
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return -1;
+                }
+            }
+        }
+        None => None,
+    };
     let given_markers = if config.markers.is_empty() {
         None
     } else if ranges.len() > 1 {
@@ -269,7 +276,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
         None
     };
 
-    // ── shared essence: picture (+ base sound) per reel, wrapped once ──
+    // ── shared essence: picture (+ base sound, + atmos) per reel, wrapped once ──
     let mut essences: Vec<ReelEssence> = Vec::with_capacity(ranges.len());
     for (i, range) in ranges.iter().enumerate() {
         let reel_frames = range.frames();
@@ -333,6 +340,28 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
             }
         }
 
+        let mut atmos_aux_data = None;
+        let mut atmos_key_info = None;
+        if let Some(source) = &atmos_source {
+            let atmos = match crate::atmos_track::wrap_atmos_reel(config, source, *range, fps) {
+                Ok(atmos) => atmos,
+                Err(e) => {
+                    tracing::error!("Atmos wrap failed for reel {}: {e}", i + 1);
+                    cleanup(&temps);
+                    return -1;
+                }
+            };
+            register_asset(
+                &mut pkl_entries,
+                &mut am_entries,
+                &atmos.uuid,
+                &atmos.file_name,
+                &atmos.path,
+            );
+            atmos_aux_data = Some(atmos.aux_data);
+            atmos_key_info = atmos.key.map(|k| k.info);
+        }
+
         essences.push(ReelEssence {
             reel_frames,
             picture_uuid: picture_uuid.to_string(),
@@ -341,62 +370,9 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
             base_sound_uuid,
             base_sound_key_id,
             base_sound_key_info,
+            atmos_aux_data,
+            atmos_key_info,
         });
-    }
-
-    // ── atmos: shared aux data, single reel only (guarded above) ──
-    let mut aux_data: Option<crate::cpl::AuxData> = None;
-    let mut atmos_key_info: Option<ContentKey> = None;
-    if let Some(atmos_path) = config.atmos_path.as_ref() {
-        let atmos_uuid = uuid::Uuid::new_v4();
-        let atmos_name = format!("atmos_{atmos_uuid}.mxf");
-        let atmos_path_out = config.output_dir.join(&atmos_name);
-        let atmos_key = match mint_key(config, KeyType::Mdek, &atmos_uuid.to_string()) {
-            Ok(k) => k,
-            Err(()) => {
-                cleanup(&temps);
-                return -1;
-            }
-        };
-        let Some(track) = crate::mxf_wrap::wrap_mxf_result(&crate::mxf_wrap::MxfWrapConfig {
-            input_path: atmos_path.clone(),
-            output_mxf: atmos_path_out.clone(),
-            mxf_type: crate::mxf_wrap::MxfType::Atmos,
-            frame_rate: fps,
-            encryption: atmos_key.as_ref().map(crate::reel::mxf_enc),
-            mca_config: None,
-            asset_uuid: Some(*atmos_uuid.as_bytes()),
-        }) else {
-            tracing::error!("Failed to wrap Atmos MXF");
-            cleanup(&temps);
-            return -1;
-        };
-        if track.duration != essences[0].reel_frames {
-            tracing::error!(
-                "Atmos track is {} frames but the picture is {}",
-                track.duration,
-                essences[0].reel_frames
-            );
-            cleanup(&temps);
-            return -1;
-        }
-        register_asset(
-            &mut pkl_entries,
-            &mut am_entries,
-            &atmos_uuid.to_string(),
-            &atmos_name,
-            &atmos_path_out,
-        );
-        aux_data = Some(crate::cpl::AuxData {
-            id: atmos_uuid.to_string(),
-            edit_rate_num: fps,
-            edit_rate_den: 1,
-            duration: track.duration,
-            entry_point: 0,
-            key_id: atmos_key.as_ref().map(|k| k.info.key_id.clone()),
-            data_type: ATMOS_DATA_TYPE_UL.to_string(),
-        });
-        atmos_key_info = atmos_key.map(|k| k.info);
     }
 
     // ── per version: subtitle + optional own audio + one CPL ──
@@ -502,9 +478,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
         };
 
         let mut cpl_reels = Vec::with_capacity(ranges.len());
-        // the Atmos essence is shared by every version, so each version's KDM
-        // needs the one key it was wrapped with
-        let mut bundle_keys: Vec<ContentKey> = atmos_key_info.iter().cloned().collect();
+        let mut bundle_keys: Vec<ContentKey> = Vec::new();
         for (i, (range, ess)) in ranges.iter().zip(&essences).enumerate() {
             let reel_duration_frames = ess.reel_frames as u32;
             // sound: own audio overrides the shared base sound
@@ -628,6 +602,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
 
             for key in [
                 ess.picture_key_info.as_ref(),
+                ess.atmos_key_info.as_ref(),
                 sound_key_info.as_ref(),
                 subtitle.as_ref().and_then(|t| t.key_info.as_ref()),
                 ccap.as_ref().and_then(|t| t.key_info.as_ref()),
@@ -673,7 +648,7 @@ pub fn create_versioned_dcp(config: &DcpConfig, versions: &[VersionSpec]) -> i32
                 ccap_hash: ccap.as_ref().map(|t| t.hash.clone()),
                 ccap_key_id: ccap.as_ref().and_then(|t| t.key_id.clone()),
                 stereoscopic: false,
-                aux_data: aux_data.clone(),
+                aux_data: ess.atmos_aux_data.clone(),
                 markers: Vec::new(),
                 ..Default::default()
             });

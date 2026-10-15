@@ -63,7 +63,7 @@ pub struct DcpConfig {
     /// Right-eye J2K frames for a stereoscopic (ST 429-10) DCP; the main `j2k_dir`
     /// is the left eye. Present implies a 3D package.
     pub right_eye_dir: Option<PathBuf>,
-    /// Dolby Atmos / DCData bitstream to wrap as a ST 429-18 auxiliary track.
+    /// Dolby Atmos (IAB) track file, or a directory with one frame file per picture frame.
     pub atmos_path: Option<PathBuf>,
     /// Sound channel index carrying the Hearing Impaired (HI) accessibility track.
     pub hi_channel: Option<u32>,
@@ -222,9 +222,6 @@ pub fn resolve_container(
         .map(|(_, raster)| *raster)
         .ok_or_else(|| format!("Unknown container: {name}"))
 }
-
-/// Dolby Atmos IAB bitstream data-essence UL, as used in real Atmos DCP AuxData.
-const ATMOS_DATA_TYPE_UL: &str = "urn:smpte:ul:060e2b34.04010105.0e090604.00000000";
 
 /// Wrap a timed-text input into an MXF: SRT/styled formats are converted to
 /// DCST (cues moved onto the packaged `timing`, fonts/PNGs embedded), a supplied
@@ -579,7 +576,6 @@ pub fn create_dcp_with_progress(
         crate::preflight::check_reel_split_support(&crate::preflight::ReelSplitContent {
             splitting: true,
             stereo_3d: stereoscopic,
-            atmos: config.atmos_path.is_some(),
             hdr_dci: config.hdr_dci,
             markers: !config.markers.is_empty(),
         })?;
@@ -989,48 +985,25 @@ pub fn create_dcp_with_progress(
     }
 
     // ── Wrap Atmos / DCData auxiliary MXF (ST 429-18) ─────────────────
-    let atmos_uuid = uuid::Uuid::new_v4();
-    let atmos_mxf_name = format!("atmos_{atmos_uuid}.mxf");
-    let atmos_mxf_path = config.output_dir.join(&atmos_mxf_name);
-    let mut aux_data: Option<crate::cpl::AuxData> = None;
-    let mut atmos_key = None;
-
-    if let Some(ref atmos_path) = config.atmos_path {
-        crate::preflight::check_atmos_path(atmos_path)?;
-        atmos_key = match crate::versions::mint_key(
-            config,
-            crate::encrypt::KeyType::Mdek,
-            &atmos_uuid.to_string(),
-        ) {
-            Ok(k) => k,
-            Err(()) => return Err("minting the Atmos content key failed".into()),
-        };
-        // the synthetic id keeps CPL/PKL/ASSETMAP consistent (same pattern as
-        // picture/sound)
-        let wrap_config = crate::mxf_wrap::MxfWrapConfig {
-            input_path: atmos_path.clone(),
-            output_mxf: atmos_mxf_path.clone(),
-            mxf_type: crate::mxf_wrap::MxfType::Atmos,
-            frame_rate: fps,
-            encryption: atmos_key.as_ref().map(crate::reel::mxf_enc),
-            mca_config: None,
-            asset_uuid: Some(*atmos_uuid.as_bytes()),
-        };
-        let Some(track) = crate::mxf_wrap::wrap_mxf_result(&wrap_config) else {
-            return Err("Failed to wrap Atmos MXF".into());
-        };
-        crate::preflight::check_atmos_frame_count(track.duration, picture_duration)?;
-        aux_data = Some(crate::cpl::AuxData {
-            id: atmos_uuid.to_string(),
-            edit_rate_num: fps,
-            edit_rate_den: 1,
-            duration: track.duration,
-            entry_point: 0,
-            key_id: atmos_key.as_ref().map(|k| k.info.key_id.clone()),
-            data_type: ATMOS_DATA_TYPE_UL.to_string(),
-        });
-        tracing::info!("Atmos MXF: {atmos_mxf_name} ({} frames)", track.duration);
-    }
+    let atmos = match config.atmos_path.as_ref() {
+        Some(atmos_path) => {
+            crate::preflight::check_atmos_path(atmos_path)?;
+            let source =
+                crate::atmos_track::AtmosSource::open_covering(atmos_path, fps, picture_duration)?;
+            let whole_composition = crate::reel::ReelRange {
+                start: 0,
+                end: picture_duration,
+            };
+            Some(crate::atmos_track::wrap_atmos_reel(
+                config,
+                &source,
+                whole_composition,
+                fps,
+            )?)
+        }
+        None => None,
+    };
+    let aux_data = atmos.as_ref().map(|atmos| atmos.aux_data.clone());
 
     if progress.cancelled() {
         return Err(CANCELLED_MESSAGE.into());
@@ -1248,15 +1221,13 @@ pub fn create_dcp_with_progress(
             size: cc_size,
         });
     }
-    if aux_data.is_some() {
-        let aux_hash = crate::hash::hash_file(&atmos_mxf_path).unwrap_or_default();
-        let aux_size = std::fs::metadata(&atmos_mxf_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+    if let Some(atmos) = atmos.as_ref() {
+        let aux_hash = crate::hash::hash_file(&atmos.path).unwrap_or_default();
+        let aux_size = std::fs::metadata(&atmos.path).map(|m| m.len()).unwrap_or(0);
         pkl_entries.push(crate::pkl::PklEntry {
-            id: atmos_uuid.to_string(),
+            id: atmos.uuid.clone(),
             asset_type: "application/mxf".into(),
-            file: atmos_mxf_path.clone(),
+            file: atmos.path.clone(),
             hash: aux_hash,
             size: aux_size,
         });
@@ -1326,10 +1297,10 @@ pub fn create_dcp_with_progress(
             packing_list: false,
         });
     }
-    if aux_data.is_some() {
+    if let Some(atmos) = atmos.as_ref() {
         am_entries.push(crate::assetmap::AssetMapEntry {
-            id: atmos_uuid.to_string(),
-            path: atmos_mxf_name,
+            id: atmos.uuid.clone(),
+            path: atmos.file_name.clone(),
             packing_list: false,
         });
     }
@@ -1360,6 +1331,7 @@ pub fn create_dcp_with_progress(
             cpl_id: cpl_uuid.clone(),
             keys: Vec::new(),
         };
+        let atmos_key = atmos.and_then(|atmos| atmos.key);
         for key in [picture_key, sound_key, subtitle_key, ccap_key, atmos_key]
             .into_iter()
             .flatten()

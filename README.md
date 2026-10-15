@@ -580,12 +580,17 @@ dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
 dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
     --output ./dcp --frame-rate 24
 
-# Dolby Atmos aux track (ST 429-18). Pass a directory with one payload file per
-# picture frame. Real-essence conformance needs real Atmos material.
+# Dolby Atmos aux track (ST 429-18). Pass a cinema Atmos (IAB) track file, or a
+# directory with one payload file per picture frame. A track file must be
+# cleartext, at the DCP's edit rate and as long as the picture. With
+# --reel-length or --split-at each reel gets its own Atmos MXF holding that
+# reel's frames. Real-essence conformance needs real Atmos material.
 # DTS:X: since ST 429-18/-19 it is delivered as a standard IAB track (ST 2098-2,
 # "DTS:X for IAB"), which is this same --atmos path. There is no separate DTS:X UL.
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
     --output ./dcp --atmos ./atmos_frames
+dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
+    --output ./dcp --atmos ./atmos.mxf --reel-length 20
 
 # Closed captions (ST 429-12): an accessibility track written as a ClosedCaption
 # CPL asset, distinct from open --subtitle. Same input formats. Carried through

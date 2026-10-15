@@ -319,6 +319,19 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
         ranges.len()
     );
 
+    let atmos_source = match config.atmos_path.as_ref() {
+        Some(path) => {
+            match crate::atmos_track::AtmosSource::open_covering(path, fps, total_frames) {
+                Ok(source) => Some(source),
+                Err(e) => {
+                    tracing::error!("{e}");
+                    return -1;
+                }
+            }
+        }
+        None => None,
+    };
+
     // audio layout (sliced per reel), validated once up front
     let audio = config.audio_path.as_ref().filter(|p| p.exists());
     let wav = match audio {
@@ -639,7 +652,29 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             });
         }
 
-        for key in [picture_key, sound_key].into_iter().flatten() {
+        // ── atmos ─────────────────────────────────────────────────────
+        let mut aux_data = None;
+        let mut atmos_key = None;
+        if let Some(source) = &atmos_source {
+            let atmos = match crate::atmos_track::wrap_atmos_reel(config, source, *range, fps) {
+                Ok(atmos) => atmos,
+                Err(e) => {
+                    tracing::error!("Atmos wrap failed for reel {}: {e}", i + 1);
+                    return -1;
+                }
+            };
+            register_asset(
+                &mut pkl_entries,
+                &mut am_entries,
+                &atmos.uuid,
+                &atmos.file_name,
+                &atmos.path,
+            );
+            aux_data = Some(atmos.aux_data);
+            atmos_key = atmos.key;
+        }
+
+        for key in [picture_key, sound_key, atmos_key].into_iter().flatten() {
             key_infos.push(key.info);
         }
         for key in [sub.as_ref(), ccap.as_ref()]
@@ -685,7 +720,7 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             ccap_hash: ccap.as_ref().map(|t| t.hash.clone()),
             ccap_key_id: ccap.as_ref().and_then(|t| t.key_id.clone()),
             stereoscopic: false,
-            aux_data: None,
+            aux_data,
             markers: Vec::new(),
             ..Default::default()
         });
@@ -862,6 +897,10 @@ fn write_packaging(
         tracing::error!("Failed to generate CPL");
         return -1;
     }
+    // before the PKL takes the CPL's hash
+    if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &cpl_path, "CPL") {
+        return -1;
+    }
 
     pkl_entries.insert(
         0,
@@ -876,6 +915,9 @@ fn write_packaging(
     let pkl_path = config.output_dir.join(format!("PKL_{pkl_uuid}.xml"));
     if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, config.standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate PKL");
+        return -1;
+    }
+    if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &pkl_path, "PKL") {
         return -1;
     }
 

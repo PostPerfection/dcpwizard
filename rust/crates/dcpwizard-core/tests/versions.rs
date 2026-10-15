@@ -439,3 +439,86 @@ fn per_version_audio_overrides_base_sound() {
     let result = dcpwizard_core::verify::verify_dcp(&out);
     assert!(result.valid, "dcpdoctor errors: {:?}", result.errors);
 }
+
+fn reel_aux_ids_and_durations(cpl: &Path) -> Vec<(String, u64, u64)> {
+    let xml = std::fs::read_to_string(cpl).unwrap();
+    xml.split("<Reel>")
+        .skip(1)
+        .map(|reel| {
+            let picture = tag(reel, "MainPicture").expect("reel has a picture");
+            let aux = tag(reel, "axd:AuxData").expect("reel has an AuxData");
+            (
+                tag(&aux, "Id").unwrap().replace("urn:uuid:", ""),
+                tag(&aux, "Duration").unwrap().parse().unwrap(),
+                tag(&picture, "Duration").unwrap().parse().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn multi_reel_versions_give_each_reel_its_own_atmos_track() {
+    let root = tempfile::tempdir().unwrap();
+    let j2k = root.path().join("j2k");
+    // 1 minute = 1440 frames per reel, 1470 forces two reels
+    let frames = 1470;
+    make_content_frames(&j2k, frames);
+    let atmos_frames = root.path().join("atmos_frames");
+    std::fs::create_dir_all(&atmos_frames).unwrap();
+    let frame_files: Vec<PathBuf> = (0..frames)
+        .map(|frame| {
+            let path = atmos_frames.join(format!("atmos_{frame:05}.bin"));
+            std::fs::write(&path, (frame as u32).to_le_bytes()).unwrap();
+            path
+        })
+        .collect();
+    let atmos = root.path().join("atmos.mxf");
+    dcpwizard_core::mxf_wrap::wrap_mxf_files(
+        frame_files,
+        &atmos,
+        dcpwizard_core::mxf_wrap::MxfType::Atmos,
+        FPS,
+        None,
+        None,
+        None,
+    )
+    .expect("wrap the source Atmos track file");
+
+    let out = root.path().join("pkg");
+    let mut config = base_config(&out, j2k, None);
+    config.reel_length_minutes = 1;
+    config.atmos_path = Some(atmos);
+    let versions = vec![
+        version("English", None, None),
+        version("French", None, None),
+    ];
+    assert_eq!(create_versioned_dcp(&config, &versions), 0);
+
+    let cpls = list_cpls(&out);
+    assert_eq!(cpls.len(), 2);
+    let first = reel_aux_ids_and_durations(&cpls[0]);
+    assert_eq!(
+        first,
+        reel_aux_ids_and_durations(&cpls[1]),
+        "versions share the Atmos tracks"
+    );
+    assert_eq!(first.len(), 2, "two reels");
+    assert_ne!(first[0].0, first[1].0, "each reel has its own Atmos track");
+    let mut next_frame = 0u32;
+    for (aux_id, aux_duration, picture_duration) in &first {
+        assert_eq!(aux_duration, picture_duration);
+        let mut reader = asdcplib::atmos::MxfReader::new();
+        reader
+            .open_read(&out.join(format!("atmos_{aux_id}.mxf")).to_string_lossy())
+            .unwrap();
+        let descriptor = reader.atmos_descriptor().unwrap();
+        assert_eq!(u64::from(descriptor.container_duration), *picture_duration);
+        let mut buffer = [0u8; 16];
+        for frame in 0..descriptor.container_duration {
+            let length = reader.read_frame(frame, &mut buffer, None, None).unwrap();
+            assert_eq!(buffer[..length], next_frame.to_le_bytes());
+            next_frame += 1;
+        }
+    }
+    assert_eq!(next_frame as usize, frames);
+}
