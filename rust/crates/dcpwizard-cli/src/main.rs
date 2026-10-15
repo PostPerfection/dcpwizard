@@ -8101,7 +8101,7 @@ fn run() {
                         }
                         0
                     }
-                    Err(()) => 1,
+                    Err(dcpwizard_core::vf::VfNotCreated) => 1,
                 }
             }
         }

@@ -338,24 +338,31 @@ fn write_keys_file(path: &Path, bundle: &crate::encrypt::KeyBundle) -> Result<()
     Ok(())
 }
 
+// the reason is logged where the build stops
+#[derive(Debug)]
+pub struct VfNotCreated;
+
 pub fn create_vf(config: &VfConfig) -> i32 {
     match create_vf_with_keys(config, &VfKeyOptions::default()) {
         Ok(_) => 0,
-        Err(()) => -1,
+        Err(VfNotCreated) => -1,
     }
 }
 
 // Ok holds the OV KeyIds the VF CPL references that the written keys file has no key for
-pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec<String>, ()> {
+pub fn create_vf_with_keys(
+    config: &VfConfig,
+    keys: &VfKeyOptions,
+) -> Result<Vec<String>, VfNotCreated> {
     if !config.ov_dir.exists() {
         tracing::error!("OV directory not found: {}", config.ov_dir.display());
-        return Err(());
+        return Err(VfNotCreated);
     }
     let vf_dir = match new_vf_package_dir(config) {
         Ok(vf_dir) => vf_dir,
         Err(e) => {
             tracing::error!("{e}");
-            return Err(());
+            return Err(VfNotCreated);
         }
     };
 
@@ -363,13 +370,13 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
     let ov_cpls = crate::multi_cpl::list_cpls(&config.ov_dir);
     let Some(ov_cpl) = ov_cpls.first() else {
         tracing::error!("No CPL found in OV directory");
-        return Err(());
+        return Err(VfNotCreated);
     };
     let ov_cpl_path = config.ov_dir.join(&ov_cpl.file_path);
     let ov_timeline = crate::multi_cpl::get_timeline(&ov_cpl_path);
     if ov_timeline.is_empty() {
         tracing::error!("OV CPL has no reels");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     // Fail loud if a replacement targets a reel the OV doesn't have.
@@ -379,7 +386,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                 "replacement targets reel {} which the OV does not have",
                 rep.reel_number
             );
-            return Err(());
+            return Err(VfNotCreated);
         }
     }
 
@@ -388,7 +395,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
         r.picture.is_some() || r.sound.is_some() || r.subtitle.is_some() || r.ccap.is_some()
     }) {
         tracing::error!("no replacement essence supplied; nothing to replace");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     let ov_cpl_content = std::fs::read_to_string(&ov_cpl_path).unwrap_or_default();
@@ -396,14 +403,14 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
         Ok(key_ids) => key_ids,
         Err(e) => {
             tracing::error!("{e}");
-            return Err(());
+            return Err(VfNotCreated);
         }
     };
     let ov_identity = match crate::assemble::composition_identity(&ov_cpl_content) {
         Ok(identity) => identity,
         Err(e) => {
             tracing::error!("cannot read the OV CPL: {e}");
-            return Err(());
+            return Err(VfNotCreated);
         }
     };
 
@@ -469,27 +476,27 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
             "the OV assets this VF references are not encrypted, so there are no keys to write \
              or read: drop --key-out, --ov-keys and --ov-kdm"
         );
-        return Err(());
+        return Err(VfNotCreated);
     }
     if encrypted && config.signer.is_none() {
         tracing::error!(
             "{}: the VF references encrypted OV assets",
             crate::preflight::ENCRYPTED_PACKAGE_NEEDS_SIGNER
         );
-        return Err(());
+        return Err(VfNotCreated);
     }
     if encrypted && keys.key_out.is_none() {
         tracing::error!(
             "--key-out is required when the OV is encrypted; keys are never written next to the DCP"
         );
-        return Err(());
+        return Err(VfNotCreated);
     }
     let ov_content_keys = match keys.ov_keys.as_ref() {
         Some(source) => match ov_keys_for_references(source, &ov_cpl.id, &encrypted_references) {
             Ok(content_keys) => content_keys,
             Err(e) => {
                 tracing::error!("{e}");
-                return Err(());
+                return Err(VfNotCreated);
             }
         },
         None => Vec::new(),
@@ -513,7 +520,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
         && let Err(e) = signer.check_usable()
     {
         tracing::error!("unusable signer: {e}");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     let sub_lang = if config.subtitle_language.is_empty() {
@@ -524,7 +531,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
 
     if let Err(e) = std::fs::create_dir_all(&vf_dir) {
         tracing::error!("Failed to create VF directory: {e}");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     let standard = if ov_cpl_content.contains("digicine.com") {
@@ -563,10 +570,10 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                         new_key_type(crate::encrypt::KeyType::Mdik),
                         &vf_dir,
                     ) else {
-                        return Err(());
+                        return Err(VfNotCreated);
                     };
                     if !replacement_fits_reel(entry, "picture", input, &a) {
-                        return Err(());
+                        return Err(VfNotCreated);
                     }
                     let out = (a.id.clone(), a.duration, a.key_id());
                     new_assets.push(a);
@@ -591,10 +598,10 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                     new_key_type(crate::encrypt::KeyType::Mdak),
                     &vf_dir,
                 ) else {
-                    return Err(());
+                    return Err(VfNotCreated);
                 };
                 if !replacement_fits_reel(entry, "sound", input, &a) {
-                    return Err(());
+                    return Err(VfNotCreated);
                 }
                 sound_replaced = true;
                 let out = Some((a.id.clone(), a.duration, a.key_id()));
@@ -640,7 +647,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                     new_key_type(crate::encrypt::KeyType::Mdsk),
                     &vf_dir,
                 ) else {
-                    return Err(());
+                    return Err(VfNotCreated);
                 };
                 let out = Some(a.timed_text_track(sub_lang));
                 new_assets.push(a);
@@ -662,7 +669,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                     new_key_type(crate::encrypt::KeyType::Mdsk),
                     &vf_dir,
                 ) else {
-                    return Err(());
+                    return Err(VfNotCreated);
                 };
                 let out = Some(a.timed_text_track(sub_lang));
                 new_assets.push(a);
@@ -744,7 +751,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
                 Ok(sound) => Some(sound),
                 Err(e) => {
                     tracing::error!("{e}");
-                    return Err(());
+                    return Err(VfNotCreated);
                 }
             }
         }
@@ -774,11 +781,11 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
         tracing::error!("Failed to generate VF CPL");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &cpl_path, "VF CPL") {
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     // ── PKL: the CPL plus every new MXF ────────────────────────────────────
@@ -804,10 +811,10 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
     let pkl_path = vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
     if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate VF PKL");
-        return Err(());
+        return Err(VfNotCreated);
     }
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &pkl_path, "VF PKL") {
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     // ── ASSETMAP: PKL, CPL, and every new MXF ──────────────────────────────
@@ -832,7 +839,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
     }
     if crate::assetmap::generate_assetmap(&am_entries, &vf_dir, standard, None) != 0 {
         tracing::error!("Failed to generate VF ASSETMAP");
-        return Err(());
+        return Err(VfNotCreated);
     }
 
     if let Some(keys_path) = keys.key_out.as_ref().filter(|_| encrypted) {
@@ -846,7 +853,7 @@ pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec
         };
         if let Err(e) = write_keys_file(keys_path, &bundle) {
             tracing::error!("{e}");
-            return Err(());
+            return Err(VfNotCreated);
         }
     }
 
