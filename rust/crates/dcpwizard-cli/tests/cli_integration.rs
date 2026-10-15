@@ -532,6 +532,45 @@ fn create_signer_cert_requires_a_key() {
 }
 
 #[test]
+fn certificate_inspect_lists_every_certificate_in_the_file() {
+    let dir = TempDir::new().unwrap();
+    let certs = dir.path().join("certs");
+    std::fs::create_dir_all(&certs).unwrap();
+    assert_eq!(postkit::certificate::generate_chain("Acme", &certs), 0);
+    let chain = dir.path().join("chain.pem");
+    let pem: String = ["root.pem", "signer.pem", "intermediate.pem"]
+        .iter()
+        .map(|name| std::fs::read_to_string(certs.join(name)).unwrap())
+        .collect();
+    std::fs::write(&chain, pem).unwrap();
+
+    let output = cmd()
+        .args(["certificate", "inspect", chain.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let subjects: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("  Subject: "))
+        .collect();
+    assert_eq!(subjects.len(), 3, "{text}");
+    assert!(
+        subjects[0].ends_with(",CN=CS.Acme.smpte-430-2.LEAF"),
+        "{text}"
+    );
+    assert!(
+        subjects[2].ends_with(",CN=.Acme.smpte-430-2.ROOT"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Order: leaf first\nChain check: passed\n"),
+        "{text}"
+    );
+}
+
+#[test]
 fn create_rejects_a_key_that_does_not_match_the_certificate() {
     let dir = TempDir::new().unwrap();
     let certs = dir.path().join("certs");

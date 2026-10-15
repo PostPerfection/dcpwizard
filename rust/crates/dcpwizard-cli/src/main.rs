@@ -7423,17 +7423,16 @@ fn run() {
                 dcpwizard_core::certificate::generate_certificate(&opts)
             }
             CertAction::Inspect { cert_file } => {
-                let info = dcpwizard_core::certificate::read_certificate(Path::new(&cert_file));
-                println!("Subject CN:  {}", info.subject_cn);
-                println!("Issuer CN:   {}", info.issuer_cn);
-                println!("Serial:      {}", info.serial);
-                println!("Not Before:  {}", info.not_before);
-                println!("Not After:   {}", info.not_after);
-                println!("Key Size:    {} bits", info.key_bits);
-                println!("Is CA:       {}", info.is_ca);
-                println!("Expired:     {}", info.is_expired);
-                println!("Thumbprint:  {}", info.thumbprint);
-                0
+                match dcpwizard_core::certificate::inspect_certificate_file(Path::new(&cert_file)) {
+                    Ok(inspection) => {
+                        print!("{inspection}");
+                        0
+                    }
+                    Err(e) => {
+                        tracing::error!("{e}");
+                        1
+                    }
+                }
             }
         },
 

@@ -11,6 +11,7 @@
 
 ### Changed
 - **A KDM is used only when its signature checks out**: `decrypt --kdm`, `create-vf --ov-kdm`, `kdm-rewrap`, and every other path that decrypts a KDM's keys verify the KDM's XML signature first and refuse a KDM with no signature or one edited after signing. The signature is checked against the certificate the KDM carries.
+- **`certificate inspect` shows the whole file**: every certificate in a PEM file is listed leaf first with its full subject and issuer, key usage, roles and thumbprint, followed by the chain check. A file that is not a certificate, or that holds a private key, now fails with exit code 1.
 
 ## [1.9.0] - 2026-10-15
 

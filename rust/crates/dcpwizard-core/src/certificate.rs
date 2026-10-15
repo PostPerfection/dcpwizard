@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub use postkit::certificate::{CertInfo, CertOptions, CertType, TrustedDevice};
+pub use postkit::certificate::{CertOptions, CertType, ChainInspection, TrustedDevice};
 
 /// Generate a single X.509 certificate.
 pub fn generate_certificate(opts: &CertOptions) -> i32 {
@@ -12,9 +12,10 @@ pub fn generate_chain(organization: &str, output_dir: &Path) -> i32 {
     postkit::certificate::generate_chain(organization, output_dir)
 }
 
-/// Read and display certificate info from a PEM file.
-pub fn read_certificate(cert_path: &Path) -> CertInfo {
-    postkit::certificate::read_certificate(cert_path)
+pub fn inspect_certificate_file(path: &Path) -> Result<ChainInspection, String> {
+    let pem = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    postkit::certificate::inspect_certificate_pem(&pem, chrono::Utc::now())
 }
 
 const NO_RECIPIENT_CERTIFICATE: &str = "no recipient certificate is configured";
