@@ -1,4 +1,4 @@
-import { pulledUpRate } from "./pulled-up-rate.js";
+import { pulledUpRate } from "./source-rate.js";
 
 export const COLOUR_NOT_DECLARED = "colour space not declared";
 

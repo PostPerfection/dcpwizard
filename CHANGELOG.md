@@ -8,6 +8,8 @@
 
 ### Fixed
 - **A DCP split into reels is signed**: with `--reel-length` and `--signer-cert`, the CPL and PKL were written unsigned, so an encrypted split DCP failed dcpdoctor's `dcp_not_signed` rule. The CPL is now signed before the PKL hashes it, as for a single reel.
+- **Frame Rate's Auto (from source) uses the source's rate**: the GUI packaged every source on Auto at 24 fps, so a 25, 29.97 or 60 fps source was retimed. Auto now resolves the way `create` does with no `--frame-rate`: 25 stays 25, 29.97 becomes 30 with the 1000/1001 conform, 60 stays 60. The ISDCF name preview, Set from player and the reel timeline read the same rate
+- **The 1000/1001 pull-up keeps the sound's own speed at any sample rate**: it assumed 48 kHz input, so a 96 kHz track came out at half speed and a 44.1 kHz channel set 9% fast. A 48 or 96 kHz track keeps its rate, any other rate is pulled up at 48 kHz
 - **A VF keeps what its OV has**: create-vf dropped the OV's Atmos track, the subtitles and closed captions on reels it did not replace, its ratings and its markers, writing the default FFOC and LFOC instead. The VF now references the OV's Atmos, subtitle and closed caption tracks and carries the OV's markers and RatingList unchanged, and the sign-language video tag when the VF keeps the OV's sound on every reel.
 
 ### Changed

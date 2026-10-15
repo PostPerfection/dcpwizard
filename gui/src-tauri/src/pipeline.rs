@@ -12,16 +12,9 @@ const DEFAULT_BANDWIDTH_MBPS: u32 = 230;
 
 /// Panel frame rate keys and the CPL edit rate numerator each stands for. Every
 /// rate the panel offers is integer, so the denominator is always 1.
-const FRAME_RATES: [(&str, u32); 6] = [
-    ("24", 24),
-    ("25", 25),
-    ("30", 30),
-    ("48", 48),
-    ("50", 50),
-    ("60", 60),
-];
 const FRAME_RATE_DENOMINATOR: u32 = 1;
-const DEFAULT_FRAME_RATE: (&str, u32) = FRAME_RATES[0];
+const DEFAULT_FRAME_RATE: (&str, u32) = ("24", 24);
+const AUTO_FRAME_RATE: &str = "auto";
 
 const DEFAULT_STANDARD: &str = "smpte";
 const DEFAULT_RESOLUTION: &str = "auto";
@@ -100,6 +93,7 @@ pub struct IsdcfNameRequest {
     pub naming: NamingMetadata,
     pub source_width: Option<u32>,
     pub source_height: Option<u32>,
+    pub source_fps: Option<String>,
     pub crop_left: Option<u32>,
     pub crop_right: Option<u32>,
     pub crop_top: Option<u32>,
@@ -251,8 +245,17 @@ fn isdcf_naming_facts(
     };
     let (container_width, container_height) =
         picture_raster.unwrap_or_else(|| container_of(resolution));
-    let (frame_rate_num, frame_rate_den) =
-        frame_rate_of(request.framerate.as_deref().unwrap_or(DEFAULT_FRAME_RATE.0));
+    let framerate = framerate_from_source(
+        request
+            .framerate
+            .clone()
+            .unwrap_or_else(|| DEFAULT_FRAME_RATE.0.into()),
+        request
+            .source_fps
+            .as_deref()
+            .and_then(postkit::timecode::parse_frame_rate),
+    );
+    let (frame_rate_num, frame_rate_den) = frame_rate_of(&framerate);
     let some_path = |value: &Option<String>| {
         value
             .as_deref()
@@ -865,7 +868,13 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
     let tail_items =
         dcpwizard_core::library_reel::attach_by_name(&library, &tail_items.unwrap_or_default())?;
 
-    let framerate = framerate.unwrap_or_else(|| DEFAULT_FRAME_RATE.0.into());
+    let video = PathBuf::from(&video_path);
+    let still_input = postkit::still::is_still_image(&video);
+    let source = probe_job_source(&video, still_input);
+    let framerate = framerate_from_source(
+        framerate.unwrap_or_else(|| DEFAULT_FRAME_RATE.0.into()),
+        source.as_ref().map(|info| (info.fps_num, info.fps_den)),
+    );
     let naming = naming.unwrap_or_default();
     let facility = facility.filter(|code| !code.is_empty());
     let composition_metadata = composition_metadata_of(&composition_metadata.unwrap_or_default())?;
@@ -912,8 +921,6 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
     let trim_end_frames = duration_frames(trim_end.as_deref(), "Trim end")?;
     let still_length_frames = duration_frames(still_length.as_deref(), "Still length")?;
 
-    let video = PathBuf::from(&video_path);
-    let still_input = postkit::still::is_still_image(&video);
     if still_input && still_length_frames == 0 {
         return Err("The video is a single image and has no length: set a still length".into());
     }
@@ -1238,7 +1245,7 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         facility,
         naming,
         composition_metadata,
-        source: probe_job_source(&video, still_input),
+        source,
         hints: Vec::new(),
         head_items,
         tail_items,
@@ -2492,12 +2499,20 @@ fn resolve_reel_splits(job: &JobConfig, fps: u32) -> Result<Vec<u64>, String> {
 
 // Frame rate drives both the J2K encode (video demux rate) and the CPL.
 fn frame_rate_of(framerate: &str) -> (u32, u32) {
-    let numerator = FRAME_RATES
-        .iter()
-        .find(|(key, _)| *key == framerate)
-        .map(|(_, rate)| *rate)
-        .unwrap_or(DEFAULT_FRAME_RATE.1);
+    let numerator = framerate.parse().unwrap_or(DEFAULT_FRAME_RATE.1);
     (numerator, FRAME_RATE_DENOMINATOR)
+}
+
+// Auto packages at the DCP rate the source's own rate maps to, as create does
+fn framerate_from_source(framerate: String, source_rate: Option<(u32, u32)>) -> String {
+    match source_rate {
+        Some((fps_num, fps_den)) if framerate == AUTO_FRAME_RATE => {
+            dcpwizard_core::hfr::source_rate_to_dcp(fps_num, fps_den)
+                .0
+                .to_string()
+        }
+        _ => framerate,
+    }
 }
 
 fn count_frames(j2k_dir: &std::path::Path) -> u64 {
@@ -4169,6 +4184,71 @@ mod tests {
             String::from_utf8_lossy(&made.stderr)
         );
         path
+    }
+
+    fn clip_at_rate(dir: &Path, rate: &str) -> PathBuf {
+        let path = dir.join(format!("source-{}.mp4", rate.replace('/', "-")));
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+            .arg(format!("testsrc=size=320x240:rate={rate}"))
+            .args(["-frames:v", "6"])
+            .arg(&path)
+            .output()
+            .expect("ffmpeg has to run");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        path
+    }
+
+    #[test]
+    fn an_auto_frame_rate_packages_at_the_rate_the_source_maps_to() {
+        let dir = tempfile::tempdir().unwrap();
+        for (source_rate, packaged_rate) in [("25", "25"), ("30000/1001", "30"), ("60", "60")] {
+            let job = job_config_of(
+                1,
+                SubmitRequest {
+                    video_path: clip_at_rate(dir.path(), source_rate)
+                        .to_string_lossy()
+                        .into_owned(),
+                    framerate: Some(AUTO_FRAME_RATE.into()),
+                    ..SubmitRequest::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(job.framerate, packaged_rate, "{source_rate} fps source");
+        }
+
+        let chosen = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: clip_at_rate(dir.path(), "30000/1001")
+                    .to_string_lossy()
+                    .into_owned(),
+                framerate: Some("24".into()),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(chosen.framerate, "24", "a chosen rate is kept");
+    }
+
+    #[test]
+    fn the_auto_name_preview_carries_the_rate_the_source_maps_to() {
+        let request = IsdcfNameRequest {
+            title: "My Film".into(),
+            framerate: Some(AUTO_FRAME_RATE.into()),
+            source_fps: Some("60000/1001".into()),
+            naming: NamingMetadata {
+                isdcf_naming: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let name = isdcf_name_for(&request).unwrap();
+        assert!(name.contains("-60_"), "{name}");
     }
 
     #[test]

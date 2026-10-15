@@ -9,6 +9,7 @@ import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE 
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
 import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
+import { editRateOf } from "./source-rate.js";
 import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js";
 import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls-panel.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
@@ -578,6 +579,7 @@ function importAssetFromPath(path, type) {
       asset.meta = `${info.width}×${info.height} ${info.fps}`;
       asset.width = info.width;
       asset.height = info.height;
+      asset.fps = info.fps;
       if (project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(info);
       refreshIsdcfPreview();
       renderAssets();
@@ -1302,12 +1304,12 @@ async function compositionTimecodeAtPlayer() {
   const blocker = markerFromPlayerBlocker();
   if (blocker) throw new Error(blocker);
   const picturePath = project.reels[0].picture.path;
-  const editRate = parseInt(document.getElementById("prop-framerate")?.value) || DEFAULT_FRAMERATE;
   const [positionSeconds, durationSeconds, source] = await Promise.all([
     invoke("preview_get_position"),
     invoke("preview_get_duration"),
     probeVideo(picturePath),
   ]);
+  const editRate = editRateOf(document.getElementById("prop-framerate")?.value, source?.fps, DEFAULT_FRAMERATE);
   const frame = compositionFrameAt({
     positionSeconds,
     durationSeconds,
@@ -1469,6 +1471,7 @@ function isdcfNameRequest() {
     naming: namingMetadata(),
     sourceWidth: reel?.picture?.width || null,
     sourceHeight: reel?.picture?.height || null,
+    sourceFps: reel?.picture?.fps || null,
     cropLeft: parseInt(document.getElementById("prop-crop-left")?.value) || 0,
     cropRight: parseInt(document.getElementById("prop-crop-right")?.value) || 0,
     cropTop: parseInt(document.getElementById("prop-crop-top")?.value) || 0,
@@ -3528,9 +3531,9 @@ function takeProjectDefaultsFromPreferences() {
 
 async function showProjectTimeline() {
   if (openedPackage) return;
-  const editRate = parseInt(document.getElementById("prop-framerate")?.value) || DEFAULT_FRAMERATE;
   const reels = [...project.reels];
   const sources = await Promise.all(reels.map((reel) => (reel.picture ? probeVideo(reel.picture.path) : null)));
+  const editRate = editRateOf(document.getElementById("prop-framerate")?.value, sources[0]?.fps, DEFAULT_FRAMERATE);
   const durationsFrames = sources.map((source) => Math.round((source?.duration || 0) * editRate));
   loadTimelineFromProject(reels, durationsFrames, editRate);
 }

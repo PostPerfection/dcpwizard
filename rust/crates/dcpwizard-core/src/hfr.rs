@@ -90,15 +90,25 @@ pub fn conform_source_to_dcp(fps_num: u32, fps_den: u32, dcp_fps: u32) -> Source
 }
 
 /// Speed the sound up by 1000/1001 to match an N*1000/1001 picture packaged at N fps:
-/// reinterpret the samples at 48048 Hz, then resample back to the 48 kHz a DCP
-/// sound track carries.
+/// reinterpret the samples at 1001/1000 of the packaged rate, then resample back
+/// to it. A 48 or 96 kHz input keeps its rate, any other rate is packaged at 48 kHz.
 pub fn audio_pull_up(input: &std::path::Path, output: &std::path::Path) -> Result<(), String> {
+    let input_rate = crate::mxf_wrap::wav_sample_rate(input)?;
+    // 44.1 kHz times 1001/1000 is no whole sample rate
+    let packaged_rate = if crate::mxf_wrap::DCP_SAMPLE_RATES.contains(&input_rate) {
+        input_rate
+    } else {
+        crate::mxf_wrap::DCP_SAMPLE_RATES[0]
+    };
+    let pulled_up_rate = packaged_rate / NTSC_RATE_NUMERATOR_SCALE * NTSC_RATE_DENOMINATOR;
     let result = std::process::Command::new("ffmpeg")
         .arg("-y")
         .arg("-i")
         .arg(input)
         .arg("-af")
-        .arg("asetrate=48048,aresample=48000")
+        .arg(format!(
+            "aresample={packaged_rate},asetrate={pulled_up_rate},aresample={packaged_rate}"
+        ))
         // the wrap wants the same PCM it would have had, only faster
         .args(["-c:a", "pcm_s24le", "-rf64", "auto"])
         .arg(output)

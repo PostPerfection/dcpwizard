@@ -1,4 +1,4 @@
-import { pulledUpRate } from "./pulled-up-rate.js";
+import { pulledUpRate } from "./source-rate.js";
 
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;

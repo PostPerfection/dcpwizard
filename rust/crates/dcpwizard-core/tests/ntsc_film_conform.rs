@@ -43,7 +43,7 @@ fn make_ntsc_clip(path: &Path, fps_num: u32, frames: u32) {
     );
 }
 
-fn make_sine(path: &Path, samples: u64) {
+fn make_sine(path: &Path, sample_rate: u64, samples: u64) {
     let ok = std::process::Command::new("ffmpeg")
         .args([
             "-y",
@@ -52,7 +52,7 @@ fn make_sine(path: &Path, samples: u64) {
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:sample_rate=48000",
+            &format!("sine=frequency=440:sample_rate={sample_rate}"),
             "-af",
             &format!("atrim=end_sample={samples}"),
             "-ac",
@@ -117,7 +117,7 @@ fn package_ntsc_source(fps_num: u32, dcp_fps: u32, source_frames: u32) {
         u64::from(source_frames) * u64::from(NTSC_RATE_DENOMINATOR) * AUDIO_SAMPLE_RATE
             / u64::from(fps_num);
     make_ntsc_clip(&clip, fps_num, source_frames);
-    make_sine(&sine, source_samples);
+    make_sine(&sine, AUDIO_SAMPLE_RATE, source_samples);
 
     let probed = dcpwizard_core::probe::probe_video(&clip).expect("probe the source");
     assert_eq!(
@@ -233,4 +233,38 @@ fn a_29_97_source_packages_every_frame_of_picture_and_sound_at_30_fps() {
 #[test]
 fn a_59_94_source_packages_every_frame_of_picture_and_sound_at_60_fps() {
     package_ntsc_source(60_000, 60, 120);
+}
+
+fn pulled_up_rate_and_samples(sample_rate: u64, samples: u64) -> (u32, u64) {
+    let dir = tempfile::tempdir().unwrap();
+    let sine = dir.path().join("sound.wav");
+    let pulled_up = dir.path().join("pullup.wav");
+    make_sine(&sine, sample_rate, samples);
+    dcpwizard_core::hfr::audio_pull_up(&sine, &pulled_up).expect("pull the sound up");
+    (
+        dcpwizard_core::mxf_wrap::wav_sample_rate(&pulled_up).expect("a WAV"),
+        wav_sample_count(&pulled_up),
+    )
+}
+
+const PULL_UP_TEST_SECONDS: u64 = 2;
+
+fn assert_pulled_up(input_rate: u64, packaged_rate: u64) {
+    let (rate, samples) = pulled_up_rate_and_samples(input_rate, PULL_UP_TEST_SECONDS * input_rate);
+    assert_eq!(u64::from(rate), packaged_rate);
+    let expected = PULL_UP_TEST_SECONDS * packaged_rate * 1_000 / u64::from(NTSC_RATE_DENOMINATOR);
+    assert!(
+        samples.abs_diff(expected) <= PULL_UP_SAMPLE_TOLERANCE,
+        "{samples} samples against {expected}"
+    );
+}
+
+#[test]
+fn a_44_1_khz_sound_is_pulled_up_at_48_khz() {
+    assert_pulled_up(44_100, 48_000);
+}
+
+#[test]
+fn a_96_khz_sound_keeps_its_rate_when_pulled_up() {
+    assert_pulled_up(96_000, 96_000);
 }
