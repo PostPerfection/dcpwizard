@@ -1857,6 +1857,7 @@ let selectedPreview = null;
 
 // what the preview panel holds
 let previewShownPath = null;
+let previewPlaybackEnded = false;
 // the last package the preview loaded, from Recent, the playlist or Open DCP
 let previewedPackage = null;
 // the package directory named like the open project file, when it exists
@@ -3226,7 +3227,7 @@ setInterval(refreshFinishedBuild, FINISHED_BUILD_CHECK_MILLISECONDS);
 function updateToolbarState() {
   updateBuildButton();
   const previewBtn = document.getElementById("btn-preview");
-  if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath);
+  if (previewBtn) previewBtn.disabled = !previewButtonEnabled(previewTarget(previewTargetInput()), previewShownPath, previewPlaybackEnded);
   refreshMarkerFromPlayerButtons();
 }
 
@@ -3567,7 +3568,7 @@ refreshLibrary();
 updateStatusStats();
 initPreview();
 preferencesLoaded.then(() => initPlayerControlsPanel({ preferences: getPrefs(), save: (controls) => savePrefs({ ...getPrefs(), ...controls }) }));
-watchPreviewShown(path => { previewShownPath = path; updateToolbarState(); });
+watchPreviewShown((path, ended) => { previewShownPath = path; previewPlaybackEnded = ended; updateToolbarState(); });
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");

@@ -17,6 +17,6 @@ export function verifyTarget({ previewedPackage, selectedPreview, openedPackage,
   return openedPackage ?? outputPath ?? packageBesideProject ?? null;
 }
 
-export function previewButtonEnabled(target, shownPath) {
-  return target !== null && target.path !== shownPath;
+export function previewButtonEnabled(target, shownPath, playbackEnded) {
+  return target !== null && (target.path !== shownPath || playbackEnded);
 }
