@@ -360,13 +360,11 @@
                       <option value="xyz">X'Y'Z' (already converted)</option>
                       <option value="p3">DCI-P3</option>
                       <option value="rec2020">Rec. 2020</option>
-                      <option value="aces">ACES</option>
-                      <option value="acescg">ACEScg</option>
                       <option value="logc">ARRI LogC3</option>
                     </select>
                   </div>
                   <p class="field-hint" id="prop-detected-hint" hidden></p>
-                  <p class="field-hint">Rec. 709, X'Y'Z', DCI-P3, Rec. 2020 and ARRI LogC3 reach X'Y'Z' from inside the encode. ACES and ACEScg are scene-referred: convert those first with the Colour tool and a 3D LUT, then pick X'Y'Z'.</p>
+                  <p class="field-hint">Every option reaches X'Y'Z' from inside the encode. Convert ACES or ACEScg masters first with the Colour tool and a 3D LUT, then pick X'Y'Z'.</p>
                 </fieldset>
 
                 <fieldset>
@@ -1289,7 +1287,7 @@
                 </div>
               </div>
               <div class="prop-field">
-                <label>Subtitle File (SRT/TTML/XML)</label>
+                <label>Subtitle File (SRT/ASS/WebVTT/XML/MXF)</label>
                 <div class="input-with-btn">
                   <input id="burnin-sub" type="text" placeholder="Select subtitle…" readonly>
                   <button id="burnin-browse-sub" class="btn-sm">…</button>

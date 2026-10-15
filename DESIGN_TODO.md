@@ -58,15 +58,10 @@ user-facing surface is here.
   (user-excluded). The job queue is single-machine and its create path wraps
   pre-encoded J2K rather than running postkit::pipeline, so job progress is
   stage-based, not per-frame.
-- Playlist / SPL playback (DCP-o-matic ships this as a separate dcpomatic2_playlist
-  tool feeding dcpomatic2_player). Sequence several packages into one list the
-  player walks in order. The embedded preview is otherwise at parity with that
-  player: postkit `preview` resolves a CPL by uuid, the grok player decrypts
-  picture and sound with the KDM and recipient key or the KEYS.json the user
-  picks, and both colour-manage and can drive a GPU decoder. What it
-  lacks is the list, since `PlaybackOptions` names one `input` and one `cpl_uuid`,
-  so this needs a queue above it plus GUI ordering. Nothing about package
-  correctness depends on it.
+- Saved playlists. The preview's playlist queue lasts the session and writes no
+  file. DCP-o-matic's dcpomatic2_playlist names a list and saves it as an SPL
+  file that dcpomatic2_player opens again, and the queue has no save or open.
+  Nothing about package correctness depends on it.
 - 4K playback is not real time. PK grok_player's pool runs one grok thread per
   core and sustains 48 fps at 2048x1080 on 16 cores, and a 4096x2160 frame is
   four times the samples, so 4K wants a GPU decoder rather than more CPU workers.

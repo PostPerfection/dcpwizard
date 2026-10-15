@@ -308,7 +308,7 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
 
     <h2 id="burnin">Burn in subtitles</h2>
     <h3>In the app</h3>
-    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. Burn In writes the video's name plus _burnin.mp4 into Output Directory, or beside the video. It takes SRT, ASS, and SMPTE or Interop XML, which it converts first. TTML fails.</p>
+    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. Burn In writes the video's name plus _burnin.mp4 into Output Directory, or beside the video. It takes SRT, ASS/SSA, WebVTT, and SMPTE or Interop XML or MXF, which it converts first.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard burnin -i movie.mov -s subs.srt -o review.mp4</pre>
 

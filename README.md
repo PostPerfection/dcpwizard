@@ -6,7 +6,7 @@
 
 Digital Cinema Package (DCP) creator, CLI tool and desktop GUI.
 
-Version 1.4.0 creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
+DCP Wizard creates consistent CPL, PKL, and ASSETMAP identities for SMPTE and Interop packages. Grok is the JPEG 2000 encoder.
 
 ## Overview
 
@@ -117,7 +117,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Dolby Vision RPU injection** via dovi_tool
 - **HDR10 static metadata** injection (SMPTE ST 2086 + CTA 861.3)
 - **HDR format conversion**, HDR10 ↔ HLG ↔ SDR tone mapping
-- **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning, and is refused with `--hdr-dci`. `create --hdr-dci` authors a DCI HDR Addendum DCP from an HDR master: the picture MXF is stamped with TransferCharacteristic=ST 2084 (PQ), the CPL carries the ST 429-16 `Image Encoding Parameters` extension with EOTF `ST 2084`, and the ISDCF name takes the `HDR1` content modifier. The master's own colour tags name the grade, or `--hdr-source <hdr10|hdr10plus|hlg|pq-p3d65|dolby-vision>` names it (an HDR10+ master and a Dolby Vision profile 8.1 base layer are both read as their HDR10 grade, and Dolby Vision profile 5 is refused). `--hdr-peak-nits <cd/m²>` is where the roll-off starts, defaulting to the master's MaxCLL, then its mastering display maximum, then 1000. An SDR or untagged master is refused. `--hdr-to-dci-lut` and `--hdr-already-pq` are the other two paths to PQ. A `--burn-subtitle` or `--watermark` is refused on any of the three: both draw in display RGB and the frames are no longer that. Not available with 3D or reel splitting
+- **HDR source delivery** via `create --hdr-to-dci-lut <lut>` (runs the LUT before J2K encode); `--allow-generic-hdr-tonemap` opts into FFmpeg tone mapping with a warning, and is refused with `--hdr-dci`. `create --hdr-dci` authors a DCI HDR Addendum DCP from an HDR master: the picture MXF is stamped with TransferCharacteristic=ST 2084 (PQ), the CPL carries the ST 429-16 `Image Encoding Parameters` extension with EOTF `ST 2084`, and the ISDCF name takes the `HDR1` content modifier. The master's own colour tags name the grade, or `--hdr-source <hdr10|hdr10plus|hlg|pq-p3d65|dolby-vision>` names it (an HDR10+ master and a Dolby Vision profile 8.1 base layer are both read as their HDR10 grade, and Dolby Vision profile 5 is refused). `--hdr-peak-nits <cd/m²>` is the grade's peak luminance, the level the BT.2390 roll-off brings down to the DCI HDR 299.6 cd/m² peak, and for an HLG master the display peak it is rendered for. It defaults to the master's MaxCLL, then its mastering display maximum, then 1000. An SDR or untagged master is refused. `--hdr-to-dci-lut` and `--hdr-already-pq` are the other two paths to PQ. A `--burn-subtitle` or `--watermark` is refused on any of the three: both draw in display RGB and the frames are no longer that. Not available with 3D or reel splitting
 
 ### Timeline Conform
 - **Timeline conform** from EDL (CMX 3600) / FCP7 XML (xmeml) / FCPX (fcpxml): parse, or with `--media-dir --output` resolve every reel to media and build a finished multi-reel DCP (per-reel encode + wrap + CPL assembly). The reel/asset plan (`conform_plan.json`) and conform manifest are kept as artifacts
@@ -187,7 +187,7 @@ GPU encoding and preview decode need Grok's accelerator plugin, a commercial pro
 ./scripts/build-fedora-rpm.sh /path/to/grok/install /path/to/ffmpeg-mpv-linux-x86_64
 ```
 
-The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-1.4.0-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
+The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-<version>-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
 
 That rpm needs two more things on the target machine: the RPM Fusion NVIDIA driver, and a Grok licence entered under Settings. The CUDA runtime is linked into the plugin, so the CUDA toolkit and the NVIDIA Container Toolkit are not needed:
 
@@ -203,7 +203,7 @@ sudo reboot
 ./scripts/build-ubuntu-deb.sh /path/to/grok/source 86
 ```
 
-The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_1.4.0-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
+The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_<version>-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
 
 **GPU encoding on Arch Linux.** A pacman package with the CUDA plugin is built inside an `archlinux:base-devel` container with podman, the same way as the deb:
 
@@ -211,7 +211,7 @@ The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example 
 ./scripts/build-arch-package.sh /path/to/grok/source 86
 ```
 
-The package is written under `gui/src-tauri/target/release/bundle/arch`, for example `DCP-Wizard-1.6.0-1-sm86-x86_64.pkg.tar.zst`, and the script ends by installing it in a plain `archlinux:base` container. Build caches stay in `~/.cache/postperfection/arch`. Install it with `sudo pacman -U` and remove it with `sudo pacman -R dcp-wizard`. It depends on `nvidia-utils`, so the target machine needs only an NVIDIA kernel module package and a Grok licence entered under Settings.
+The package is written under `gui/src-tauri/target/release/bundle/arch`, for example `DCP-Wizard-<version>-1-sm86-x86_64.pkg.tar.zst`, and the script ends by installing it in a plain `archlinux:base` container. Build caches stay in `~/.cache/postperfection/arch`. Install it with `sudo pacman -U` and remove it with `sudo pacman -R dcp-wizard`. It depends on `nvidia-utils`, so the target machine needs only an NVIDIA kernel module package and a Grok licence entered under Settings.
 
 **GPU encoding on macOS.** A dmg with the Metal plugin is built on a Mac from a local Grok installation that carries it:
 
@@ -219,7 +219,7 @@ The package is written under `gui/src-tauri/target/release/bundle/arch`, for exa
 ./scripts/build-macos-dmg.sh /path/to/grok/install /path/to/ffmpeg-mpv-macos-arm64
 ```
 
-The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-1.4.0-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
+The dmg is written under `gui/src-tauri/target/release/bundle/dmg`, and its name carries `metal`, for example `DCP-Wizard-<version>-metal_aarch64.dmg`. Enter a Grok licence under Settings to encode on the GPU.
 
 ### Install from source
 
@@ -428,7 +428,7 @@ dcpwizard --gpu create \
 
 **GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin is missing it reads `GPU encoding unavailable` and the checkbox turns off. The *Encode threads* field below it is stored as `"encodeThreads"` and sets the encoder threads for the GUI and the CLI, and the same count sizes the accelerator plugin's host threads. An empty field saves 0, which runs one thread per available CPU.
 
-Then **Open** (Ctrl+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
+Then **Open DCP** (Ctrl+Shift+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
 
 ```
 grok player: device batch open, colour on the device

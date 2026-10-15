@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// DCP marker types per SMPTE 429-10.
+/// DCP marker types per SMPTE 429-7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Marker {
     /// First Frame of Composition
@@ -41,7 +41,7 @@ impl Marker {
         }
     }
 
-    /// Parse a marker label (case-insensitive) against the defined ST 429-10 set.
+    /// Parse a marker label (case-insensitive) against the defined ST 429-7 set.
     pub fn from_label(label: &str) -> Option<Marker> {
         Some(match label.to_ascii_uppercase().as_str() {
             "FFOC" => Marker::Ffoc,

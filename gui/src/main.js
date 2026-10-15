@@ -469,11 +469,14 @@ getCurrentWebview().onDragDropEvent((event) => {
   }
 });
 
+// the extensions detect_subtitle_kind in the core reads
+const TIMED_TEXT_EXTENSIONS = ['srt','ass','ssa','pac','mks','mkv','fcpxml','xml'];
+
 function guessType(name) {
   const ext = name.split('.').pop().toLowerCase();
   if (['mp4','mkv','mov','avi','mxf','webm','j2c','tiff','tif','dpx','exr'].includes(ext)) return 'video';
   if (['wav','aiff','flac','mp3','pcm'].includes(ext)) return 'audio';
-  if (['xml','ttml','srt','vtt'].includes(ext)) return 'subtitle';
+  if (TIMED_TEXT_EXTENSIONS.includes(ext)) return 'subtitle';
   return 'video';
 }
 
@@ -505,7 +508,7 @@ document.getElementById("import-subtitle")?.addEventListener("click", async () =
   const path = await open({
     directory: false, multiple: false,
     filters: [
-      { name: 'Subtitle', extensions: ['xml','ttml','srt','vtt'] },
+      { name: 'Subtitle', extensions: TIMED_TEXT_EXTENSIONS },
       { name: 'All', extensions: ['*'] }
     ]
   });
@@ -1198,7 +1201,7 @@ document.getElementById("prop-browse-burn-subtitle")?.addEventListener("click", 
   const path = await open({
     directory: false, multiple: false,
     filters: [
-      { name: 'Subtitles', extensions: ['srt','ass','ssa','pac','mks','mkv','fcpxml','xml'] },
+      { name: 'Subtitles', extensions: TIMED_TEXT_EXTENSIONS },
       { name: 'All', extensions: ['*'] }
     ]
   });
@@ -1231,7 +1234,7 @@ document.getElementById("prop-browse-ccap")?.addEventListener("click", async () 
   const path = await open({
     directory: false, multiple: false,
     filters: [
-      { name: 'Captions', extensions: ['srt','xml','ttml','vtt'] },
+      { name: 'Captions', extensions: TIMED_TEXT_EXTENSIONS },
       { name: 'All', extensions: ['*'] }
     ]
   });
@@ -3648,6 +3651,7 @@ document.getElementById("subextract-start")?.addEventListener("click", async () 
 });
 
 // === Subtitle Burn-in ===
+const BURN_IN_TOOL_SUBTITLE_EXTENSIONS = ["srt", "ass", "ssa", "vtt", "xml", "mxf"];
 document.getElementById("burnin-browse-video")?.addEventListener("click", async () => {
   const path = await open({ filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "mxf"] }] });
   if (path) {
@@ -3656,7 +3660,7 @@ document.getElementById("burnin-browse-video")?.addEventListener("click", async 
   }
 });
 document.getElementById("burnin-browse-sub")?.addEventListener("click", async () => {
-  const path = await open({ filters: [{ name: "Subtitle", extensions: ["srt", "xml", "ttml"] }] });
+  const path = await open({ filters: [{ name: "Subtitle", extensions: BURN_IN_TOOL_SUBTITLE_EXTENSIONS }] });
   if (path) {
     document.getElementById("burnin-sub").value = path;
     updateBurninBtn();

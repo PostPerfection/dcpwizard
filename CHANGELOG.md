@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- **Source colour space lists only what the encode converts**: the select offers Rec. 709, X'Y'Z', DCI-P3, Rec. 2020 and ARRI LogC3. ACES and ACEScg are gone from it, since the build refused both, and the hint says to convert those masters with the Colour tool and a 3D LUT first. A project saved with ACES or ACEScg opens with Rec. 709 and a preset leaves the field as it was, and the status line names `Source colour space option aces` as not found or not applied.
+- **Subtitle file pickers offer the formats the build reads**: the subtitle asset, closed caption and burn-in pickers on the create panel list SRT, ASS/SSA, PAC, MKS/MKV, FCPXML and XML, and an SRT, ASS/SSA, PAC, MKS, FCPXML or XML file dropped on the window is added as a subtitle. The Burn-in tool's picker lists SRT, ASS/SSA, WebVTT, XML and MXF. TTML and WebVTT are no longer offered where the build refused them.
+
 ## [1.8.1] - 2026-10-13
 
 ### Added
