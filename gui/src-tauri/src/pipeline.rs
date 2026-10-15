@@ -84,6 +84,7 @@ pub struct IsdcfNameRequest {
     pub subtitle: Option<String>,
     pub subtitle_language: Option<String>,
     pub burn_subtitle: Option<String>,
+    pub subtitles_burnt_in: bool,
     pub ccap: Option<String>,
     pub ccap_language: Option<String>,
     pub right_eye: Option<String>,
@@ -223,7 +224,7 @@ fn isdcf_naming<'a>(
             hi_channel: None,
             vi_channel: None,
         },
-        burnt_in_subtitle: filled(&request.burn_subtitle).is_some(),
+        burnt_in_subtitle: filled(&request.burn_subtitle).is_some() || request.subtitles_burnt_in,
     }
 }
 
@@ -371,6 +372,8 @@ pub struct JobConfig {
     // timed-text track: burnt-in text is part of the image.
     burn_subtitle: Option<String>,
     burn_subtitle_font: Option<String>,
+    #[serde(default)]
+    subtitles_burnt_in: bool,
     // how the burnt-in text and the packaged track look
     burn_style: postkit::subtitle_raster::BurnStyleOverrides,
     subtitle_appearance: dcpwizard_core::subtitle::TimedTextAppearance,
@@ -508,6 +511,7 @@ fn apply_package_name_to_job(
             subtitle: job.subtitle.clone(),
             subtitle_language: Some(job.subtitle_language.clone()),
             burn_subtitle: job.burn_subtitle.clone(),
+            subtitles_burnt_in: job.subtitles_burnt_in,
             ccap: job.ccap.clone(),
             ccap_language: Some(job.ccap_language.clone()),
             right_eye: job.right_eye.clone(),
@@ -687,6 +691,7 @@ pub struct SubmitRequest {
     subtitle_no_subset: Option<bool>,
     burn_subtitle: Option<String>,
     burn_subtitle_font: Option<String>,
+    subtitles_burnt_in: Option<bool>,
     burn_font_size: Option<String>,
     burn_colour: Option<String>,
     burn_effect: Option<String>,
@@ -791,6 +796,7 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         subtitle_no_subset,
         burn_subtitle,
         burn_subtitle_font,
+        subtitles_burnt_in,
         burn_font_size,
         burn_colour,
         burn_effect,
@@ -1204,6 +1210,7 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         subtitle_language: subtitle_language.unwrap_or_else(|| DEFAULT_LANGUAGE.into()),
         burn_subtitle,
         burn_subtitle_font,
+        subtitles_burnt_in: subtitles_burnt_in.unwrap_or(false),
         burn_style,
         subtitle_appearance,
         subtitle_halign: subtitle_halign.filter(|s| !s.is_empty()),
@@ -3819,6 +3826,7 @@ mod tests {
             subtitle_language: "en".into(),
             burn_subtitle: None,
             burn_subtitle_font: None,
+            subtitles_burnt_in: false,
             burn_style: postkit::subtitle_raster::BurnStyleOverrides::default(),
             subtitle_appearance: dcpwizard_core::subtitle::TimedTextAppearance::default(),
             subtitle_halign: None,
@@ -4126,6 +4134,33 @@ mod tests {
             job.title
         );
         assert!(job.title.ends_with("_POS_SMPTE_OV"), "{}", job.title);
+        assert_eq!(preview, job.title);
+    }
+
+    #[test]
+    fn subtitles_already_burnt_into_the_source_are_named_in_lower_case() {
+        let naming = NamingMetadata {
+            audio_language: Some("ar".into()),
+            isdcf_naming: true,
+            ..Default::default()
+        };
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            subtitles_burnt_in: true,
+            naming: naming.clone(),
+            ..test_job()
+        };
+        let request = IsdcfNameRequest {
+            title: "My Film".into(),
+            resolution: Some("2k-flat".into()),
+            subtitle_language: Some("en".into()),
+            subtitles_burnt_in: true,
+            naming,
+            ..Default::default()
+        };
+        let preview = isdcf_name_for(&request).unwrap();
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert!(preview.contains("_AR-en_"), "{preview}");
         assert_eq!(preview, job.title);
     }
 

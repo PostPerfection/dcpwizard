@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
+
 ### Fixed
 - **Set from player works at the end of playback**: at the last frame, where an LFOC marker goes, it said Nothing is playing in the preview until the film was loaded again. The Preview button still comes back at the end, so the film can be played again.
+- **The ISDCF name preview follows the burn-in subtitle pick**: picking a file for Burn subtitles into the picture left the name under the title without its lower case subtitle language until another field changed.
 
 ### Changed
 - **A KDM is used only when its signature checks out**: `decrypt --kdm`, `create-vf --ov-kdm`, `kdm-rewrap`, and every other path that decrypts a KDM's keys verify the KDM's XML signature first and refuse a KDM with no signature or one edited after signing. The signature is checked against the certificate the KDM carries.

@@ -1181,6 +1181,37 @@ fn create_refuses_an_isdcf_date_that_is_not_a_date() {
 }
 
 #[test]
+fn create_names_subtitles_the_source_already_has_burnt_in_in_lower_case() {
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("hd.mp4");
+    write_test_video(&video, 1920, 1080);
+
+    create_with(
+        &dir,
+        &video,
+        &[
+            "--isdcf-name",
+            "--audio-lang",
+            "ar",
+            "--subtitle-language",
+            "en",
+            "--subtitles-burnt-in",
+        ],
+    )
+    .assert()
+    .success();
+
+    let packages: Vec<String> = std::fs::read_dir(dir.path().join("out"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        packages.iter().any(|name| name.contains("_AR-en_")),
+        "{packages:?}"
+    );
+}
+
+#[test]
 fn create_refuses_an_unknown_territory_type() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("hd.mp4");

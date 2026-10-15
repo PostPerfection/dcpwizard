@@ -1207,7 +1207,9 @@ document.getElementById("prop-browse-burn-subtitle")?.addEventListener("click", 
       { name: 'All', extensions: ['*'] }
     ]
   });
-  if (path) document.getElementById("prop-burn-subtitle").value = path;
+  if (!path) return;
+  document.getElementById("prop-burn-subtitle").value = path;
+  refreshIsdcfPreview();
 });
 
 document.getElementById("prop-browse-burn-subtitle-font")?.addEventListener("click", async () => {
@@ -1462,6 +1464,7 @@ function isdcfNameRequest() {
     subtitle: reel?.subtitle?.path || null,
     subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
     burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
+    subtitlesBurntIn: document.getElementById("prop-subtitles-burnt-in")?.checked || false,
     ccap: document.getElementById("prop-ccap")?.value || null,
     ccapLanguage: document.getElementById("prop-ccap-language")?.value || "en",
     rightEye: document.getElementById("prop-right-eye")?.value || null,
@@ -1498,7 +1501,7 @@ async function refreshIsdcfPreview() {
 
 const ISDCF_PREVIEW_CONTROLS = [
   "prop-title", "prop-content-kind", "prop-standard", "prop-resolution", "prop-framerate",
-  "prop-subtitle-language", "prop-ccap-language", "prop-audio-language", "prop-studio",
+  "prop-subtitle-language", "prop-subtitles-burnt-in", "prop-ccap-language", "prop-audio-language", "prop-studio",
   "prop-territory-type", "prop-content-versions", "prop-temp-version", "prop-pre-release",
   "prop-red-band", "prop-two-d-version-of-three-d", "prop-version-file",
   "prop-crop-left", "prop-crop-right", "prop-crop-top", "prop-crop-bottom", "prop-rotate",
@@ -1562,6 +1565,7 @@ function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
     subtitleFont: document.getElementById("prop-subtitle-font")?.value || null,
     subtitleNoSubset: document.getElementById("prop-subtitle-no-subset")?.checked || false,
     burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
+    subtitlesBurntIn: document.getElementById("prop-subtitles-burnt-in")?.checked || false,
     burnSubtitleFont: document.getElementById("prop-burn-subtitle-font")?.value || null,
     burnFontSize: document.getElementById("prop-burn-font-size")?.value || null,
     burnColour: document.getElementById("prop-burn-colour")?.value || null,

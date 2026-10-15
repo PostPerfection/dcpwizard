@@ -358,6 +358,10 @@ struct CreateSubtitleOpts {
     /// TTF/OTF font to draw --burn-subtitle with (default: a system font)
     #[arg(long)]
     burn_subtitle_font: Option<String>,
+    /// The source picture already has subtitles in --subtitle-language burnt
+    /// into it, which the ISDCF name spells in lower case
+    #[arg(long)]
+    subtitles_burnt_in: bool,
     /// Embed the whole font instead of subsetting it to the used glyphs
     #[arg(long)]
     subtitle_no_subset: bool,
@@ -4602,7 +4606,8 @@ fn run() {
             let burn_style = refusals.take(subtitle_qol.burn_appearance.overrides());
             let subtitle_appearance = refusals.take(subtitle_qol.appearance());
 
-            let burnt_in_subtitle = subtitle_qol.burn_subtitle.is_some();
+            let burnt_in_subtitle =
+                subtitle_qol.burn_subtitle.is_some() || subtitle_qol.subtitles_burnt_in;
             let CreateSubtitleOpts {
                 subtitle_halign,
                 subtitle_valign,
