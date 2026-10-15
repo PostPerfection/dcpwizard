@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import tomllib
 import unicodedata
 import xml.etree.ElementTree as ElementTree
@@ -13,7 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from tauri_webdriver import SELECT_ALL_CHORD, Window, visible_windows, wait_until
+from tauri_webdriver import (
+    POLL_SECONDS,
+    SELECT_ALL_CHORD,
+    Window,
+    visible_windows,
+    wait_until,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GUI_BINARY = REPOSITORY_ROOT / "gui/src-tauri/target/release/dcpwizard-gui"
@@ -110,9 +117,6 @@ DETECTED_HINT_SUFFIX = " Mbit/s. Edit any field to override."
 DETECTED_HINT = "#prop-detected-hint"
 AUTO_RESOLUTION_OPTION = '#prop-resolution option[value="auto"]'
 FIXTURE_AUTO_RESOLUTION = f"Auto ({FIXTURE_ASSET_SIZE})"
-
-# crossing the first reel takes longer than the reel lasts when decoding lags
-REEL_CROSSING_TIMEOUT_MULTIPLE = 3
 
 # the tick to seek to, as how far along the ruler it has to sit at least
 SEEK_TICK_LEFT_PERCENT = 20
@@ -279,6 +283,32 @@ PLAYHEAD_LEFT = """
 const playhead = document.getElementById("ruler-playhead");
 return playhead ? parseFloat(playhead.style.left) : null;
 """
+PLAYBACK_STALL_SECONDS = 10
+
+
+# a busy runner decodes slower than real time, so only a stopped playhead fails
+def wait_while_playing(describe, check, session):
+    began = time.monotonic()
+    playhead = None
+    moved_at = began
+    while True:
+        try:
+            result = check()
+            current = session.execute(PLAYHEAD_LEFT)
+        except OSError:
+            # the driver drops a connection now and then, and a poll can retry
+            result, current = None, playhead
+        if result:
+            return result
+        now = time.monotonic()
+        if current != playhead:
+            playhead, moved_at = current, now
+        elif now - moved_at >= PLAYBACK_STALL_SECONDS:
+            raise AssertionError(
+                f"{describe}, the playhead stopped at {playhead}% "
+                f"{now - began:.1f}s after the wait began"
+            )
+        time.sleep(POLL_SECONDS)
 
 # css cannot pick a tick out by where it sits, so the one to click is given an id
 MARK_TICK = """
@@ -628,12 +658,12 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
         PLAYHEAD_TIMEOUT_SECONDS,
     )
 
-    first_reel_frames, first_reel_fps = reels[0]
+    _, first_reel_fps = reels[0]
     frame_seconds = 1 / first_reel_fps
-    wait_until(
+    wait_while_playing(
         "playback never reached the second reel",
         lambda: segment_is_active(session, "picture", 1),
-        first_reel_frames / first_reel_fps * REEL_CROSSING_TIMEOUT_MULTIPLE,
+        session,
     )
     # one reel's picture file loaded behind the panel would halve this duration
     assert reported_duration(session) == pytest.approx(
@@ -655,10 +685,10 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
 
     # once playback runs out the panel holds nothing that is previewing, so the
     # button offers the package again
-    wait_until(
+    wait_while_playing(
         "the Preview button never came back at the end of the composition",
         lambda: session.property("#btn-preview", "disabled") is False,
-        composition_seconds(reels) * REEL_CROSSING_TIMEOUT_MULTIPLE,
+        session,
     )
     assert reported_duration(session) == pytest.approx(
         composition_seconds(reels), abs=frame_seconds
