@@ -33,7 +33,9 @@ dolby_vision = "3.3"
 hound = "3.5"
 libc = "0.2"
 predicates = "3"
+roxmltree = "0.20"
 tempfile = "3"
+uuid.workspace = true
 zip = "8"
 
 [package.metadata.deb]

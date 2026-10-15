@@ -866,10 +866,12 @@ dependencies = [
  "postkit",
  "postkit-ffmpeg-link-search",
  "predicates",
+ "roxmltree 0.20.0",
  "serde_json",
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "zip",
 ]
 

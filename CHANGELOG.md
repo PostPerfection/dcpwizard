@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **`create-vf` over an encrypted OV**: each OV picture, sound, subtitle, closed caption and Atmos track the VF references is listed with the KeyId the OV CPL gives it. The VF's new tracks are then encrypted with fresh keys, a replacement has to be raw essence rather than an MXF, and the VF needs `--signer-cert` and `--signer-key`, refused as `create --encrypt` refuses an unsigned package. `--key-out` writes the VF's keys file for `kdm --keys`, owner-only like the one `create` writes. It holds the new keys and the OV keys for every KeyId the VF CPL lists, from the OV's keys file with `--ov-keys` or from a KDM for the OV with `--ov-kdm` and `--ov-key`. OV keys that lack a KeyId the VF lists, a key whose KeyId or type differs from what the OV CPL lists for that track, a KDM for another CPL, and a KDM the private key does not open are refused by name, before anything is written. Without OV keys the keys file holds the new keys only and create-vf prints the OV KeyIds a KDM for the VF still needs.
+
+### Fixed
+- **A VF keeps what its OV has**: create-vf dropped the OV's Atmos track, the subtitles and closed captions on reels it did not replace, its ratings and its markers, writing the default FFOC and LFOC instead. The VF now references the OV's Atmos, subtitle and closed caption tracks and carries the OV's markers and RatingList unchanged, and the sign-language video tag when the VF keeps the OV's sound on every reel.
+
 ### Changed
 - **Source colour space lists only what the encode converts**: the select offers Rec. 709, X'Y'Z', DCI-P3, Rec. 2020 and ARRI LogC3. ACES and ACEScg are gone from it, since the build refused both, and the hint says to convert those masters with the Colour tool and a 3D LUT first. A project saved with ACES or ACEScg opens with Rec. 709 and a preset leaves the field as it was, and the status line names `Source colour space option aces` as not found or not applied.
 - **Subtitle file pickers offer the formats the build reads**: the subtitle asset, closed caption and burn-in pickers on the create panel list SRT, ASS/SSA, PAC, MKS/MKV, FCPXML and XML, and an SRT, ASS/SSA, PAC, MKS, FCPXML or XML file dropped on the window is added as a subtitle. The Burn-in tool's picker lists SRT, ASS/SSA, WebVTT, XML and MXF. TTML and WebVTT are no longer offered where the build refused them.

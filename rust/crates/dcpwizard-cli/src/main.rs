@@ -1224,6 +1224,21 @@ enum Commands {
         /// sans face)
         #[arg(long)]
         subtitle_font: Option<String>,
+        /// Where to write the VF's content keys (required when the OV is
+        /// encrypted). Holds the plaintext AES keys: point it outside the DCP and
+        /// keep it secret.
+        #[arg(long)]
+        key_out: Option<String>,
+        /// The OV's keys file (from `create --encrypt`), so the VF keys file also
+        /// holds the OV keys the VF references
+        #[arg(long, conflicts_with = "ov_kdm")]
+        ov_keys: Option<String>,
+        /// A KDM for the OV, read with --ov-key, as an alternative to --ov-keys
+        #[arg(long, requires = "ov_key")]
+        ov_kdm: Option<String>,
+        /// The private key (PEM) of the certificate --ov-kdm was made for
+        #[arg(long, requires = "ov_kdm")]
+        ov_key: Option<String>,
         #[command(flatten)]
         signer_opts: SignerOpts,
     },
@@ -7981,6 +7996,10 @@ fn run() {
             add_ccap,
             subtitle_language,
             subtitle_font,
+            key_out,
+            ov_keys,
+            ov_kdm,
+            ov_key,
             signer_opts,
         } => {
             // Parse REEL=PATH into a per-reel map. picture/sound/subtitle/ccap share
@@ -8053,11 +8072,37 @@ fn run() {
                         std::process::exit(1);
                     }
                 };
-                let code = dcpwizard_core::vf::create_vf(&config);
-                if code == 0 {
-                    println!("Created VF DCP at {}", package_dir.display());
+                let ov_keys = match (ov_keys, ov_kdm, ov_key) {
+                    (Some(keys), _, _) => Some(dcpwizard_core::vf::OvKeySource::KeysFile(
+                        PathBuf::from(keys),
+                    )),
+                    (None, Some(kdm), Some(key)) => Some(dcpwizard_core::vf::OvKeySource::Kdm {
+                        kdm: PathBuf::from(kdm),
+                        recipient_key: PathBuf::from(key),
+                    }),
+                    _ => None,
+                };
+                let keys = dcpwizard_core::vf::VfKeyOptions {
+                    key_out: key_out.map(PathBuf::from),
+                    ov_keys,
+                };
+                match dcpwizard_core::vf::create_vf_with_keys(&config, &keys) {
+                    Ok(missing_ov_key_ids) => {
+                        println!("Created VF DCP at {}", package_dir.display());
+                        if !missing_ov_key_ids.is_empty() {
+                            println!(
+                                "A KDM for this VF also needs the OV's keys, which the VF keys \
+                                 file does not hold. Pass --ov-keys or --ov-kdm to include them. \
+                                 Missing KeyIds:"
+                            );
+                            for key_id in missing_ov_key_ids {
+                                println!("  {key_id}");
+                            }
+                        }
+                        0
+                    }
+                    Err(()) => 1,
                 }
-                code
             }
         }
 

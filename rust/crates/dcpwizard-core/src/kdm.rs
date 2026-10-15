@@ -50,16 +50,7 @@ pub fn load_content_keys(
     keys_file: &Path,
     cpl_id: &str,
 ) -> Result<Vec<postkit::certificate::KdmContentKey>, String> {
-    let bundle = crate::encrypt::KeyBundle::read(keys_file)?;
-    let want = cpl_id.trim().trim_start_matches("urn:uuid:");
-    let have = bundle.cpl_id.trim().trim_start_matches("urn:uuid:");
-    if !have.is_empty() && !want.is_empty() && have != want {
-        return Err(format!(
-            "keys file {} is for CPL {have}, not {want}",
-            keys_file.display()
-        ));
-    }
-    bundle
+    crate::encrypt::KeyBundle::read_for_cpl(keys_file, cpl_id)?
         .keys
         .iter()
         .map(|k| {

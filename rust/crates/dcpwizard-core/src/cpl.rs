@@ -304,6 +304,28 @@ pub fn main_sound_from_cpl(cpl_xml: &str) -> Option<MainSound> {
     })
 }
 
+const SIGN_LANGUAGE_VIDEO_SCOPE: &str = "http://isdcf.com/2017/10/SignLanguageVideo";
+const SIGN_LANGUAGE_TAG_PROPERTY: &str = "Language Tag";
+
+pub fn sign_language_from_cpl(cpl_xml: &str) -> Option<String> {
+    let doc = roxmltree::Document::parse(cpl_xml).ok()?;
+    let extension = doc.descendants().find(|n| {
+        n.has_tag_name("ExtensionMetadata")
+            && n.attribute("scope") == Some(SIGN_LANGUAGE_VIDEO_SCOPE)
+    })?;
+    let child_text = |node: roxmltree::Node, name: &str| {
+        node.children()
+            .find(|c| c.has_tag_name(name))
+            .and_then(|c| c.text())
+            .map(|t| t.trim().to_string())
+    };
+    extension
+        .descendants()
+        .filter(|n| n.has_tag_name("Property"))
+        .find(|p| child_text(*p, "Name").as_deref() == Some(SIGN_LANGUAGE_TAG_PROPERTY))
+        .and_then(|p| child_text(p, "Value"))
+}
+
 const MCA_CHANNEL_TAG_PREFIX: &str = "ch";
 const MCA_SOUNDFIELD_TAG_PREFIX: &str = "sg";
 const ACCESSIBILITY_CHANNEL_TAGS: [&str; 2] = ["HI", "VIN"];
@@ -739,13 +761,15 @@ fn composition_metadata_block(config: &CplConfig, reel: &CplReel, sound: &MainSo
     // ISDCF Doc 13 sign-language video: the Language Tag identifies the packed
     // VP9 program carried on channel 15 of the sound track.
     if let Some(lang) = config.sign_language.as_deref() {
-        b.push_str(
-            "            <meta:ExtensionMetadata scope=\"http://isdcf.com/2017/10/SignLanguageVideo\">\n",
-        );
+        b.push_str(&format!(
+            "            <meta:ExtensionMetadata scope=\"{SIGN_LANGUAGE_VIDEO_SCOPE}\">\n"
+        ));
         b.push_str("              <meta:Name>Sign Language Video</meta:Name>\n");
         b.push_str("              <meta:PropertyList>\n");
         b.push_str("                <meta:Property>\n");
-        b.push_str("                  <meta:Name>Language Tag</meta:Name>\n");
+        b.push_str(&format!(
+            "                  <meta:Name>{SIGN_LANGUAGE_TAG_PROPERTY}</meta:Name>\n"
+        ));
         b.push_str(&format!(
             "                  <meta:Value>{}</meta:Value>\n",
             escape_xml(lang)

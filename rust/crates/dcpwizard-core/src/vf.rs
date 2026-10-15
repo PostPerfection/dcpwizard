@@ -41,6 +41,44 @@ struct NewAsset {
     hash: String,
     size: u64,
     duration: u64,
+    key: Option<crate::encrypt::ContentKey>,
+}
+
+impl NewAsset {
+    fn key_id(&self) -> Option<String> {
+        self.key.as_ref().map(|k| k.key_id.clone())
+    }
+
+    fn timed_text_track(&self, language: &str) -> TimedTextTrack {
+        TimedTextTrack {
+            id: self.id.clone(),
+            duration: self.duration,
+            hash: Some(self.hash.clone()),
+            key_id: self.key_id(),
+            language: Some(language.to_string()),
+        }
+    }
+}
+
+// a subtitle or closed caption the VF reel lists, new or referenced from the OV
+struct TimedTextTrack {
+    id: String,
+    duration: u64,
+    hash: Option<String>,
+    key_id: Option<String>,
+    language: Option<String>,
+}
+
+fn mint_key(
+    key_type: Option<crate::encrypt::KeyType>,
+    asset_id: &str,
+) -> Result<Option<crate::encrypt::GeneratedKey>, ()> {
+    let Some(key_type) = key_type else {
+        return Ok(None);
+    };
+    crate::encrypt::generate_content_key(key_type, asset_id)
+        .map(Some)
+        .map_err(|e| tracing::error!("content key generation failed: {e}"))
 }
 
 /// Create a Version File DCP that references the Original Version.
@@ -71,38 +109,267 @@ fn vf_title(config: &VfConfig) -> Result<String, String> {
     Ok(format!("{}_VF", ov_cpl.content_title))
 }
 
+pub enum OvKeySource {
+    KeysFile(PathBuf),
+    Kdm {
+        kdm: PathBuf,
+        recipient_key: PathBuf,
+    },
+}
+
+impl OvKeySource {
+    fn describe(&self) -> String {
+        match self {
+            OvKeySource::KeysFile(path) => format!("OV keys file {}", path.display()),
+            OvKeySource::Kdm { kdm, .. } => format!("OV KDM {}", kdm.display()),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct VfKeyOptions {
+    pub key_out: Option<PathBuf>,
+    pub ov_keys: Option<OvKeySource>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OvTrack {
+    Picture,
+    Sound,
+    Subtitle,
+    ClosedCaption,
+    AuxData,
+}
+
+impl OvTrack {
+    fn key_type(self) -> crate::encrypt::KeyType {
+        use crate::encrypt::KeyType;
+        match self {
+            OvTrack::Picture => KeyType::Mdik,
+            OvTrack::Sound => KeyType::Mdak,
+            OvTrack::Subtitle | OvTrack::ClosedCaption => KeyType::Mdsk,
+            OvTrack::AuxData => KeyType::Mdek,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            OvTrack::Picture => "picture",
+            OvTrack::Sound => "sound",
+            OvTrack::Subtitle => "subtitle",
+            OvTrack::ClosedCaption => "closed caption",
+            OvTrack::AuxData => "aux data",
+        }
+    }
+}
+
+// an encrypted OV track file the VF CPL points at
+struct EncryptedOvReference {
+    track: OvTrack,
+    asset_id: String,
+    key_id: uuid::Uuid,
+}
+
+struct OfferedOvKey {
+    key_id: uuid::Uuid,
+    key_type: Option<crate::encrypt::KeyType>,
+    asset_uuid: Option<String>,
+    content_key_hex: String,
+}
+
+fn bare_uuid(text: &str) -> String {
+    text.trim()
+        .trim_start_matches("urn:uuid:")
+        .to_ascii_lowercase()
+}
+
+fn key_ids_by_asset(
+    cpl_xml: &str,
+) -> Result<std::collections::HashMap<String, uuid::Uuid>, String> {
+    let doc =
+        roxmltree::Document::parse(cpl_xml).map_err(|e| format!("cannot read the OV CPL: {e}"))?;
+    let child_text = |node: roxmltree::Node, name: &str| {
+        node.children()
+            .find(|c| c.has_tag_name(name))
+            .and_then(|c| c.text())
+            .map(bare_uuid)
+    };
+    let mut key_ids = std::collections::HashMap::new();
+    for asset in doc.descendants().filter(|n| n.is_element()) {
+        let (Some(asset_id), Some(key_id)) = (child_text(asset, "Id"), child_text(asset, "KeyId"))
+        else {
+            continue;
+        };
+        let key_id = uuid::Uuid::parse_str(&key_id)
+            .map_err(|e| format!("OV CPL asset {asset_id} has KeyId '{key_id}': {e}"))?;
+        key_ids.insert(asset_id, key_id);
+    }
+    Ok(key_ids)
+}
+
+fn offered_ov_keys(source: &OvKeySource, ov_cpl_id: &str) -> Result<Vec<OfferedOvKey>, String> {
+    match source {
+        OvKeySource::KeysFile(path) => crate::encrypt::KeyBundle::read_for_cpl(path, ov_cpl_id)?
+            .keys
+            .into_iter()
+            .map(|key| {
+                let key_id = uuid::Uuid::parse_str(&bare_uuid(&key.key_id)).map_err(|e| {
+                    format!(
+                        "keys file {} has KeyId '{}': {e}",
+                        path.display(),
+                        key.key_id
+                    )
+                })?;
+                Ok(OfferedOvKey {
+                    key_id,
+                    key_type: Some(key.key_type),
+                    asset_uuid: Some(bare_uuid(&key.asset_uuid)).filter(|id| !id.is_empty()),
+                    content_key_hex: key.content_key_hex.clone(),
+                })
+            })
+            .collect(),
+        OvKeySource::Kdm { kdm, recipient_key } => {
+            let unwrapped =
+                postkit::certificate::unwrap_kdm_file(kdm, recipient_key).map_err(|e| {
+                    format!(
+                        "KDM {} does not decrypt with the private key {}: {e}",
+                        kdm.display(),
+                        recipient_key.display()
+                    )
+                })?;
+            let want = bare_uuid(ov_cpl_id);
+            if unwrapped.cpl_id.to_string() != want {
+                return Err(format!(
+                    "KDM {} is for CPL {}, not the OV's CPL {want}",
+                    kdm.display(),
+                    unwrapped.cpl_id
+                ));
+            }
+            Ok(unwrapped
+                .keys
+                .iter()
+                .map(|key| OfferedOvKey {
+                    key_id: key.key_id,
+                    key_type: key
+                        .key_type
+                        .and_then(|t| crate::encrypt::KeyType::from_smpte(&t)),
+                    asset_uuid: None,
+                    content_key_hex: crate::encrypt::hex_encode(key.content_key()),
+                })
+                .collect())
+        }
+    }
+}
+
+// matched by the KeyId the OV CPL lists, never by what the key source claims
+fn ov_keys_for_references(
+    source: &OvKeySource,
+    ov_cpl_id: &str,
+    references: &[EncryptedOvReference],
+) -> Result<Vec<crate::encrypt::ContentKey>, String> {
+    let offered = offered_ov_keys(source, ov_cpl_id)?;
+    let mut chosen: Vec<crate::encrypt::ContentKey> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for reference in references {
+        if let Some(conflict) = offered.iter().find(|key| {
+            key.asset_uuid.as_deref() == Some(reference.asset_id.as_str())
+                && key.key_id != reference.key_id
+        }) {
+            return Err(format!(
+                "{} gives the OV {} asset {} the KeyId {}, but the OV CPL lists {}",
+                source.describe(),
+                reference.track.name(),
+                reference.asset_id,
+                conflict.key_id,
+                reference.key_id
+            ));
+        }
+        let Some(key) = offered.iter().find(|key| key.key_id == reference.key_id) else {
+            missing.push(reference.key_id.to_string());
+            continue;
+        };
+        let wanted_type = reference.track.key_type();
+        if let Some(key_type) = key.key_type
+            && key_type != wanted_type
+        {
+            return Err(format!(
+                "{} holds KeyId {} as a {} key, but the OV CPL uses it for the {} asset {}",
+                source.describe(),
+                key.key_id,
+                String::from_utf8_lossy(&key_type.as_smpte()),
+                reference.track.name(),
+                reference.asset_id
+            ));
+        }
+        let key_id = reference.key_id.to_string();
+        if chosen.iter().any(|held| held.key_id == key_id) {
+            continue;
+        }
+        chosen.push(crate::encrypt::ContentKey {
+            key_type: wanted_type,
+            key_id,
+            asset_uuid: reference.asset_id.clone(),
+            content_key_hex: key.content_key_hex.clone(),
+        });
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "{} has no key for the OV KeyIds the VF references: {}",
+            source.describe(),
+            missing.join(", ")
+        ));
+    }
+    Ok(chosen)
+}
+
+fn write_keys_file(path: &Path, bundle: &crate::encrypt::KeyBundle) -> Result<(), String> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create key-out directory: {e}"))?;
+    }
+    bundle
+        .write(path)
+        .map_err(|e| format!("Failed to write keys file: {e}"))?;
+    tracing::warn!(
+        "Wrote content keys to {}. This file holds the plaintext AES keys: keep it secret, \
+         do not ship it in the DCP, and use it only to build KDMs.",
+        path.display()
+    );
+    Ok(())
+}
+
 pub fn create_vf(config: &VfConfig) -> i32 {
+    match create_vf_with_keys(config, &VfKeyOptions::default()) {
+        Ok(_) => 0,
+        Err(()) => -1,
+    }
+}
+
+// Ok holds the OV KeyIds the VF CPL references that the written keys file has no key for
+pub fn create_vf_with_keys(config: &VfConfig, keys: &VfKeyOptions) -> Result<Vec<String>, ()> {
     if !config.ov_dir.exists() {
         tracing::error!("OV directory not found: {}", config.ov_dir.display());
-        return -1;
+        return Err(());
     }
     let vf_dir = match new_vf_package_dir(config) {
         Ok(vf_dir) => vf_dir,
         Err(e) => {
             tracing::error!("{e}");
-            return -1;
+            return Err(());
         }
     };
-    // prove the signer works before anything is written, so a bad one cannot
-    // leave a half-signed package behind
-    if let Some(signer) = config.signer.as_ref()
-        && let Err(e) = signer.check_usable()
-    {
-        tracing::error!("unusable signer: {e}");
-        return -1;
-    }
 
     // Read the OV CPL to get reel structure and identity.
     let ov_cpls = crate::multi_cpl::list_cpls(&config.ov_dir);
     let Some(ov_cpl) = ov_cpls.first() else {
         tracing::error!("No CPL found in OV directory");
-        return -1;
+        return Err(());
     };
     let ov_cpl_path = config.ov_dir.join(&ov_cpl.file_path);
     let ov_timeline = crate::multi_cpl::get_timeline(&ov_cpl_path);
     if ov_timeline.is_empty() {
         tracing::error!("OV CPL has no reels");
-        return -1;
+        return Err(());
     }
 
     // Fail loud if a replacement targets a reel the OV doesn't have.
@@ -112,7 +379,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                 "replacement targets reel {} which the OV does not have",
                 rep.reel_number
             );
-            return -1;
+            return Err(());
         }
     }
 
@@ -121,7 +388,132 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         r.picture.is_some() || r.sound.is_some() || r.subtitle.is_some() || r.ccap.is_some()
     }) {
         tracing::error!("no replacement essence supplied; nothing to replace");
-        return -1;
+        return Err(());
+    }
+
+    let ov_cpl_content = std::fs::read_to_string(&ov_cpl_path).unwrap_or_default();
+    let ov_key_ids = match key_ids_by_asset(&ov_cpl_content) {
+        Ok(key_ids) => key_ids,
+        Err(e) => {
+            tracing::error!("{e}");
+            return Err(());
+        }
+    };
+    let ov_identity = match crate::assemble::composition_identity(&ov_cpl_content) {
+        Ok(identity) => identity,
+        Err(e) => {
+            tracing::error!("cannot read the OV CPL: {e}");
+            return Err(());
+        }
+    };
+
+    let replacement_for = |reel_number: u32| {
+        config
+            .replacement_reels
+            .iter()
+            .find(|r| r.reel_number == reel_number)
+    };
+    let mut encrypted_references: Vec<EncryptedOvReference> = Vec::new();
+    for entry in &ov_timeline {
+        let rep = replacement_for(entry.reel_number);
+        let kept = |replacement: Option<&PathBuf>, asset_id: &str| {
+            replacement.is_none() && !asset_id.is_empty()
+        };
+        for (track, kept, asset_id) in [
+            (
+                OvTrack::Picture,
+                kept(
+                    rep.and_then(|r| r.picture.as_ref()),
+                    &entry.picture_asset_id,
+                ),
+                &entry.picture_asset_id,
+            ),
+            (
+                OvTrack::Sound,
+                kept(rep.and_then(|r| r.sound.as_ref()), &entry.sound_asset_id),
+                &entry.sound_asset_id,
+            ),
+            (
+                OvTrack::Subtitle,
+                kept(
+                    rep.and_then(|r| r.subtitle.as_ref()),
+                    &entry.subtitle_asset_id,
+                ),
+                &entry.subtitle_asset_id,
+            ),
+            (
+                OvTrack::ClosedCaption,
+                kept(rep.and_then(|r| r.ccap.as_ref()), &entry.ccap_asset_id),
+                &entry.ccap_asset_id,
+            ),
+            (
+                OvTrack::AuxData,
+                kept(None, &entry.aux_data_asset_id),
+                &entry.aux_data_asset_id,
+            ),
+        ] {
+            let asset_id = bare_uuid(asset_id);
+            if let (true, Some(key_id)) = (kept, ov_key_ids.get(&asset_id)) {
+                encrypted_references.push(EncryptedOvReference {
+                    track,
+                    asset_id,
+                    key_id: *key_id,
+                });
+            }
+        }
+    }
+    let encrypted = !encrypted_references.is_empty();
+
+    if !encrypted && (keys.key_out.is_some() || keys.ov_keys.is_some()) {
+        tracing::error!(
+            "the OV assets this VF references are not encrypted, so there are no keys to write \
+             or read: drop --key-out, --ov-keys and --ov-kdm"
+        );
+        return Err(());
+    }
+    if encrypted && config.signer.is_none() {
+        tracing::error!(
+            "{}: the VF references encrypted OV assets",
+            crate::preflight::ENCRYPTED_PACKAGE_NEEDS_SIGNER
+        );
+        return Err(());
+    }
+    if encrypted && keys.key_out.is_none() {
+        tracing::error!(
+            "--key-out is required when the OV is encrypted; keys are never written next to the DCP"
+        );
+        return Err(());
+    }
+    let ov_content_keys = match keys.ov_keys.as_ref() {
+        Some(source) => match ov_keys_for_references(source, &ov_cpl.id, &encrypted_references) {
+            Ok(content_keys) => content_keys,
+            Err(e) => {
+                tracing::error!("{e}");
+                return Err(());
+            }
+        },
+        None => Vec::new(),
+    };
+    let mut missing_ov_key_ids: Vec<String> = Vec::new();
+    if keys.ov_keys.is_none() {
+        for reference in &encrypted_references {
+            let key_id = reference.key_id.to_string();
+            if !missing_ov_key_ids.contains(&key_id) {
+                missing_ov_key_ids.push(key_id);
+            }
+        }
+    }
+    let new_key_type = |key_type: crate::encrypt::KeyType| -> Option<crate::encrypt::KeyType> {
+        encrypted.then_some(key_type)
+    };
+
+    // prove the signer works before anything is written, so a bad one cannot
+    // leave a half-signed package behind
+    if let Some(signer) = config.signer.as_ref()
+        && let Err(e) = signer.check_usable()
+    {
+        tracing::error!("unusable signer: {e}");
+        return Err(());
     }
 
     let sub_lang = if config.subtitle_language.is_empty() {
@@ -132,10 +524,9 @@ pub fn create_vf(config: &VfConfig) -> i32 {
 
     if let Err(e) = std::fs::create_dir_all(&vf_dir) {
         tracing::error!("Failed to create VF directory: {e}");
-        return -1;
+        return Err(());
     }
 
-    let ov_cpl_content = std::fs::read_to_string(&ov_cpl_path).unwrap_or_default();
     let standard = if ov_cpl_content.contains("digicine.com") {
         crate::Standard::Interop
     } else {
@@ -147,40 +538,46 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     // declare the whole raster active
     let (active_w, active_h) =
         crate::cpl::active_area_from_cpl(&ov_cpl_content).unwrap_or((pic_w, pic_h));
+    let ov_markers = crate::markers::markers_from_cpl(&ov_cpl_content);
+    let ov_key_id = |asset_id: &str| ov_key_ids.get(&bare_uuid(asset_id)).map(|k| k.to_string());
 
     let mut cpl_reels: Vec<crate::cpl::CplReel> = Vec::new();
     let mut new_assets: Vec<NewAsset> = Vec::new();
     let mut main_sound_track: Option<PathBuf> = None;
+    let mut sound_replaced = false;
 
-    for entry in &ov_timeline {
-        let rep = config
-            .replacement_reels
-            .iter()
-            .find(|r| r.reel_number == entry.reel_number);
+    for (reel_index, entry) in ov_timeline.iter().enumerate() {
+        let rep = replacement_for(entry.reel_number);
         let (edit_num, edit_den) = parse_edit_rate(&entry.edit_rate);
 
         // Picture: always present in a DCP reel.
-        let (picture_id, picture_duration) = match rep.and_then(|r| r.picture.as_ref()) {
-            Some(input) => {
-                let Some(a) = prepare_asset(
-                    input,
-                    "picture",
-                    crate::mxf_wrap::MxfType::J2kPicture,
-                    edit_num,
-                    entry.duration_frames,
-                    &vf_dir,
-                ) else {
-                    return -1;
-                };
-                if !replacement_fits_reel(entry, "picture", input, &a) {
-                    return -1;
+        let (picture_id, picture_duration, picture_key_id) =
+            match rep.and_then(|r| r.picture.as_ref()) {
+                Some(input) => {
+                    let Some(a) = prepare_asset(
+                        input,
+                        "picture",
+                        crate::mxf_wrap::MxfType::J2kPicture,
+                        edit_num,
+                        entry.duration_frames,
+                        new_key_type(crate::encrypt::KeyType::Mdik),
+                        &vf_dir,
+                    ) else {
+                        return Err(());
+                    };
+                    if !replacement_fits_reel(entry, "picture", input, &a) {
+                        return Err(());
+                    }
+                    let out = (a.id.clone(), a.duration, a.key_id());
+                    new_assets.push(a);
+                    out
                 }
-                let out = (a.id.clone(), a.duration);
-                new_assets.push(a);
-                out
-            }
-            None => (entry.picture_asset_id.clone(), entry.duration_frames),
-        };
+                None => (
+                    entry.picture_asset_id.clone(),
+                    entry.duration_frames,
+                    ov_key_id(&entry.picture_asset_id),
+                ),
+            };
 
         // Sound: from a replacement, or referenced from the OV, or absent.
         let sound = match rep.and_then(|r| r.sound.as_ref()) {
@@ -191,14 +588,16 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     crate::mxf_wrap::MxfType::PcmAudio,
                     edit_num,
                     entry.duration_frames,
+                    new_key_type(crate::encrypt::KeyType::Mdak),
                     &vf_dir,
                 ) else {
-                    return -1;
+                    return Err(());
                 };
                 if !replacement_fits_reel(entry, "sound", input, &a) {
-                    return -1;
+                    return Err(());
                 }
-                let out = Some((a.id.clone(), a.duration));
+                sound_replaced = true;
+                let out = Some((a.id.clone(), a.duration, a.key_id()));
                 if main_sound_track.is_none() {
                     main_sound_track = Some(vf_dir.join(&a.filename));
                 }
@@ -209,13 +608,26 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                 if main_sound_track.is_none() {
                     main_sound_track = Some(PathBuf::from(&entry.sound_file));
                 }
-                Some((entry.sound_asset_id.clone(), entry.duration_frames))
+                Some((
+                    entry.sound_asset_id.clone(),
+                    entry.duration_frames,
+                    ov_key_id(&entry.sound_asset_id),
+                ))
             }
             None => None,
         };
 
-        // Subtitle: a new track added or replaced on this reel. Unchanged reels
-        // keep no subtitle here (the VF ships only what it replaces).
+        let ov_timed_text = |asset_id: &str, language: &str| {
+            (!asset_id.is_empty()).then(|| TimedTextTrack {
+                id: asset_id.to_string(),
+                duration: entry.duration_frames,
+                hash: None,
+                key_id: ov_key_id(asset_id),
+                language: (!language.is_empty()).then(|| language.to_string()),
+            })
+        };
+
+        // Subtitle: a new track added or replaced on this reel, else the OV's.
         let subtitle = match rep.and_then(|r| r.subtitle.as_ref()) {
             Some(input) => {
                 let Some(a) = prepare_timed_text(
@@ -225,15 +637,16 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     edit_num,
                     entry.duration_frames,
                     &config.subtitle_opts,
+                    new_key_type(crate::encrypt::KeyType::Mdsk),
                     &vf_dir,
                 ) else {
-                    return -1;
+                    return Err(());
                 };
-                let out = Some((a.id.clone(), a.duration, a.hash.clone()));
+                let out = Some(a.timed_text_track(sub_lang));
                 new_assets.push(a);
                 out
             }
-            None => None,
+            None => ov_timed_text(&entry.subtitle_asset_id, &entry.subtitle_language),
         };
 
         // Closed caption: same handling, emitted under the ST 429-12 ClosedCaption role.
@@ -246,16 +659,27 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                     edit_num,
                     entry.duration_frames,
                     &config.subtitle_opts.for_closed_caption(),
+                    new_key_type(crate::encrypt::KeyType::Mdsk),
                     &vf_dir,
                 ) else {
-                    return -1;
+                    return Err(());
                 };
-                let out = Some((a.id.clone(), a.duration, a.hash.clone()));
+                let out = Some(a.timed_text_track(sub_lang));
                 new_assets.push(a);
                 out
             }
-            None => None,
+            None => ov_timed_text(&entry.ccap_asset_id, &entry.ccap_language),
         };
+
+        let aux_data = (!entry.aux_data_asset_id.is_empty()).then(|| crate::cpl::AuxData {
+            id: entry.aux_data_asset_id.clone(),
+            edit_rate_num: edit_num,
+            edit_rate_den: edit_den,
+            duration: entry.duration_frames,
+            entry_point: 0,
+            key_id: ov_key_id(&entry.aux_data_asset_id),
+            data_type: entry.aux_data_type.clone(),
+        });
 
         cpl_reels.push(crate::cpl::CplReel {
             reel_id: uuid::Uuid::new_v4().to_string(),
@@ -268,34 +692,39 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             picture_edit_rate_den: edit_den,
             picture_duration,
             picture_entry_point: 0,
-            picture_key_id: None,
+            picture_key_id,
             sound_id: sound.as_ref().map(|s| s.0.clone()),
             sound_edit_rate_num: edit_num,
             sound_edit_rate_den: edit_den,
             sound_duration: sound.as_ref().map(|s| s.1).unwrap_or(0),
             sound_entry_point: 0,
-            sound_key_id: None,
-            subtitle_id: subtitle.as_ref().map(|s| s.0.clone()),
+            sound_key_id: sound.as_ref().and_then(|s| s.2.clone()),
+            subtitle_id: subtitle.as_ref().map(|s| s.id.clone()),
             subtitle_edit_rate_num: if subtitle.is_some() { edit_num } else { 0 },
             subtitle_edit_rate_den: if subtitle.is_some() { edit_den } else { 0 },
-            subtitle_duration: subtitle.as_ref().map(|s| s.1).unwrap_or(0),
+            subtitle_duration: subtitle.as_ref().map(|s| s.duration).unwrap_or(0),
             subtitle_entry_point: 0,
-            subtitle_language: subtitle.as_ref().map(|_| sub_lang.to_string()),
-            subtitle_hash: subtitle.as_ref().map(|s| s.2.clone()),
-            ccap_id: ccap.as_ref().map(|c| c.0.clone()),
+            subtitle_language: subtitle.as_ref().and_then(|s| s.language.clone()),
+            subtitle_hash: subtitle.as_ref().and_then(|s| s.hash.clone()),
+            subtitle_key_id: subtitle.as_ref().and_then(|s| s.key_id.clone()),
+            ccap_id: ccap.as_ref().map(|c| c.id.clone()),
             ccap_edit_rate_num: if ccap.is_some() { edit_num } else { 0 },
             ccap_edit_rate_den: if ccap.is_some() { edit_den } else { 0 },
-            ccap_duration: ccap.as_ref().map(|c| c.1).unwrap_or(0),
+            ccap_duration: ccap.as_ref().map(|c| c.duration).unwrap_or(0),
             ccap_entry_point: 0,
-            ccap_language: ccap.as_ref().map(|_| sub_lang.to_string()),
-            ccap_hash: ccap.as_ref().map(|c| c.2.clone()),
+            ccap_language: ccap.as_ref().and_then(|c| c.language.clone()),
+            ccap_hash: ccap.as_ref().and_then(|c| c.hash.clone()),
+            ccap_key_id: ccap.as_ref().and_then(|c| c.key_id.clone()),
             stereoscopic: false,
-            aux_data: None,
-            markers: Vec::new(),
+            aux_data,
+            markers: ov_markers.get(reel_index).cloned().unwrap_or_default(),
             ..Default::default()
         });
     }
-    crate::cpl::apply_default_markers(&mut cpl_reels);
+    // Bv2.1 wants FFOC and LFOC even when the OV has no markers
+    if cpl_reels.iter().all(|reel| reel.markers.is_empty()) {
+        crate::cpl::apply_default_markers(&mut cpl_reels);
+    }
 
     let title = if config.title.is_empty() {
         format!("{}_VF", ov_cpl.content_title)
@@ -315,12 +744,19 @@ pub fn create_vf(config: &VfConfig) -> i32 {
                 Ok(sound) => Some(sound),
                 Err(e) => {
                     tracing::error!("{e}");
-                    return -1;
+                    return Err(());
                 }
             }
         }
         _ => None,
     };
+    // the sign-language video is packed in the OV sound track
+    let sign_language = crate::cpl::sign_language_from_cpl(&ov_cpl_content);
+    if sign_language.is_some() && sound_replaced {
+        tracing::warn!(
+            "the OV's sign-language video is in the sound it replaces, so the VF does not declare it"
+        );
+    }
 
     // ── Write CPL via the shared postkit writer, then mark it supplemental ──
     let cpl_uuid = uuid::Uuid::new_v4().to_string();
@@ -329,19 +765,20 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         title,
         content_kind,
         rating: String::new(),
+        ratings: ov_identity.ratings,
         reels: cpl_reels,
         standard,
         main_sound,
-        sign_language: None,
+        sign_language: sign_language.filter(|_| !sound_replaced),
         ..Default::default()
     };
     if crate::cpl::generate_cpl(&cpl_config, &cpl_uuid, &cpl_path) != 0 {
         tracing::error!("Failed to generate VF CPL");
-        return -1;
+        return Err(());
     }
 
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &cpl_path, "VF CPL") {
-        return -1;
+        return Err(());
     }
 
     // ── PKL: the CPL plus every new MXF ────────────────────────────────────
@@ -367,10 +804,10 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     let pkl_path = vf_dir.join(format!("PKL_{pkl_uuid}.xml"));
     if crate::pkl::generate_pkl(&pkl_entries, &pkl_uuid, standard, None, &pkl_path) != 0 {
         tracing::error!("Failed to generate VF PKL");
-        return -1;
+        return Err(());
     }
     if !crate::package_signature::sign_if_configured(config.signer.as_ref(), &pkl_path, "VF PKL") {
-        return -1;
+        return Err(());
     }
 
     // ── ASSETMAP: PKL, CPL, and every new MXF ──────────────────────────────
@@ -381,7 +818,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
             packing_list: true,
         },
         crate::assetmap::AssetMapEntry {
-            id: cpl_uuid,
+            id: cpl_uuid.clone(),
             path: file_name(&cpl_path),
             packing_list: false,
         },
@@ -395,7 +832,22 @@ pub fn create_vf(config: &VfConfig) -> i32 {
     }
     if crate::assetmap::generate_assetmap(&am_entries, &vf_dir, standard, None) != 0 {
         tracing::error!("Failed to generate VF ASSETMAP");
-        return -1;
+        return Err(());
+    }
+
+    if let Some(keys_path) = keys.key_out.as_ref().filter(|_| encrypted) {
+        let bundle = crate::encrypt::KeyBundle {
+            cpl_id: cpl_uuid,
+            keys: new_assets
+                .iter()
+                .filter_map(|a| a.key.clone())
+                .chain(ov_content_keys)
+                .collect(),
+        };
+        if let Err(e) = write_keys_file(keys_path, &bundle) {
+            tracing::error!("{e}");
+            return Err(());
+        }
     }
 
     tracing::info!(
@@ -403,7 +855,7 @@ pub fn create_vf(config: &VfConfig) -> i32 {
         vf_dir.display(),
         new_assets.len()
     );
-    0
+    Ok(missing_ov_key_ids)
 }
 
 /// Read the AssetUUID an already-wrapped MXF carries, so a copied track file is
@@ -470,6 +922,7 @@ fn prepare_asset(
     mxf_type: crate::mxf_wrap::MxfType,
     fps: u32,
     fallback_duration: u64,
+    key_type: Option<crate::encrypt::KeyType>,
     vf_dir: &Path,
 ) -> Option<NewAsset> {
     if !input.exists() {
@@ -483,7 +936,16 @@ fn prepare_asset(
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("mxf"));
 
-    let (id, filename, duration) = if is_mxf {
+    if is_mxf && key_type.is_some() {
+        tracing::error!(
+            "the VF references encrypted OV assets, so its {prefix} has to be encrypted too: \
+             give raw essence instead of the wrapped MXF {}",
+            input.display()
+        );
+        return None;
+    }
+
+    let (id, filename, duration, key) = if is_mxf {
         // Already wrapped: copy verbatim under the id the MXF itself carries,
         // so the CPL/PKL/ASSETMAP entries match what the file holds.
         let Some((id, duration)) = wrapped_asset_uuid_and_duration(input, mxf_type) else {
@@ -496,10 +958,11 @@ fn prepare_asset(
             tracing::error!("Failed to copy MXF {}: {e}", input.display());
             return None;
         }
-        (id, filename, duration)
+        (id, filename, duration, None)
     } else {
         // Raw essence: mint the id, name the file with it and wrap the MXF under it.
         let id = uuid::Uuid::new_v4();
+        let key = mint_key(key_type, &id.to_string()).ok()?;
         let filename = format!("{prefix}_{id}.mxf");
         let packaged_sound = vf_dir.join(format!(".dcpwizard_audio_{id}.wav"));
         let input_path = match mxf_type {
@@ -525,7 +988,7 @@ fn prepare_asset(
             output_mxf: vf_dir.join(&filename),
             mxf_type,
             frame_rate: fps,
-            encryption: None,
+            encryption: key.as_ref().map(crate::reel::mxf_enc),
             mca_config: None,
             asset_uuid: Some(*id.as_bytes()),
         };
@@ -537,7 +1000,7 @@ fn prepare_asset(
         } else {
             fallback_duration
         };
-        (tf.uuid, filename, duration)
+        (tf.uuid, filename, duration, key.map(|k| k.info))
     };
 
     let path = vf_dir.join(&filename);
@@ -555,6 +1018,7 @@ fn prepare_asset(
         hash,
         size,
         duration,
+        key,
     })
 }
 
@@ -562,6 +1026,7 @@ fn prepare_asset(
 /// converted to ST 428-7 DCST first, supplied SMPTE XML is wrapped unchanged.
 /// `prefix` names the loose/wrapped files ("subtitle" or "ccap"). Returns the
 /// wrapped track's real asset id, hash, size, and duration. `None` on failure.
+#[allow(clippy::too_many_arguments)]
 fn prepare_timed_text(
     input: &Path,
     prefix: &str,
@@ -569,6 +1034,7 @@ fn prepare_timed_text(
     fps: u32,
     fallback_duration: u64,
     opts: &crate::subtitle::SubtitleOptions,
+    key_type: Option<crate::encrypt::KeyType>,
     vf_dir: &Path,
 ) -> Option<NewAsset> {
     if !input.exists() {
@@ -600,6 +1066,7 @@ fn prepare_timed_text(
 
     let id = uuid::Uuid::new_v4();
     let filename = format!("{prefix}_{id}.mxf");
+    let key = mint_key(key_type, &id.to_string()).ok()?;
     let track = crate::mxf_wrap::wrap_timed_text_resources(
         &dcst_path,
         &resources,
@@ -607,7 +1074,7 @@ fn prepare_timed_text(
         fps,
         Some(*id.as_bytes()),
         None,
-        None,
+        key.as_ref().map(crate::reel::mxf_enc),
     );
     if let Some(tmp) = temp_dcst {
         let _ = std::fs::remove_file(tmp);
@@ -640,6 +1107,7 @@ fn prepare_timed_text(
         hash,
         size,
         duration,
+        key: key.map(|k| k.info),
     })
 }
 

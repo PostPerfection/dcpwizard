@@ -616,7 +616,9 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
 dcpwizard pipeline -i movie.mov -t "My Film" -o ./dcp --audio mix.wav
 
 # Supplemental Version File (VF): replace reel 1's sound against an existing OV.
-# Unchanged reels reference the OV by asset id; only the new MXF ships in the VF.
+# Every OV track not replaced, Atmos, subtitles and closed captions included, is
+# referenced by asset id, and only the new MXF ships in the VF. The VF CPL keeps
+# the OV's markers and ratings.
 # Replacement can be raw essence (WAV/J2K, gets wrapped) or an already-wrapped MXF.
 # A replacement must be as long as the reel it replaces, and an 8 or 16-bit WAV
 # is widened to 24-bit the way create widens it.
@@ -628,6 +630,17 @@ dcpwizard verify "./dcp_vf/My Film_VF" --ov "./dcp/My Film"
 # VF references the OV picture/sound by id and ships just the new subtitle MXF.
 dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf \
     --add-subtitle 1=./fr.srt --subtitle-language fr
+# Over an encrypted OV each referenced OV track keeps its KeyId, the new tracks
+# are encrypted with fresh keys (so a replacement must be raw essence, not MXF),
+# and the VF must be signed. --key-out writes the keys file `kdm --keys` reads for
+# the VF CPL: the new keys plus the OV keys the VF references, taken from the OV's
+# keys file (--ov-keys) or from a KDM for the OV and the private key it was made
+# for (--ov-kdm with --ov-key). Without either it holds the new keys only, and
+# create-vf lists the OV KeyIds a KDM for the VF still needs.
+dcpwizard create-vf --ov "./dcp/My Film" --output ./dcp_vf \
+    --add-subtitle 1=./fr.srt --subtitle-language fr \
+    --ov-keys ./secret/my_film.keys.json --key-out ./secret/my_film_vf.keys.json \
+    --signer-cert signer.pem --signer-key signer.key
 
 # Assemble a new OV composition from existing DCPs (reels in program order),
 # written to ./assembled/Short + Feature

@@ -657,17 +657,18 @@ fn check_packageable_sound(spec: &hound::WavSpec, wav: &Path) -> Result<(), Stri
     Ok(())
 }
 
+pub const ENCRYPTED_PACKAGE_NEEDS_SIGNER: &str = "an encrypted package needs a signed CPL and PKL: \
+     name a signer with --signer-cert and --signer-key";
+
 /// A KDM binds to a signed CPL, so an encrypted package with nothing to sign it
 /// is one no projector can be given keys for.
 fn check_signed_when_encrypted(plan: &CreatePlan) -> Result<(), String> {
     if !plan.encrypt || plan.signed {
         return Ok(());
     }
-    Err(
-        "an encrypted package needs a signed CPL and PKL: name a signer with --signer-cert and \
-         --signer-key, or build it without --encrypt"
-            .into(),
-    )
+    Err(format!(
+        "{ENCRYPTED_PACKAGE_NEEDS_SIGNER}, or build it without --encrypt"
+    ))
 }
 
 fn check_atmos(plan: &CreatePlan) -> Result<(), String> {

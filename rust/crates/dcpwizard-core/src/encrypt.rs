@@ -34,6 +34,12 @@ impl KeyType {
             KeyType::Mdek => *b"MDEK",
         }
     }
+
+    pub fn from_smpte(key_type: &[u8; 4]) -> Option<Self> {
+        [KeyType::Mdik, KeyType::Mdak, KeyType::Mdsk, KeyType::Mdek]
+            .into_iter()
+            .find(|candidate| &candidate.as_smpte() == key_type)
+    }
 }
 
 /// One content key: which essence it encrypts and the raw key material (hex).
@@ -83,6 +89,20 @@ impl KeyBundle {
             .map_err(|e| format!("cannot serialize keys: {e}"))?;
         // holds raw content keys: atomic_write's tempfile gives it mode 0600
         postkit::fs::write_atomic(path, json.as_bytes())
+    }
+
+    // an empty cpl_id on either side skips the check
+    pub fn read_for_cpl(path: &Path, cpl_id: &str) -> Result<Self, String> {
+        let bundle = Self::read(path)?;
+        let want = cpl_id.trim().trim_start_matches("urn:uuid:");
+        let have = bundle.cpl_id.trim().trim_start_matches("urn:uuid:");
+        if !have.is_empty() && !want.is_empty() && have != want {
+            return Err(format!(
+                "keys file {} is for CPL {have}, not {want}",
+                path.display()
+            ));
+        }
+        Ok(bundle)
     }
 
     pub fn read(path: &Path) -> Result<Self, String> {
@@ -138,7 +158,7 @@ pub fn generate_content_key(key_type: KeyType, asset_uuid: &str) -> Result<Gener
     })
 }
 
-fn hex_encode(data: &[u8]) -> String {
+pub(crate) fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{b:02x}")).collect()
 }
 
