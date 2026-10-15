@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- **A KDM is used only when its signature checks out**: `decrypt --kdm`, `create-vf --ov-kdm`, `kdm-rewrap`, and every other path that decrypts a KDM's keys verify the KDM's XML signature first and refuse a KDM with no signature or one edited after signing. The signature is checked against the certificate the KDM carries.
+
 ## [1.9.0] - 2026-10-15
 
 ### Added
