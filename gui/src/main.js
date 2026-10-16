@@ -27,7 +27,7 @@ import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPU
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
-import { initProjectPropertiesLayout, syncPreviewDock } from "./project-properties-layout.js";
+import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
