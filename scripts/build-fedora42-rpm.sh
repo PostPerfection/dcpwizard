@@ -119,6 +119,7 @@ VERSION="$(read_tauri_config .version)"
 BUILT_RPM="$WORK/gui/src-tauri/target/release/bundle/rpm/$PRODUCT_NAME-$VERSION-$RPM_RELEASE.x86_64.rpm"
 RPM_NAME="${PRODUCT_NAME// /-}-$VERSION-$RPM_RELEASE.x86_64.rpm"
 cp "$BUILT_RPM" "$OUTPUT_DIRECTORY/$RPM_NAME"
+"$ROOT/scripts/check-linux-package-payload.sh" "$OUTPUT_DIRECTORY/$RPM_NAME"
 echo "wrote $OUTPUT_DIRECTORY/$RPM_NAME"
 
 podman run --rm -i --security-opt label=disable \

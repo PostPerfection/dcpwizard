@@ -188,7 +188,7 @@ GPU encoding and preview decode need Grok's accelerator plugin, a commercial pro
 ./scripts/build-fedora-rpm.sh /path/to/grok/install /path/to/ffmpeg-mpv-linux-x86_64
 ```
 
-The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-<version>-1.sm75.x86_64.rpm` for a 2080 Ti. Remove an installed test build with `sudo dnf remove dcp-wizard`.
+The RPM is written under `gui/src-tauri/target/release/bundle/rpm`. The plugin is built for one CUDA compute capability, and the file name carries it in the release field, for example `DCP-Wizard-<version>-1.sm75.x86_64.rpm` for a 2080 Ti. `RPM_RELEASE_NUMBER=2` makes a second build of the same version that dnf upgrades over the first. The script fails if either binary needs an FFmpeg or Grok soname the rpm does not ship. Remove an installed test build with `sudo dnf remove dcp-wizard`.
 
 That rpm needs two more things on the target machine: the RPM Fusion NVIDIA driver, and a Grok licence entered under Settings. The CUDA runtime is linked into the plugin, so the CUDA toolkit and the NVIDIA Container Toolkit are not needed:
 

@@ -123,6 +123,7 @@ VERSION="$(read_tauri_config .version)"
 BUILT_DEB="$WORK/gui/src-tauri/target/release/bundle/deb/${PRODUCT_NAME}_${VERSION}_amd64.deb"
 DEB_NAME="${PRODUCT_NAME// /-}_${VERSION}-sm${CUDA_ARCH}_amd64.deb"
 cp "$BUILT_DEB" "$OUTPUT_DIRECTORY/$DEB_NAME"
+"$ROOT/scripts/check-linux-package-payload.sh" "$OUTPUT_DIRECTORY/$DEB_NAME"
 echo "wrote $OUTPUT_DIRECTORY/$DEB_NAME"
 
 podman run --rm -i --security-opt label=disable \

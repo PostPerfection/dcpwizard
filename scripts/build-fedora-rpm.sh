@@ -39,7 +39,7 @@ if [[ -z "$CUDA_ARCH" ]]; then
     echo "cuobjdump found no cubin in libgrokj2k_plugin.so" >&2
     exit 1
 fi
-RPM_RELEASE="1.${CUDA_ARCH/_/}"
+RPM_RELEASE="${RPM_RELEASE_NUMBER:-1}.${CUDA_ARCH/_/}"
 
 FFMPEG_MPV_FILES="$("$ROOT/scripts/ffmpeg-mpv-bundle-config.sh" "$FFMPEG_MPV_DIR" Linux)"
 
@@ -53,5 +53,6 @@ pnpm tauri build --bundles rpm --config "$FFMPEG_MPV_FILES" --config "$PLUGIN_FI
 shopt -s nullglob
 for rpm in "$ROOT"/gui/src-tauri/target/release/bundle/rpm/*\ *-"$RPM_RELEASE".*.rpm; do
     mv "$rpm" "${rpm// /-}"
+    "$ROOT/scripts/check-linux-package-payload.sh" "${rpm// /-}"
     echo "wrote ${rpm// /-}"
 done
