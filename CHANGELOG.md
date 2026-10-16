@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **The preview sits beside the properties**: in the project view, opening the preview puts it at the top of the left column above the assets, so the properties keep the full window height. It goes back to the strip above the transport when another view is shown. Full screen works from either place.
+- **Deep colour preview on macOS and Windows**: the preview draws a DCP frame at 10 bits or more when the display framebuffer carries that depth. Linux stays 8 bit, its GL surface has no deeper mode.
+- **The preview height is adjustable**: a drag handle on the preview's edge changes the picture height, remembered across restarts. The handle is on the top edge in the strip and the bottom edge beside the properties.
 - **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
 
 ### Fixed
@@ -10,6 +13,7 @@
 - **The ISDCF name preview follows the burn-in subtitle pick**: picking a file for Burn subtitles into the picture left the name under the title without its lower case subtitle language until another field changed.
 
 ### Changed
+- **Properties are always beside the assets**: the properties sit on the right of the project view, and the Position pick and the asset strip handle are gone.
 - **A KDM is used only when its signature checks out**: `decrypt --kdm`, `create-vf --ov-kdm`, `kdm-rewrap`, and every other path that decrypts a KDM's keys verify the KDM's XML signature first and refuse a KDM with no signature or one edited after signing. The signature is checked against the certificate the KDM carries.
 - **`certificate inspect` shows the whole file**: every certificate in a PEM file is listed leaf first with its full subject and issuer, key usage, roles and thumbprint, followed by the chain check. A file that is not a certificate, or that holds a private key, now fails with exit code 1. A certificate alone, without its issuers, passes with ST 430-2 rules 14, 15, 17 and 18 listed as not checked because there is no chain.
 - **`cert-fetch` downloads through postkit's `kdm_distribution::certificate_fetch`**: its flags and output are unchanged, except that a failed vendor login reads `authentication failed (check the vendor user and password)`, and a Barco fetch with a curl that has no sftp, as Windows and macOS ship, says so instead of `download failed (curl exit 1)`. A Dolby or Doremi certificate is written with its chain, leaf first, when a `.dcicerts.zip` or `.certs.zip` beside it holds one.

@@ -110,18 +110,6 @@
   min-width: 0;
 }
 
-.properties-position {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.properties-position select {
-  padding: 3px 6px;
-}
-
 .properties-resize-handle {
   flex: 0 0 16px;
   display: flex;
@@ -130,10 +118,6 @@
   cursor: col-resize;
   touch-action: none;
   user-select: none;
-}
-
-.properties-resize-handle[hidden] {
-  display: none;
 }
 
 .properties-resize-handle::before {
@@ -149,23 +133,31 @@
   background: var(--primary);
 }
 
-#view-project .workspace.properties-on-right {
+#view-project .workspace {
   flex-direction: row;
   min-height: 0;
 }
 
-#view-project .workspace.properties-on-right .workspace-main {
+#view-project .workspace .workspace-main {
   flex: 1 1 auto;
   width: auto;
   height: auto;
   min-width: 0;
 }
 
-#view-project .workspace.properties-on-right > .asset-strip-handle {
-  display: none;
+#view-project .workspace .workspace-main:has(> .preview-panel) {
+  grid-template-rows: auto minmax(100px, auto) minmax(100px, 1fr);
+  grid-template-areas:
+    "preview preview"
+    "assets compositions"
+    "assets reels";
 }
 
-#view-project .workspace.properties-on-right .properties-panel {
+#view-project .workspace .workspace-main > .preview-panel {
+  grid-area: preview;
+}
+
+#view-project .workspace .properties-panel {
   flex: 0 0 var(--project-properties-width, 360px);
   width: var(--project-properties-width, 360px);
   min-width: 280px;
@@ -173,11 +165,11 @@
   max-width: 60%;
 }
 
-#view-project .workspace.properties-on-right .properties-content {
+#view-project .workspace .properties-content {
   display: block;
 }
 
-#view-project .workspace.properties-on-right .properties-content fieldset {
+#view-project .workspace .properties-content fieldset {
   margin-bottom: 16px;
   padding: 0;
   background: transparent;
@@ -185,12 +177,12 @@
   border-radius: 0;
 }
 
-#view-project .workspace.properties-on-right .properties-content legend {
+#view-project .workspace .properties-content legend {
   float: none;
   width: auto;
 }
 
-#view-project .workspace.properties-on-right .properties-content legend + * {
+#view-project .workspace .properties-content legend + * {
   clear: none;
 }
 

@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import test from "node:test";
 
-import { boundedPropertiesWidth, initProjectPropertiesLayout } from "../src/project-properties-layout.js";
+register("../../extern/guikit/test/module-hooks.mjs", import.meta.url);
+
+const previewStub = await import("../../extern/guikit/test/preview-stub.mjs");
+const { boundedPropertiesWidth, initProjectPropertiesLayout, syncPreviewDock } = await import(
+  "../src/project-properties-layout.js"
+);
 
 const POINTER = 7;
 const PRIMARY_BUTTON = 0;
@@ -33,10 +39,9 @@ function fakeControl() {
   };
 }
 
-function setUp(savedValues = {}) {
-  const saved = new Map(Object.entries(savedValues));
+function setUp() {
+  const saved = new Map();
   const workspace = {
-    classList: fakeClassList(),
     width: WORKSPACE_WIDTH,
     style: {
       setProperty(_, value) {
@@ -48,7 +53,6 @@ function setUp(savedValues = {}) {
   const panel = { width: START_WIDTH, getBoundingClientRect: () => ({ width: panel.width }) };
   const handle = {
     ...fakeControl(),
-    hidden: true,
     captured: new Set(),
     setPointerCapture(pointer) {
       this.captured.add(pointer);
@@ -60,17 +64,26 @@ function setUp(savedValues = {}) {
       this.captured.delete(pointer);
     },
   };
-  const position = { ...fakeControl(), value: "below" };
+  const projectView = { classList: fakeClassList() };
+  projectView.classList.toggle("active", true);
+  const workspaceMain = {};
   globalThis.document = {
-    querySelector: () => workspace,
+    querySelector(selector) {
+      return { "#view-project .workspace": workspace, "#view-project .workspace-main": workspaceMain }[selector];
+    },
     getElementById(id) {
-      return { properties: panel, "properties-resize-handle": handle, "properties-position": position }[id];
+      return {
+        properties: panel,
+        "properties-resize-handle": handle,
+        "view-project": projectView,
+      }[id];
     },
   };
   globalThis.localStorage = {
     getItem: (key) => saved.get(key) ?? null,
     setItem: (key, value) => saved.set(key, value),
   };
+  previewStub.forgetCalls();
   initProjectPropertiesLayout("wizard");
   const fireHandle = (name, event = {}) => {
     const fired = {
@@ -82,37 +95,11 @@ function setUp(savedValues = {}) {
     handle.handlers[name](fired);
     return fired;
   };
-  return { workspace, panel, handle, position, saved, fireHandle };
+  return { panel, handle, projectView, workspaceMain, saved, fireHandle };
 }
 
-test("properties start below the assets", () => {
-  const { workspace, handle, position } = setUp();
-
-  assert.equal(workspace.classList.contains("properties-on-right"), false);
-  assert.equal(handle.hidden, true);
-  assert.equal(position.value, "below");
-});
-
-test("the saved position puts properties on the right", () => {
-  const { workspace, handle, position } = setUp({ "wizard-properties-position": "right" });
-
-  assert.equal(workspace.classList.contains("properties-on-right"), true);
-  assert.equal(handle.hidden, false);
-  assert.equal(position.value, "right");
-});
-
-test("changing the position saves it", () => {
-  const { workspace, handle, position, saved } = setUp();
-  position.value = "right";
-  position.handlers.change();
-
-  assert.equal(workspace.classList.contains("properties-on-right"), true);
-  assert.equal(handle.hidden, false);
-  assert.equal(saved.get("wizard-properties-position"), "right");
-});
-
 test("dragging left widens the right panel and saves its width", () => {
-  const { panel, handle, saved, fireHandle } = setUp({ "wizard-properties-position": "right" });
+  const { panel, handle, saved, fireHandle } = setUp();
   fireHandle("pointerdown", { button: PRIMARY_BUTTON, clientX: 700 });
   fireHandle("pointermove", { buttons: PRIMARY_BUTTON_HELD, clientX: 620 });
 
@@ -128,9 +115,27 @@ test("the panel width stays between its minimum and sixty percent", () => {
 });
 
 test("arrow keys resize the panel", () => {
-  const { panel, saved, fireHandle } = setUp({ "wizard-properties-position": "right" });
+  const { panel, saved, fireHandle } = setUp();
 
   assert.equal(fireHandle("keydown", { key: "ArrowLeft" }).defaultPrevented, true);
   assert.equal(panel.width, START_WIDTH + 24);
   assert.equal(saved.get("wizard-properties-width"), String(START_WIDTH + 24));
+});
+
+test("the project view docks the preview above the assets", () => {
+  const { workspaceMain } = setUp();
+
+  assert.deepEqual(previewStub.calls.at(-1), ["dock", workspaceMain]);
+});
+
+test("leaving the project view undocks the preview and returning docks it again", () => {
+  const { projectView, workspaceMain } = setUp();
+
+  projectView.classList.toggle("active", false);
+  syncPreviewDock();
+  assert.deepEqual(previewStub.calls.at(-1), ["undock"]);
+
+  projectView.classList.toggle("active", true);
+  syncPreviewDock();
+  assert.deepEqual(previewStub.calls.at(-1), ["dock", workspaceMain]);
 });

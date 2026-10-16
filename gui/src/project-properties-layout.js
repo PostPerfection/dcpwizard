@@ -1,8 +1,8 @@
+import { dockPreviewPanel, undockPreviewPanel } from "../../extern/guikit/src/preview.js";
+
 const PRIMARY_BUTTON = 0;
 const PRIMARY_BUTTON_HELD = 1;
-const BELOW_ASSETS = "below";
-const RIGHT_SIDE = "right";
-const RIGHT_SIDE_CLASS = "properties-on-right";
+const ACTIVE_VIEW_CLASS = "active";
 const MINIMUM_PROPERTIES_WIDTH = 280;
 const MAXIMUM_PROPERTIES_WIDTH_FRACTION = 0.6;
 const KEYBOARD_RESIZE_STEP = 24;
@@ -12,14 +12,20 @@ export function boundedPropertiesWidth(width, workspaceWidth) {
   return Math.round(Math.min(Math.max(width, MINIMUM_PROPERTIES_WIDTH), maximumWidth));
 }
 
+export function syncPreviewDock() {
+  if (document.getElementById("view-project").classList.contains(ACTIVE_VIEW_CLASS)) {
+    dockPreviewPanel(document.querySelector("#view-project .workspace-main"));
+  } else {
+    undockPreviewPanel();
+  }
+}
+
 export function initProjectPropertiesLayout(wizard) {
   const workspace = document.querySelector("#view-project .workspace");
   const panel = document.getElementById("properties");
   const handle = document.getElementById("properties-resize-handle");
-  const position = document.getElementById("properties-position");
-  if (!workspace || !panel || !handle || !position) return;
+  if (!workspace || !panel || !handle) return;
 
-  const positionKey = `${wizard}-properties-position`;
   const widthKey = `${wizard}-properties-width`;
   const setWidth = (width) => {
     const boundedWidth = boundedPropertiesWidth(width, workspace.getBoundingClientRect().width);
@@ -31,21 +37,10 @@ export function initProjectPropertiesLayout(wizard) {
     setWidth(width);
     localStorage.setItem(widthKey, String(width));
   };
-  const setPosition = (value) => {
-    const onRight = value === RIGHT_SIDE;
-    workspace.classList.toggle(RIGHT_SIDE_CLASS, onRight);
-    handle.hidden = !onRight;
-    position.value = onRight ? RIGHT_SIDE : BELOW_ASSETS;
-  };
 
   const savedWidth = Number(localStorage.getItem(widthKey));
   if (Number.isFinite(savedWidth) && savedWidth > 0) setWidth(savedWidth);
-  setPosition(localStorage.getItem(positionKey));
-
-  position.addEventListener("change", () => {
-    setPosition(position.value);
-    localStorage.setItem(positionKey, position.value);
-  });
+  syncPreviewDock();
 
   let dragStart = null;
   const endDrag = () => {

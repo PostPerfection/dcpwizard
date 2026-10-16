@@ -186,7 +186,7 @@ checksum = "08dae85b57b725df143d5a2eb92c032dd032f062a636826fda1e1a4b21c40c03"
 [[package]]
 name = "asdcplib"
 version = "0.1.0"
-source = "git+https://github.com/PostPerfection/asdcplib-rs.git?rev=c8c24cc2d3ed4d22460b744e55b0b840ed98cbfa#c8c24cc2d3ed4d22460b744e55b0b840ed98cbfa"
+source = "git+https://github.com/PostPerfection/asdcplib-rs.git?rev=084fd449cd90408078ee53b6b097522226e01153#084fd449cd90408078ee53b6b097522226e01153"
 dependencies = [
  "asdcplib-sys",
  "thiserror 2.0.18",
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "asdcplib-sys"
 version = "0.1.0"
-source = "git+https://github.com/PostPerfection/asdcplib-rs.git?rev=c8c24cc2d3ed4d22460b744e55b0b840ed98cbfa#c8c24cc2d3ed4d22460b744e55b0b840ed98cbfa"
+source = "git+https://github.com/PostPerfection/asdcplib-rs.git?rev=084fd449cd90408078ee53b6b097522226e01153#084fd449cd90408078ee53b6b097522226e01153"
 dependencies = [
  "cc",
  "cmake",
@@ -565,6 +565,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "cmac"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac78aa94ce13e432b332a4d1bf2eff167d3a2520188ee05b337180a42fd2e62e"
+dependencies = [
+ "cipher",
+ "dbl",
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -692,7 +703,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "windows",
+ "windows 0.54.0",
 ]
 
 [[package]]
@@ -804,12 +815,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
+name = "dbl"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d7a944e61df464668c5f51f56cc667396a8821434273112948ea0b66e405d7"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "dcpdoctor-core"
-version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=373a345696297daaa2f4820b29bf0839abca930d#373a345696297daaa2f4820b29bf0839abca930d"
+version = "1.5.0"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=0527590e2074d13b009688010e2eab8f9b20e6ac#0527590e2074d13b009688010e2eab8f9b20e6ac"
 dependencies = [
  "asdcplib",
  "base64",
+ "chrono",
  "dcpdoctor-imf",
  "dcpdoctor-parse",
  "language-tags",
@@ -830,8 +851,8 @@ dependencies = [
 
 [[package]]
 name = "dcpdoctor-imf"
-version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=373a345696297daaa2f4820b29bf0839abca930d#373a345696297daaa2f4820b29bf0839abca930d"
+version = "1.5.0"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=0527590e2074d13b009688010e2eab8f9b20e6ac#0527590e2074d13b009688010e2eab8f9b20e6ac"
 dependencies = [
  "dcpdoctor-parse",
  "quick-xml 0.41.0",
@@ -840,8 +861,8 @@ dependencies = [
 
 [[package]]
 name = "dcpdoctor-parse"
-version = "1.4.0"
-source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=373a345696297daaa2f4820b29bf0839abca930d#373a345696297daaa2f4820b29bf0839abca930d"
+version = "1.5.0"
+source = "git+https://github.com/PostPerfection/dcpdoctor.git?rev=0527590e2074d13b009688010e2eab8f9b20e6ac#0527590e2074d13b009688010e2eab8f9b20e6ac"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
@@ -872,7 +893,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "zip",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -1060,6 +1081,47 @@ dependencies = [
  "crc",
  "roxmltree 0.21.1",
  "tinyvec",
+]
+
+[[package]]
+name = "drm"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a41816e58f47f49acfd956651055ddcf137c4882c2098c30c448817af21183a"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytemuck",
+ "bytemuck_derive",
+ "drm-ffi",
+ "drm-fourcc",
+ "libc",
+ "rustix",
+]
+
+[[package]]
+name = "drm-ffi"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51a91c9b32ac4e8105dec255e849e0d66e27d7c34d184364fb93e469db08f690"
+dependencies = [
+ "drm-sys",
+ "rustix",
+]
+
+[[package]]
+name = "drm-fourcc"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aafbcdb8afc29c1a7ee5fbe53b5d62f4565b35a042a662ca9fecd0b54dae6f4"
+
+[[package]]
+name = "drm-sys"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc8e1361066d91f5ffccff060a3c3be9c3ecde15be2959c1937595f7a82a9f8"
+dependencies = [
+ "libc",
+ "linux-raw-sys 0.9.4",
 ]
 
 [[package]]
@@ -1933,6 +1995,12 @@ checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
 
 [[package]]
 name = "linux-raw-sys"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd945864f07fe9f5371a27ad7b52a172b4b499999f1d97574c9fa68373937e12"
+
+[[package]]
+name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
@@ -2473,15 +2541,18 @@ dependencies = [
 name = "postkit"
 version = "0.6.0"
 dependencies = [
+ "aes",
  "allsorts",
  "ar-reshaper",
  "asdcplib",
  "base64",
  "chrono",
+ "cmac",
  "cosmic-text",
  "cpal",
  "dirs",
  "dolby_vision",
+ "drm",
  "ebur128",
  "ffmpeg-next",
  "grokj2k-sys",
@@ -2516,9 +2587,10 @@ dependencies = [
  "tracing",
  "unicode-bidi",
  "uuid",
+ "windows 0.62.2",
  "x509-parser",
  "zeroize",
- "zip",
+ "zip 9.0.4",
 ]
 
 [[package]]
@@ -2927,7 +2999,7 @@ dependencies = [
  "bitflags 2.13.2",
  "errno",
  "libc",
- "linux-raw-sys",
+ "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
 ]
 
@@ -3906,6 +3978,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
+dependencies = [
+ "windows-collections",
+ "windows-core 0.62.2",
+ "windows-future",
+ "windows-numerics",
+]
+
+[[package]]
+name = "windows-collections"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
+dependencies = [
+ "windows-core 0.62.2",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.54.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3926,6 +4019,17 @@ dependencies = [
  "windows-link",
  "windows-result 0.4.1",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-future"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
+dependencies = [
+ "windows-core 0.62.2",
+ "windows-link",
+ "windows-threading",
 ]
 
 [[package]]
@@ -3955,6 +4059,16 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-numerics"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
+dependencies = [
+ "windows-core 0.62.2",
+ "windows-link",
+]
 
 [[package]]
 name = "windows-result"
@@ -4039,6 +4153,15 @@ dependencies = [
  "windows_x86_64_gnu 0.52.6",
  "windows_x86_64_gnullvm 0.52.6",
  "windows_x86_64_msvc 0.52.6",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -4422,6 +4545,20 @@ dependencies = [
  "zeroize",
  "zopfli",
  "zstd",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
+ "typed-path",
 ]
 
 [[package]]

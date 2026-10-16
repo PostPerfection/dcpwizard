@@ -26,8 +26,8 @@ import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, project
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
-import { initAssetStripResize } from "../../extern/guikit/src/asset-strip-resize.js";
-import { initProjectPropertiesLayout } from "./project-properties-layout.js";
+import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
+import { initProjectPropertiesLayout, syncPreviewDock } from "./project-properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
 import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
@@ -54,7 +54,7 @@ import {
   signingChainCommand,
   signingChainFrom,
 } from "./kdm-form.js";
-initAssetStripResize("dcpwizard");
+initPreviewResize("dcpwizard");
 initProjectPropertiesLayout("dcpwizard");
 
 // === Browse wrapper (remembers last directory) ===
@@ -95,6 +95,7 @@ function switchView(viewName) {
   if (viewName === "reels") showProjectTimeline();
   if (viewName === "verify") showDefaultVerifyPackage();
   if (viewName === "jobs") { refreshJobs(); startJobsPolling(); } else { stopJobsPolling(); }
+  syncPreviewDock();
 }
 
 const SHORTCUTS_KEY = "dcpwizard-shortcuts";

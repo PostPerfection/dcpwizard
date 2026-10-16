@@ -716,11 +716,7 @@ pub fn rebase_styled_for_reel(
             Some(StyledCue {
                 start_ms: to_ms(sf - start_frame),
                 end_ms: to_ms(ef - start_frame),
-                runs: c.runs.clone(),
-                align: c.align,
-                valign: c.valign,
-                vposition: c.vposition,
-                image: c.image.clone(),
+                ..c.clone()
             })
         })
         .collect()
