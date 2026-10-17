@@ -174,6 +174,65 @@ fn group_reels(plan: &ReelPlan) -> Vec<ReelGroup> {
         .collect()
 }
 
+const NTSC_RATE_TOLERANCE: f64 = 0.01;
+const NTSC_RATE_DENOMINATOR: u32 = 1001;
+const NTSC_RATE_NUMERATOR_SCALE: u32 = 1000;
+
+fn timeline_rate(frame_rate: f64) -> postkit::encode::FrameRate {
+    let whole = frame_rate.round().max(1.0);
+    let ntsc = whole * f64::from(NTSC_RATE_NUMERATOR_SCALE) / f64::from(NTSC_RATE_DENOMINATOR);
+    let is_ntsc_rate = (frame_rate - whole).abs() > NTSC_RATE_TOLERANCE
+        && (frame_rate - ntsc).abs() < NTSC_RATE_TOLERANCE;
+    if is_ntsc_rate {
+        return postkit::encode::FrameRate::new(
+            whole as u32 * NTSC_RATE_NUMERATOR_SCALE,
+            NTSC_RATE_DENOMINATOR,
+        );
+    }
+    postkit::encode::FrameRate::whole(whole as u32)
+}
+
+pub fn timeline_from_reel_plan(plan: &ReelPlan) -> Result<postkit::timeline::Timeline, String> {
+    let mut clips = Vec::new();
+    let mut reel_starts = Vec::new();
+    let mut next_start = 0;
+    for group in group_reels(plan) {
+        let info = crate::probe::probe_video(&group.picture)
+            .ok_or_else(|| format!("ffprobe cannot read {}", group.picture.display()))?;
+        // an empty range takes the whole clip, as the assembly does
+        let (in_frame, out_frame) = if group.source_out > group.source_in {
+            (u64::from(group.source_in), u64::from(group.source_out))
+        } else {
+            (0, u64::from(info.total_frames))
+        };
+        if next_start > 0 {
+            reel_starts.push(next_start);
+        }
+        next_start += out_frame - in_frame;
+        clips.push(postkit::timeline::Clip {
+            picture: group.picture,
+            in_frame,
+            out_frame,
+            sound: if info.has_audio {
+                postkit::timeline::ClipSound::Embedded
+            } else {
+                postkit::timeline::ClipSound::None
+            },
+            subtitle: None,
+            source_colour: Default::default(),
+            picture_processing: Default::default(),
+        });
+    }
+    Ok(postkit::timeline::Timeline {
+        version: postkit::timeline::TIMELINE_FORMAT_VERSION,
+        fps: timeline_rate(plan.frame_rate),
+        clips,
+        sound: postkit::timeline::SoundTrack::PerClip,
+        subtitle: None,
+        reel_starts,
+    })
+}
+
 /// Frame-accurate video trim to a lossless intermediate (FFV1), video only.
 /// `[source_in, source_out)`; an empty/zero-length range copies the whole clip.
 fn trim_video(src: &Path, source_in: u32, source_out: u32, dst: &Path) -> Result<(), String> {

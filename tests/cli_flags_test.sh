@@ -280,6 +280,16 @@ refuse "kdm-batch --formulation dci-specific" "spans cinemas" \
 reject "kdm --formulation nonsense" \
        kdm --cpl-id "$UUID" --content-title x --cert "$C" \
        --signer-cert "$C" --signer-key "$C" -o "$C" --formulation nonsense
+# a timeline file replaces --video and carries what these flags would give
+smoke "create timeline" create --title x --timeline "$C" --output "$C"
+reject "create --timeline with --video" \
+       create --title x --timeline "$C" --video "$C" --output "$C"
+for conflict in "--audio $C" "--trim-start 1s" "--trim-end 1s" "--still-length 1s" \
+                "--split-at 00:00:01" "--split-chapters" "--reel-length 10"; do
+  # shellcheck disable=SC2086
+  reject "create --timeline with ${conflict%% *}" \
+         create --title x --timeline "$C" --output "$C" $conflict
+done
 
 echo ""
 echo "=== Summary ==="

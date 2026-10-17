@@ -183,6 +183,20 @@ fn assert_conformed(out: &Path, title: &str, format: &str) {
         "{plan}"
     );
 
+    let timeline = postkit::timeline::Timeline::read(&out.join("timeline.json"))
+        .expect("conform writes the timeline file create --timeline reads");
+    assert_eq!(timeline.fps, postkit::encode::FrameRate::whole(FRAME_RATE));
+    assert_eq!(timeline.clips.len(), REELS, "one clip per picture event");
+    for clip in &timeline.clips {
+        assert_eq!(clip.out_frame - clip.in_frame, u64::from(REEL_FRAMES));
+        assert_eq!(clip.sound, postkit::timeline::ClipSound::None);
+    }
+    assert_eq!(
+        timeline.reel_starts,
+        vec![u64::from(REEL_FRAMES)],
+        "a reel starts at the second event"
+    );
+
     let cpl = std::fs::read_to_string(only_file_starting_with(out, "CPL_")).unwrap();
     assert!(
         cpl.contains(&format!("<ContentTitleText>{title}<")),

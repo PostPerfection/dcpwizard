@@ -32,6 +32,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Head/tail padding** via `create --pad-head <dur> --pad-tail <dur>` (`48f`/`2s`), with `--pad-color <RRGGBB>` for a filled pad instead of black
 - **Trim** via `create --trim-start <dur> --trim-end <dur>` (same syntax), cutting the source before any padding; picture, sound and subtitles move together
 - **Still images** via `create --video <image> --still-length <dur>`: one image held for a duration, encoded once and repeated
+- **Timelines** via `create --timeline <file>`: clips in order, each cut to its own in and out point with its own sound and subtitle, fitted onto one raster and joined into one package with a reel at each reel start. See [Timeline file](#timeline-file)
 - **Source colour space** via `create --source-colourspace rec709|p3|rec2020|xyz|logc` (default `rec709`), declaring what the source carries; P3, Rec.2020 and ARRI LogC3 are converted to X'Y'Z' during the encode
 - **Input decode range** override via `create --input-range full|legal`, correcting wrong or absent source range flags
 - **Picture bandwidth** via `--video-bit-rate`, held to the DCI cap of 250 Mbit/s (1,302,083 bytes a frame at 24 fps), 450 Mbit/s with `--hdr-dci`
@@ -457,6 +458,9 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Fes
 # Check the job before committing to the encode: every refusal, then every hint.
 # Nothing is encoded and nothing is written under --output. Exits 1 on a refusal.
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp --check
+
+# Build from a timeline file in place of --video (see Timeline file below)
+dcpwizard create --title "Programme" --timeline programme.json --output ./dcp
 
 # Transcode an existing DCP's picture essence to a lower bandwidth (audio and
 # subtitle tracks are copied unchanged). Encrypted input needs --kdm with
@@ -950,6 +954,67 @@ dcpwizard dashboard list
 dcpwizard dashboard matrix --output distribution.csv
 dcpwizard dashboard serve --port 9090
 ```
+
+### Timeline file
+
+`create --timeline` reads a JSON file of clips in order. `conform --media-dir`
+writes one as `timeline.json` beside `conform_plan.json`, a clip per picture event
+with a reel start at each reel.
+
+```json
+{
+  "version": 1,
+  "fps": { "numerator": 24, "denominator": 1 },
+  "clips": [
+    {
+      "picture": "/media/feature.mov",
+      "in_frame": 192,
+      "out_frame": 151200,
+      "sound": "Embedded",
+      "subtitle": "/media/feature.srt"
+    },
+    {
+      "picture": "/media/trailer.mov",
+      "in_frame": 0,
+      "out_frame": 2880,
+      "sound": { "File": "/media/trailer.wav" },
+      "subtitle": null
+    }
+  ],
+  "sound": "PerClip",
+  "subtitle": null,
+  "reel_starts": [151008]
+}
+```
+
+Frames count from the source's first frame and `out_frame` is exclusive. Every
+clip has to run at `fps`, and a clip at another rate is refused by name. A clip's
+`sound` is `"Embedded"` (the audio in its picture file), `{ "File": "<wav>" }` (a
+48 kHz WAV cut at the clip's frames) or `"None"` (silence for its length), and the
+clips with sound have to share a channel count. The timeline's `sound` is
+`"PerClip"`, the clips' sound joined in order, or `{ "Override": "<wav>" }`, one WAV
+for the whole timeline. A clip's `subtitle` is an SRT timed against its own source,
+shifted to the clip's place and cut to its range. The timeline's `subtitle` is timed
+against the timeline. One file cannot carry both. `reel_starts` are timeline frames,
+never 0. On a timeline of more than one clip, a clip may also carry `source_colour`
+and `picture_processing` in postkit's shapes, which replace the create flags for
+that clip. A one-clip timeline refuses them.
+
+Each clip is fitted onto one raster: the container `--container`, `--twok` or
+`--fourk` names, else the one the first clip fits onto. The picture flags and
+`--auto-crop` resolve per clip from its own size. `--timeline` is refused beside
+`--video`, `--audio`, `--trim-start`, `--trim-end`, `--still-length`, `--split-at`,
+`--split-chapters` and `--reel-length`, and beside `--subtitle` when the file
+carries a subtitle. A timeline of more than one clip also refuses
+`--burn-subtitle`, `--resume`, `--right-eye`, `--hdr-dci`,
+`--allow-generic-hdr-tonemap`, `--input-range`, `--watermark`, `--video-fade-in`
+and `--video-fade-out`. `--check` runs the picture checks a `--video` gets on every
+clip.
+
+A timeline of one clip builds as `--video` does, with `--trim-start` and
+`--trim-end` taken from its in and out points, `--audio` from its WAV and
+`--split-at` from its reel starts, so fades, burn-in and the other create flags work.
+Its subtitle stays timed against the source when the clip carries it.
 
 ### KDM email config
 

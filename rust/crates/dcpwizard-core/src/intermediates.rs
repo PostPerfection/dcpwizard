@@ -12,7 +12,7 @@ const INTERMEDIATE_DIRECTORIES: [&str; 7] = [
 ];
 
 // every scratch file a create run writes inside the output directory
-const INTERMEDIATE_FILES: [&str; 8] = [
+const INTERMEDIATE_FILES: [&str; 11] = [
     "frames.ffconcat",
     "j2k_trimmed.wav",
     "audio_demux.wav",
@@ -21,6 +21,9 @@ const INTERMEDIATE_FILES: [&str; 8] = [
     "hdr_to_dci_source.mov",
     "hdr_tonemap.mov",
     "slvs_sound.wav",
+    crate::timeline_build::TIMELINE_SOUND_FILE,
+    crate::timeline_build::TIMELINE_PULLED_UP_SOUND_FILE,
+    crate::timeline_build::TIMELINE_SUBTITLE_FILE,
 ];
 
 pub fn remove_intermediates(output_dir: &Path, keep: &[&Path]) {

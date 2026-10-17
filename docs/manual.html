@@ -152,6 +152,7 @@
 <pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp
 dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Festival</pre>
     <p><code>--preset</code> reads the same <code>presets.json</code>. A flag you give wins over the preset's value, and so does a flag that rules the preset's out, such as <code>--container-dims</code> over the preset's resolution. A preset field <code>create</code> has no flag for is named in a warning and left out. <code>--preset</code> and <code>--profile</code> are refused together.</p>
+    <p><code>--timeline programme.json</code> takes the place of <code>--video</code>: every clip in the timeline file, each cut to its in and out point, is built into one package with a reel at each reel start. <code>dcpwizard conform</code> writes such a file as <code>timeline.json</code>, and the README describes its fields.</p>
 
     <h2 id="encrypt">Encrypt it</h2>
     <h3>In the app</h3>

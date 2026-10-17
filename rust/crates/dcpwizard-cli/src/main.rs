@@ -718,6 +718,21 @@ struct CreateSourceOpts {
     /// Required for a still input, and refused for anything else.
     #[arg(long)]
     still_length: Option<String>,
+    #[arg(
+        long,
+        help = "Timeline file in place of --video: clips in order, each with its own in and out \
+                point, sound and subtitle, and the reel starts (postkit timeline JSON)",
+        conflicts_with_all = [
+            "audio",
+            "trim_start",
+            "trim_end",
+            "still_length",
+            "split_at",
+            "split_chapters",
+            "reel_length",
+        ]
+    )]
+    timeline: Option<String>,
 }
 
 /// Black frames and silence extending the head and tail of the programme, and
@@ -1025,8 +1040,12 @@ enum Commands {
         #[arg(short, long)]
         title: String,
         /// Video file (mp4/mov/mkv) or J2K/image sequence directory
-        #[arg(long)]
-        video: String,
+        #[arg(
+            long,
+            required_unless_present = "timeline",
+            conflicts_with = "timeline"
+        )]
+        video: Option<String>,
         /// Audio WAV file
         #[arg(long)]
         audio: Option<String>,
@@ -2815,11 +2834,16 @@ fn video_chapter_boundaries(video: &Path, fps: u32) -> Result<Vec<u64>, String> 
 
 /// Resolve reel-split boundaries from --split-at timecodes or --split-chapters.
 fn resolve_reel_splits(
+    timeline_reel_starts: &[u64],
     split_at: Option<&str>,
     split_chapters: bool,
     chapter_video: Option<&Path>,
     fps: u32,
 ) -> Result<Vec<u64>, String> {
+    // --timeline conflicts with both split flags
+    if !timeline_reel_starts.is_empty() {
+        return Ok(timeline_reel_starts.to_vec());
+    }
     if let Some(spec) = split_at {
         let mut frames = Vec::new();
         for tc in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -3740,6 +3764,9 @@ fn run_kdm_template(templates_file: Option<String>, action: TemplateAction) -> i
     }
 }
 
+// the file create --timeline reads
+const CONFORM_TIMELINE_FILE: &str = "timeline.json";
+
 /// Resolve a parsed timeline against a media dir into a reel plan, write the
 /// plan + conform manifest, and print the assembled reels. Per-reel encode/wrap
 /// into a DCP is the remaining step; the plan is the executable hand-off.
@@ -3774,6 +3801,12 @@ fn run_conform_assembly(
     let plan_json = serde_json::to_string_pretty(&plan).unwrap_or_default();
     if let Err(e) = std::fs::write(&plan_path, plan_json) {
         tracing::error!("cannot write reel plan: {e}");
+        return 1;
+    }
+    let timeline_written = dcpwizard_core::conform::timeline_from_reel_plan(&plan)
+        .and_then(|timeline| timeline.write(&out.join(CONFORM_TIMELINE_FILE)));
+    if let Err(e) = timeline_written {
+        tracing::error!("cannot write the timeline file: {e}");
         return 1;
     }
     println!(
@@ -4290,8 +4323,83 @@ fn run() {
                 trim_start,
                 trim_end,
                 still_length,
+                timeline: timeline_file,
             } = *source_opts;
+            let timeline = timeline_file.as_deref().map(|path| {
+                postkit::timeline::Timeline::read(Path::new(path))
+                    .unwrap_or_else(|e| exit_failed(e))
+            });
+            // a one-clip timeline builds through the --video path
+            let single_clip = match timeline.as_ref().map(dcpwizard_core::timeline_build::shape) {
+                Some(Ok(dcpwizard_core::timeline_build::TimelineShape::SingleClip(build))) => {
+                    Some(build)
+                }
+                Some(Ok(dcpwizard_core::timeline_build::TimelineShape::MultiClip)) | None => None,
+                Some(Err(e)) => exit_failed(e),
+            };
+            let timeline_carries_subtitle = timeline
+                .as_ref()
+                .is_some_and(dcpwizard_core::timeline_build::carries_subtitle);
+            let timeline_frame_rate = timeline.as_ref().map(|timeline| {
+                dcpwizard_core::hfr::source_rate_to_dcp(
+                    timeline.fps.numerator,
+                    timeline.fps.denominator,
+                )
+                .0
+            });
+            let multi_clip_timeline = timeline.filter(|_| single_clip.is_none());
+            let timeline_reel_starts = match (&single_clip, &multi_clip_timeline) {
+                (Some(build), _) => build.reel_split_frames.clone(),
+                (None, Some(timeline)) => timeline.reel_starts.clone(),
+                (None, None) => Vec::new(),
+            };
+            let frames_spec = |frames: u64| (frames > 0).then(|| format!("{frames}f"));
+            let (trim_start, trim_end) = match &single_clip {
+                Some(build) => (
+                    frames_spec(build.trim_start_frames),
+                    frames_spec(build.trim_end_frames),
+                ),
+                None => (trim_start, trim_end),
+            };
+            let path_text = |path: &PathBuf| path.to_string_lossy().into_owned();
+            let audio = match (&single_clip, &multi_clip_timeline) {
+                (Some(build), _) => build.audio.as_ref().map(path_text),
+                (None, Some(timeline)) => match &timeline.sound {
+                    postkit::timeline::SoundTrack::Override(path) => Some(path_text(path)),
+                    postkit::timeline::SoundTrack::PerClip => None,
+                },
+                (None, None) => audio,
+            };
+            let silent_clip = single_clip.as_ref().is_some_and(|build| build.silent);
+            // the timeline's own subtitle is on the timeline clock
+            let timed_text_follows_trim = single_clip
+                .as_ref()
+                .is_none_or(|build| build.subtitle_from_clip);
+            let subtitle_given = subtitle.is_some();
+            // stands in for the joined clip subtitles until the build writes them
+            let subtitle = subtitle.or(match (&single_clip, &multi_clip_timeline) {
+                (Some(build), _) => build.subtitle.as_ref().map(path_text),
+                (None, Some(timeline)) => timeline
+                    .subtitle
+                    .iter()
+                    .chain(
+                        timeline
+                            .clips
+                            .iter()
+                            .filter_map(|clip| clip.subtitle.as_ref()),
+                    )
+                    .next()
+                    .map(path_text),
+                (None, None) => None,
+            });
             let mut refusals = Refusals::default();
+            if subtitle_given && timeline_carries_subtitle {
+                refusals.messages.push(
+                    "--subtitle and the timeline file's subtitle both time the subtitle track: \
+                     keep one"
+                        .to_string(),
+                );
+            }
             let picture_options = refusals.take(picture_opts.resolve());
             let naming = refusals.take(isdcf_naming.resolve());
             let CreateHdr {
@@ -4394,7 +4502,13 @@ fn run() {
                     .map(dcpwizard_core::cpl::Luminance::parse)
                     .transpose(),
             );
-            let video_path = PathBuf::from(&video);
+            let video_path = match (&single_clip, &multi_clip_timeline) {
+                (Some(build), _) => build.picture.clone(),
+                (None, Some(timeline)) => timeline.clips[0].picture.clone(),
+                (None, None) => {
+                    PathBuf::from(video.expect("clap requires --video without --timeline"))
+                }
+            };
             let std_val = if standard == "interop" {
                 dcpwizard_core::Standard::Interop
             } else {
@@ -4453,9 +4567,11 @@ fn run() {
                             .map(|p| p.resolution_width >= 4096)
                             .unwrap_or(false))
             });
-            let frame_rate = profile
-                .as_ref()
-                .map(|profile| frame_rate.or_else(|| profile.as_ref().map(|p| p.frame_rate)));
+            let frame_rate = profile.as_ref().map(|profile| {
+                frame_rate
+                    .or(timeline_frame_rate)
+                    .or_else(|| profile.as_ref().map(|p| p.frame_rate))
+            });
             let video_bit_rate = profile
                 .as_ref()
                 .map(|profile| video_bit_rate.or_else(|| profile.as_ref().map(|p| p.bitrate_mbps)));
@@ -4646,6 +4762,30 @@ fn run() {
                 ..
             } = *subtitle_qol;
 
+            if multi_clip_timeline.is_some() {
+                refusals
+                    .messages
+                    .extend(dcpwizard_core::timeline_build::refuse_with_multi_clip(
+                        &dcpwizard_core::timeline_build::MultiClipFlags {
+                            burn_subtitle: burn_subtitle.is_some(),
+                            resume,
+                            right_eye: right_eye.is_some(),
+                            hdr_dci,
+                            allow_generic_hdr_tonemap,
+                            input_range: input_range.is_some(),
+                            watermark: watermark_opts.watermark.is_some(),
+                            still_length: still_length.is_some(),
+                            trim_start: trim_start.is_some(),
+                            trim_end: trim_end.is_some(),
+                            split_at: split_at.is_some(),
+                            split_chapters,
+                            reel_length: reel_length.is_some(),
+                            video_fade_in: video_fade_in.is_some(),
+                            video_fade_out: video_fade_out.is_some(),
+                        },
+                    ));
+            }
+
             // one description of the job, checked and hinted before anything is
             // encoded. The frame count costs a decode, so the source is probed
             // once here and the video branch reuses it.
@@ -4677,6 +4817,7 @@ fn run() {
             let pad_tail_frames = duration_frames(pad_tail.as_deref(), "--pad-tail");
             let reel_split_frames = plan_fps.and_then(|fps| {
                 refusals.take(resolve_reel_splits(
+                    &timeline_reel_starts,
                     split_at.as_deref(),
                     split_chapters,
                     is_video_file.then_some(video_path.as_path()),
@@ -4773,6 +4914,7 @@ fn run() {
                     library_items: parsed.head_items.len() + parsed.tail_items.len(),
                     output: PathBuf::new(),
                     resume,
+                    timeline: multi_clip_timeline.clone(),
                 });
             // named from the plan, since the encode writes into the named folder
             let package = match (&parsed, &plan) {
@@ -4872,6 +5014,7 @@ fn run() {
                     burn_style,
                     subtitle_appearance,
                     still_frames,
+                    source_colour,
                     ..
                 }),
                 Some(plan),
@@ -4962,6 +5105,9 @@ fn run() {
             }
             job_log.line(&format!("Title: {title}"));
             job_log.line(&format!("Input: {}", video_path.display()));
+            if let Some(path) = &timeline_file {
+                job_log.line(&format!("Timeline: {path}"));
+            }
             job_log.line(&format!("Output: {}", output_dir.display()));
             job_log.line(&format!(
                 "Accelerator: {}",
@@ -4998,7 +5144,7 @@ fn run() {
                 Err(e) => exit_failed(e),
             }
 
-            let code = if is_video_file {
+            let code = if is_video_file && multi_clip_timeline.is_none() {
                 // Full pipeline: video → J2K encode → MXF wrap → DCP
                 use postkit::grok_encoder::{self, CompressParams, EncodeProgress};
                 use std::sync::Arc;
@@ -5466,6 +5612,8 @@ fn run() {
                 // Auto-demux audio from video if --audio not provided
                 let raw_audio = if let Some(a) = audio {
                     Some(PathBuf::from(a))
+                } else if silent_clip {
+                    None
                 } else {
                     let wav_out = output_dir.join("audio_demux.wav");
                     let demux = std::process::Command::new("ffmpeg")
@@ -5591,6 +5739,7 @@ fn run() {
 
                 // reel-split boundaries from --split-at / --split-chapters
                 let reel_split_frames = match resolve_reel_splits(
+                    &timeline_reel_starts,
                     split_at.as_deref(),
                     split_chapters,
                     Some(&video_path),
@@ -5634,7 +5783,11 @@ fn run() {
                     pad_head: pad_head.clone(),
                     pad_tail: pad_tail.clone(),
                     pad_color: pad_color.clone(),
-                    source_trim: trim.source_trim(),
+                    source_trim: if timed_text_follows_trim {
+                        trim.source_trim()
+                    } else {
+                        Default::default()
+                    },
                     reel_split_frames,
                     sign_language_lang: sign_language_lang.clone(),
                     release_territory: release_territory.clone(),
@@ -5662,27 +5815,120 @@ fn run() {
 
                 remove_intermediates_if_packaged(&output_dir, &video_path, code)
             } else {
-                // Input is a J2K directory, picture MXF or image sequence
+                // Input is a J2K directory, picture MXF, image sequence or a timeline of clips
                 print_hints(hints_pass);
-                let resolution = package_resolution;
+                let mut resolution = package_resolution;
                 let ct = content_type;
 
                 let fps = match source_info.as_ref().filter(|_| picture_mxf_input) {
                     Some(info) => info.fps_num,
                     None => frame_rate.unwrap_or(24),
                 };
-                let reel_split_frames =
-                    match resolve_reel_splits(split_at.as_deref(), split_chapters, None, fps) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            exit_failed(e);
-                        }
+                let reel_split_frames = match resolve_reel_splits(
+                    &timeline_reel_starts,
+                    split_at.as_deref(),
+                    split_chapters,
+                    None,
+                    fps,
+                ) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        exit_failed(e);
+                    }
+                };
+
+                let materialised = multi_clip_timeline.as_ref().map(|timeline| {
+                    let composition =
+                        match dcpwizard_core::timeline_build::CompositionPicture::resolve(
+                            timeline,
+                            &picture_options,
+                            &encode_geometry(twok, fourk, (container_width, container_height)),
+                        ) {
+                            Ok(composition) => composition,
+                            Err(e) => exit_failed(e),
+                        };
+                    if !twok && !fourk && (container_width, container_height) == NO_CONTAINER {
+                        resolution = dcpwizard_core::Resolution::for_raster(
+                            composition.raster.0,
+                            composition.raster.1,
+                        );
+                    }
+                    let conform = dcpwizard_core::hfr::conform_source_to_dcp(
+                        timeline.fps.numerator,
+                        timeline.fps.denominator,
+                        fps,
+                    );
+                    let target_codestream_bytes = video_bit_rate.map(|mbps| {
+                        dcpwizard_core::encode::video_codestream_byte_cap(fps, mbps, false)
+                    });
+                    let dci_codestream_byte_cap =
+                        dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(fps, false, false);
+                    // under a PSNR target the bandwidth is a ceiling per frame
+                    let codestream_byte_cap = match (quality_psnr, target_codestream_bytes) {
+                        (Some(_), Some(target)) => dci_codestream_byte_cap.min(target),
+                        _ => dci_codestream_byte_cap,
                     };
+                    let options = postkit::pipeline::EncodeRunOptions {
+                        compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
+                        target_codestream_bytes,
+                        quality_psnr,
+                        fps: postkit::encode::FrameRate::whole(fps),
+                        read_source_at: conform.read_source_at,
+                        source_colour: source_colour.clone(),
+                        codestream_byte_cap: Some(codestream_byte_cap),
+                        encode_threads,
+                        detect_picture_findings,
+                        ..Default::default()
+                    };
+                    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let cancel_clone = cancel.clone();
+                    let _ = ctrlc::set_handler(move || {
+                        cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    });
+                    let device_frames_before = postkit::grok_encoder::accelerated_frames();
+                    let materialised = dcpwizard_core::timeline_build::materialise(
+                        timeline,
+                        &output_dir,
+                        &options,
+                        |clip| composition.clip_processing(clip),
+                        &cancel,
+                        &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        print_encode_progress,
+                        |line| job_log.line(line),
+                    );
+                    eprintln!();
+                    let materialised = match materialised {
+                        Ok(materialised) => materialised,
+                        Err(e) => exit_encode_failed(&cancel, e),
+                    };
+                    tracing::info!(
+                        "Encoded {} frame(s) from {} clips at {}x{}",
+                        materialised.frames,
+                        timeline.clips.len(),
+                        composition.raster.0,
+                        composition.raster.1
+                    );
+                    let device_frames = postkit::grok_encoder::accelerated_frames()
+                        .saturating_sub(device_frames_before);
+                    for line in job_log::device_frames_lines(
+                        device_frames,
+                        materialised.frames,
+                        gpu_enabled,
+                    ) {
+                        job_log.line(&line);
+                    }
+                    for finding in materialised.picture_findings.describe(f64::from(fps)) {
+                        tracing::warn!("{finding}");
+                    }
+                    materialised
+                });
 
                 // a still becomes a codestream directory here: one encode, then
                 // the codestream linked for every frame of the hold
                 let still_j2k_dir = output_dir.join(postkit::still::HELD_PICTURE_DIR);
-                let source_j2k_dir = if still_input {
+                let source_j2k_dir = if let Some(materialised) = &materialised {
+                    materialised.j2k_dir.clone()
+                } else if still_input {
                     let frames = still_frames;
                     let (width, height, still_filters) = match still_picture(
                         &video_path,
@@ -5806,7 +6052,10 @@ fn run() {
                 // directory), stereo->5.1 upmix, then loudness normalization.
                 let work_dir = output_dir.join("audio_work");
                 let prepared_audio = match prepare_create_audio(
-                    audio.map(PathBuf::from),
+                    match &materialised {
+                        Some(materialised) => materialised.audio.clone(),
+                        None => audio.map(PathBuf::from),
+                    },
                     audio_map.as_deref(),
                     upmix.as_deref(),
                     audio_delay,
@@ -5880,7 +6129,10 @@ fn run() {
                     audio_path,
                     audio_input_order,
                     audio_channels,
-                    subtitle_path: subtitle.map(PathBuf::from),
+                    subtitle_path: match materialised {
+                        Some(materialised) => materialised.subtitle.or(subtitle.map(PathBuf::from)),
+                        None => subtitle.map(PathBuf::from),
+                    },
                     subtitle_language,
                     subtitle_opts,
                     ccap_path: ccap.map(PathBuf::from),
@@ -5894,7 +6146,11 @@ fn run() {
                     pad_head,
                     pad_tail,
                     pad_color,
-                    source_trim: trim.source_trim(),
+                    source_trim: if timed_text_follows_trim {
+                        trim.source_trim()
+                    } else {
+                        Default::default()
+                    },
                     reel_split_frames,
                     sign_language_lang,
                     sign_language_main_channels: sl_main_channels,

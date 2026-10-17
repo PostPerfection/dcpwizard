@@ -1524,6 +1524,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         library_items: job.head_items.len() + job.tail_items.len(),
         output: job.output_dir.clone(),
         resume: false,
+        timeline: None,
     }
 }
 

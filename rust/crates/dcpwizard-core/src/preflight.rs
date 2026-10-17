@@ -93,6 +93,7 @@ pub struct CreatePlan {
     pub library_items: usize,
     pub output: PathBuf,
     pub resume: bool,
+    pub timeline: Option<postkit::timeline::Timeline>,
 }
 
 impl Default for CreatePlan {
@@ -144,6 +145,7 @@ impl Default for CreatePlan {
             library_items: 0,
             output: PathBuf::new(),
             resume: false,
+            timeline: None,
         }
     }
 }
@@ -186,34 +188,41 @@ pub struct PlannedPicture {
 
 type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckReads {
+    // a timeline runs these once a clip
+    Picture,
+    Job,
+}
+
 // cheapest and most specific first: the first refusal printed is the one to fix
-const PLAN_CHECKS: [PlanCheck; 26] = [
-    check_picture_mxf,
-    check_precompressed_colourspace,
-    check_precompressed_picture,
-    check_video_decodable,
-    check_opaque_source,
-    check_hdr_to_dci_lut,
-    check_hdr_source_path,
-    check_fps_resolution,
-    check_still_length,
-    check_input_range,
-    check_trim,
-    check_video_fades,
-    check_burn,
-    check_stereo_hdr_dci,
-    check_reel_splitting,
-    check_library_items,
-    check_markers,
-    check_audio_map,
-    check_audio_channels,
-    check_loudness_target,
-    check_active_area,
-    check_sound,
-    check_signed_when_encrypted,
-    check_atmos,
-    check_timed_text,
-    check_resume,
+const PLAN_CHECKS: [(PlanCheck, CheckReads); 26] = [
+    (check_picture_mxf, CheckReads::Picture),
+    (check_precompressed_colourspace, CheckReads::Picture),
+    (check_precompressed_picture, CheckReads::Picture),
+    (check_video_decodable, CheckReads::Picture),
+    (check_opaque_source, CheckReads::Picture),
+    (check_hdr_to_dci_lut, CheckReads::Job),
+    (check_hdr_source_path, CheckReads::Picture),
+    (check_fps_resolution, CheckReads::Job),
+    (check_still_length, CheckReads::Picture),
+    (check_input_range, CheckReads::Picture),
+    (check_trim, CheckReads::Picture),
+    (check_video_fades, CheckReads::Picture),
+    (check_burn, CheckReads::Job),
+    (check_stereo_hdr_dci, CheckReads::Job),
+    (check_reel_splitting, CheckReads::Job),
+    (check_library_items, CheckReads::Job),
+    (check_markers, CheckReads::Job),
+    (check_audio_map, CheckReads::Job),
+    (check_audio_channels, CheckReads::Job),
+    (check_loudness_target, CheckReads::Job),
+    (check_active_area, CheckReads::Picture),
+    (check_sound, CheckReads::Job),
+    (check_signed_when_encrypted, CheckReads::Job),
+    (check_atmos, CheckReads::Job),
+    (check_timed_text, CheckReads::Job),
+    (check_resume, CheckReads::Picture),
 ];
 
 pub fn warn_dropped_override_tags_in_plan(plan: &CreatePlan) {
@@ -233,14 +242,75 @@ pub fn warn_dropped_override_tags_in_plan(plan: &CreatePlan) {
 }
 
 pub fn check_before_encode(plan: &CreatePlan) -> Result<(), Vec<String>> {
-    let refusals: Vec<String> = PLAN_CHECKS
-        .iter()
-        .filter_map(|check| check(plan).err())
-        .collect();
+    let refusals = match &plan.timeline {
+        None => run_checks(plan, |_| true),
+        Some(timeline) => check_timeline(plan, timeline),
+    };
     if refusals.is_empty() {
         return Ok(());
     }
     Err(refusals)
+}
+
+fn run_checks(plan: &CreatePlan, runs: impl Fn(CheckReads) -> bool) -> Vec<String> {
+    PLAN_CHECKS
+        .iter()
+        .filter(|(_, reads)| runs(*reads))
+        .filter_map(|(check, _)| check(plan).err())
+        .collect()
+}
+
+fn check_timeline(plan: &CreatePlan, timeline: &postkit::timeline::Timeline) -> Vec<String> {
+    let mut refusals = Vec::new();
+    match timeline.check() {
+        Err(refusal) => refusals.push(refusal),
+        Ok(()) => {
+            for (index, clip) in timeline.clips.iter().enumerate() {
+                let name = format!("clip {} ({})", index + 1, clip.picture.display());
+                refusals.extend(
+                    run_checks(&clip_plan(plan, clip), |reads| reads == CheckReads::Picture)
+                        .into_iter()
+                        .map(|refusal| format!("{name}: {refusal}")),
+                );
+            }
+        }
+    }
+    refusals.extend(run_checks(plan, |reads| reads == CheckReads::Job));
+    refusals
+}
+
+// the clip as a one-picture job, for the checks that read the picture
+fn clip_plan(plan: &CreatePlan, clip: &postkit::timeline::Clip) -> CreatePlan {
+    let picture_kind = if postkit::still::is_still_image(&clip.picture) {
+        PictureKind::Still
+    } else if postkit::encode::detect_input_type(&clip.picture) == InputType::Video {
+        PictureKind::Video
+    } else {
+        PictureKind::Codestreams
+    };
+    let probed = picture_kind != PictureKind::Codestreams
+        || postkit::encode::detect_input_type(&clip.picture) == InputType::PictureMxf;
+    CreatePlan {
+        picture: clip.picture.clone(),
+        picture_kind,
+        source: probed
+            .then(|| crate::probe::probe_video(&clip.picture))
+            .flatten(),
+        still_frames: if picture_kind == PictureKind::Still {
+            clip.out_frame - clip.in_frame
+        } else {
+            0
+        },
+        source_colour: if clip.source_colour == postkit::encode::SourceColour::default() {
+            plan.source_colour.clone()
+        } else {
+            clip.source_colour.clone()
+        },
+        trim_start_frames: 0,
+        trim_end_frames: 0,
+        timeline: None,
+        ..plan.clone()
+    }
 }
 
 // wrapped codestreams cannot be retimed to another rate
@@ -804,6 +874,9 @@ pub fn plan_picture(plan: &CreatePlan) -> Result<Option<PlannedPicture>, String>
 /// How many frames the packaged picture will carry, or None when nothing here
 /// can count them.
 pub fn planned_picture_frames(plan: &CreatePlan) -> Option<u64> {
+    if let Some(timeline) = &plan.timeline {
+        return Some(timeline.total_frames() + plan.pad_head_frames + plan.pad_tail_frames);
+    }
     let source_frames = source_frame_count(plan)?;
     Some(
         source_frames

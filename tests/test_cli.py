@@ -128,6 +128,33 @@ def test_a_preset_and_a_profile_are_refused_together(tmp_path):
     assert "cannot be used with" in r.stderr
 
 
+TIMELINE_CONFLICTS = [
+    ["--video", "clip.mov"],
+    ["--audio", "sound.wav"],
+    ["--trim-start", "1s"],
+    ["--trim-end", "1s"],
+    ["--still-length", "1s"],
+    ["--split-at", "00:00:01"],
+    ["--split-chapters"],
+    ["--reel-length", "10"],
+]
+
+
+def test_a_timeline_replaces_the_video(tmp_path):
+    timeline_create = ["create", "--title", "Film", "--output", str(tmp_path / "out"),
+                       "--timeline", str(tmp_path / "missing.json")]
+
+    r = run(timeline_create)
+    assert "required arguments were not provided" not in r.stderr
+    assert "missing.json" in r.stdout + r.stderr
+
+    for conflict in TIMELINE_CONFLICTS:
+        r = run(timeline_create + conflict)
+        assert r.returncode == 2, conflict
+        assert "cannot be used with" in r.stderr, conflict
+        assert conflict[0] in r.stderr, conflict
+
+
 if __name__ == "__main__":
     test_help()
     test_version_flag()
