@@ -12,6 +12,8 @@
 - **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
 
 ### Fixed
+- **Reel starts past the end of the timeline are dropped**: trimming or removing a clip, or removing its asset, left a reel start at or past the timeline's new end, and the build refused it by name. Those reel starts are now removed and the ones inside the timeline stay.
+- **The container view of a later clip shows the frame the build writes**: with Resolution on Auto, a clip of another size than the first was shown on the container its own size fits, while the build fits it onto the first clip's container. The container view now places it the way the build does.
 - **Set from player works at the end of playback**: at the last frame, where an LFOC marker goes, it said Nothing is playing in the preview until the film was loaded again. The Preview button still comes back at the end, so the film can be played again.
 - **The ISDCF name preview follows the burn-in subtitle pick**: picking a file for Burn subtitles into the picture left the name under the title without its lower case subtitle language until another field changed.
 

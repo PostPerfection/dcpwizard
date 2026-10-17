@@ -829,13 +829,10 @@ function previewedOrFirstClip() {
   return clips[previewedClipIndex ?? 0] ?? null;
 }
 
-function clipJobRequest(clip, packageFields) {
-  return jobRequestFor({ ...activeTimeline(), clips: [clip], reelStarts: [] }, packageFields);
-}
-
-function picturePlacementOf(clip) {
+function picturePlacementOf(clipIndex) {
   return invoke("picture_placement", {
-    request: clipJobRequest(clip, { title: "", output: "", encrypt: false, keyOut: "" }),
+    request: jobRequestFor(activeTimeline(), { title: "", output: "", encrypt: false, keyOut: "" }),
+    clipIndex,
   });
 }
 
@@ -848,8 +845,8 @@ async function refreshPicturePlacement() {
   const previewedClip = previewedOrFirstClip();
   const placesPreviewedClip = containerViewToggle.checked && previewedClip.picture !== firstClip.picture;
   const [placement, previewedPlacement] = await Promise.allSettled([
-    picturePlacementOf(firstClip),
-    placesPreviewedClip ? picturePlacementOf(previewedClip) : null,
+    picturePlacementOf(0),
+    placesPreviewedClip ? picturePlacementOf(previewedClipIndex) : null,
   ]);
   if (requestNumber !== picturePlacementRequest) return;
   const placed = placement.status === "fulfilled";

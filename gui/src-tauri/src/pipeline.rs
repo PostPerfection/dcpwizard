@@ -1876,16 +1876,46 @@ fn picture_placement_of(
 
 /// Where the job's picture lands on the raster the build writes.
 #[tauri::command]
-pub async fn picture_placement(request: SubmitRequest) -> Result<PicturePlacement, String> {
-    tokio::task::spawn_blocking(move || job_picture_placement(request))
+pub async fn picture_placement(
+    request: SubmitRequest,
+    clip_index: usize,
+) -> Result<PicturePlacement, String> {
+    tokio::task::spawn_blocking(move || job_picture_placement(request, clip_index))
         .await
         .map_err(|e| format!("the picture placement stopped: {e}"))?
 }
 
-fn job_picture_placement(request: SubmitRequest) -> Result<PicturePlacement, String> {
+// a job with one picture has no other clip to place
+fn job_picture_placement(
+    request: SubmitRequest,
+    clip_index: usize,
+) -> Result<PicturePlacement, String> {
     let job = job_config_of(0, request)?;
-    let resolved = resolve_job_picture(&job, &job.video_path)?;
+    let resolved = match &job.timeline {
+        Some(timeline) => timeline_clip_picture(&job, timeline, clip_index)?,
+        None => resolve_job_picture(&job, &job.video_path)?,
+    };
     Ok(picture_placement_of(&resolved))
+}
+
+// resolved over the whole timeline, the way encode_job_timeline fits each clip
+fn timeline_clip_picture(
+    job: &JobConfig,
+    timeline: &postkit::timeline::Timeline,
+    clip_index: usize,
+) -> Result<dcpwizard_core::source_picture::ResolvedPicture, String> {
+    let clip = timeline.clips.get(clip_index).ok_or_else(|| {
+        format!(
+            "there is no clip {clip_index}, the timeline has {}",
+            timeline.clips.len()
+        )
+    })?;
+    dcpwizard_core::timeline_build::CompositionPicture::resolve(
+        timeline,
+        &job.picture,
+        &job_geometry(job),
+    )?
+    .resolved_clip_picture(clip)
 }
 
 /// Where the preview's SRT copies of the timed text are written, inside the
@@ -4537,9 +4567,18 @@ mod tests {
 
     fn clip_at_rate(dir: &Path, rate: &str) -> PathBuf {
         let path = dir.join(format!("source-{}.mp4", rate.replace('/', "-")));
+        test_pattern_clip(path, "320x240", rate)
+    }
+
+    fn clip_of_size(dir: &Path, width: u32, height: u32) -> PathBuf {
+        let path = dir.join(format!("source-{width}x{height}.mp4"));
+        test_pattern_clip(path, &format!("{width}x{height}"), "24")
+    }
+
+    fn test_pattern_clip(path: PathBuf, size: &str, rate: &str) -> PathBuf {
         let made = std::process::Command::new("ffmpeg")
             .args(["-y", "-v", "error", "-f", "lavfi", "-i"])
-            .arg(format!("testsrc=size=320x240:rate={rate}"))
+            .arg(format!("testsrc=size={size}:rate={rate}"))
             .args(["-frames:v", "6"])
             .arg(&path)
             .output()
@@ -4647,6 +4686,44 @@ mod tests {
     }
 
     #[test]
+    fn a_later_clip_of_another_size_is_placed_on_the_first_clips_raster_under_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let four_by_three = clip_of_size(dir.path(), 320, 240);
+        let scope_shaped = clip_of_size(dir.path(), 640, 272);
+        let placement_of = |clips, clip_index| {
+            job_picture_placement(
+                SubmitRequest {
+                    resolution: Some(DEFAULT_RESOLUTION.into()),
+                    timeline: Some(timeline_of(clips)),
+                    ..SubmitRequest::default()
+                },
+                clip_index,
+            )
+            .unwrap()
+        };
+
+        let first = placement_of(vec![timeline_clip(&four_by_three, 0, 6)], 0);
+        let alone = placement_of(vec![timeline_clip(&scope_shaped, 0, 6)], 0);
+        let second = placement_of(
+            vec![
+                timeline_clip(&four_by_three, 0, 6),
+                timeline_clip(&scope_shaped, 0, 6),
+            ],
+            1,
+        );
+
+        let raster =
+            |placement: &PicturePlacement| (placement.raster_width, placement.raster_height);
+        assert_ne!(
+            raster(&alone),
+            raster(&first),
+            "the sizes have to resolve apart"
+        );
+        assert_eq!(raster(&second), raster(&first));
+        assert_eq!(second.picture_width, raster(&first).0);
+    }
+
+    #[test]
     fn a_picture_fade_on_a_multi_clip_timeline_is_refused_by_its_field() {
         let dir = tempfile::tempdir().unwrap();
         let picture = clip_at_rate(dir.path(), "24");
@@ -4750,14 +4827,17 @@ mod tests {
     fn the_picture_placement_follows_the_scale_and_offset_in_the_request() {
         let dir = tempfile::tempdir().unwrap();
         let source = source_with_five_one_sound(dir.path());
-        let placement = job_picture_placement(SubmitRequest {
-            video_path: source.to_string_lossy().into_owned(),
-            resolution: Some("2k-flat".into()),
-            picture_scale_percent: Some(50.0),
-            picture_offset_x: Some(100),
-            picture_offset_y: Some(-20),
-            ..SubmitRequest::default()
-        })
+        let placement = job_picture_placement(
+            SubmitRequest {
+                video_path: source.to_string_lossy().into_owned(),
+                resolution: Some("2k-flat".into()),
+                picture_scale_percent: Some(50.0),
+                picture_offset_x: Some(100),
+                picture_offset_y: Some(-20),
+                ..SubmitRequest::default()
+            },
+            0,
+        )
         .unwrap();
         assert_eq!(
             (placement.raster_width, placement.raster_height),

@@ -15,6 +15,7 @@ import {
   withImportedAsset,
   withProbedFrames,
   withUnplacedAssetsFilled,
+  withoutAsset,
 } from '../src/composition-timeline.js';
 
 const ASSETS = [
@@ -215,4 +216,13 @@ test('a source frame of the second clip lands after the first clip on the timeli
 
   assert.equal(timelineFrameAtSourceFrame(timeline, 1, 12), 96);
   assert.equal(timelineFrameAtSourceFrame(timeline, 1, 50), 134);
+});
+
+test('removing an asset drops its clips and the reel starts now past the end', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84)], reelStarts: [48, 96, 120] };
+
+  const kept = withoutAsset(timeline, 2);
+
+  assert.deepEqual(kept.clips, [clip(1, 240, 0, 96)]);
+  assert.deepEqual(kept.reelStarts, [48]);
 });

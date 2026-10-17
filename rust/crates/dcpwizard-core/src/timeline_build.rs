@@ -7,7 +7,7 @@ use postkit::picture_processing::PictureProcessing;
 use postkit::pipeline::{EncodeRunOptions, PipelineProgress};
 use postkit::timeline::{Clip, ClipSound, SoundTrack, Timeline};
 
-use crate::source_picture::{EncodeGeometry, SourcePictureOptions};
+use crate::source_picture::{EncodeGeometry, ResolvedPicture, SourcePictureOptions};
 
 pub const TIMELINE_SOUND_FILE: &str = "timeline_sound.wav";
 pub const TIMELINE_PULLED_UP_SOUND_FILE: &str = "timeline_sound_pullup.wav";
@@ -207,9 +207,13 @@ impl CompositionPicture {
     }
 
     pub fn clip_processing(&self, clip: &Clip) -> Result<PictureProcessing, String> {
+        Ok(self.resolved_clip_picture(clip)?.processing)
+    }
+
+    pub fn resolved_clip_picture(&self, clip: &Clip) -> Result<ResolvedPicture, String> {
         let input_type = postkit::encode::detect_input_type(&clip.picture);
         if !crate::preflight::is_precompressed(input_type) {
-            return Ok(resolve_clip(clip, &self.options, &self.geometry)?.processing);
+            return resolve_clip(clip, &self.options, &self.geometry);
         }
         let size = clip_source_size(&clip.picture)?;
         if size != self.raster {
@@ -219,7 +223,14 @@ impl CompositionPicture {
                 size.0, size.1, self.raster.0, self.raster.1
             ));
         }
-        Ok(PictureProcessing::default())
+        let processing = PictureProcessing::default();
+        let plan = processing.plan(size.0, size.1)?;
+        Ok(ResolvedPicture {
+            encode_width: plan.output_width,
+            encode_height: plan.output_height,
+            processing,
+            plan,
+        })
     }
 }
 
@@ -240,7 +251,7 @@ fn resolve_clip(
     clip: &Clip,
     options: &SourcePictureOptions,
     geometry: &EncodeGeometry,
-) -> Result<crate::source_picture::ResolvedPicture, String> {
+) -> Result<ResolvedPicture, String> {
     let (width, height) = clip_source_size(&clip.picture)?;
     crate::source_picture::resolve_picture(
         options,

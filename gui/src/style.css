@@ -391,21 +391,3 @@
   color: var(--text-muted);
   padding: 8px 4px;
 }
-
-/* the timeline needs the width of both columns, guikit gives it one */
-#view-project .workspace-main {
-  grid-template-rows: minmax(100px, 1fr) minmax(200px, 1fr);
-  grid-template-areas:
-    "assets compositions"
-    "reels reels";
-}
-#view-project .workspace-main:has(> .preview-panel) {
-  grid-template-rows: auto minmax(100px, 1fr) minmax(200px, 1fr);
-  grid-template-areas:
-    "preview preview"
-    "assets compositions"
-    "reels reels";
-}
-#timeline-editor .timeline-editor-clip-panel {
-  flex-wrap: wrap;
-}

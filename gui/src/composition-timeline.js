@@ -1,4 +1,4 @@
-import { clipStarts, totalFrames } from "../../extern/guikit/src/timeline-editor.js";
+import { clipStarts, totalFrames, withReelStartsInsideTimeline } from "../../extern/guikit/src/timeline-editor.js";
 import { isChannelSet, soundSource } from "./channel-set.js";
 
 // postkit's TIMELINE_FORMAT_VERSION, which submit_job checks
@@ -79,7 +79,7 @@ export function withoutAsset(timeline, assetId) {
   }
   if (kept.sound === assetId) kept.sound = null;
   if (kept.subtitle === assetId) kept.subtitle = null;
-  return kept;
+  return withReelStartsInsideTimeline(kept);
 }
 
 // a channel set cannot be one clip's sound file, so an absorbed clip sound moves to the timeline
