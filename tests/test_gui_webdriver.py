@@ -15,11 +15,13 @@ from pathlib import Path
 import pytest
 
 from tauri_webdriver import (
+    INPUT_SETTLE_SECONDS,
     POLL_SECONDS,
     SELECT_ALL_CHORD,
     Window,
     visible_windows,
     wait_until,
+    xdotool,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -60,7 +62,7 @@ FIXTURE_SPLIT_AT = "00:00:02"
 FIXTURE_CHANNELS = 6
 
 PROJECT_WIZARD = "dcpwizard"
-PROJECT_FILE_VERSION = 2
+PROJECT_FILE_VERSION = 3
 
 PROJECT_TITLE = "Film"
 SECOND_PROJECT_TITLE = "Second"
@@ -132,7 +134,7 @@ MARKER_LABEL_SELECT = "#prop-markers .marker-row .marker-label"
 PREVIOUS_FIELD_CHORD = "shift+Tab"
 NEXT_FIELD_KEY = "Tab"
 MARKER_FROM_PLAYER_BUTTON = "#prop-markers .marker-row .marker-from-player"
-NO_PICTURE_FOR_MARKER = "Put a video on the first reel to set a marker from the player"
+NO_PICTURE_FOR_MARKER = "Put a video on the timeline to set a marker from the player"
 
 VERIFY_CHORD = "ctrl+3"
 VERIFY_VIEW_BUTTON = '.sidebar-btn[data-view="verify"]'
@@ -371,22 +373,30 @@ def run_ffmpeg(*arguments):
     assert made.returncode == 0, made.stderr
 
 
+def write_picture(path, size, seconds):
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"testsrc2=size={size}:rate={FIXTURE_FPS}:duration={seconds}",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        str(path),
+    )
+    return path
+
+
+def write_sound(path, seconds):
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"sine=frequency=440:sample_rate=48000:duration={seconds}",
+        "-ac", str(FIXTURE_CHANNELS), "-c:a", "pcm_s24le",
+        str(path),
+    )
+    return path
+
+
 # create refuses a .mov for the sound, so the two sources are written apart
 def write_media(directory):
-    picture = directory / "source.mov"
-    sound = directory / "sound.wav"
-    run_ffmpeg(
-        "-f", "lavfi",
-        "-i", f"testsrc2=size={FIXTURE_SIZE}:rate={FIXTURE_FPS}:duration={FIXTURE_SECONDS}",
-        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-        str(picture),
-    )
-    run_ffmpeg(
-        "-f", "lavfi",
-        "-i", f"sine=frequency=440:sample_rate=48000:duration={FIXTURE_SECONDS}",
-        "-ac", str(FIXTURE_CHANNELS), "-c:a", "pcm_s24le",
-        str(sound),
-    )
+    picture = write_picture(directory / "source.mov", FIXTURE_SIZE, FIXTURE_SECONDS)
+    sound = write_sound(directory / "sound.wav", FIXTURE_SECONDS)
     return picture, sound
 
 
@@ -997,6 +1007,133 @@ def test_a_project_is_created_saved_built_and_opened_again(window, tmp_path):
     assert session.property(LUMINANCE_UNITS_SELECT, "value") == LUMINANCE_UNITS
 
 
+TIMELINE_SOUND_LABEL = '#timeline-editor [data-track="sound"] .timeline-editor-span-label'
+TIMELINE_CLIP = '#timeline-editor .timeline-editor-clip[data-clip-index="{}"]'
+TIMELINE_IN_FIELD = '#timeline-editor input[data-field="in"]'
+TIMELINE_OUT_FIELD = '#timeline-editor input[data-field="out"]'
+SPLIT_REEL_BUTTON = '#timeline-editor [data-action="split-reel"]'
+# a second size, so the second clip is fitted onto the first clip's container
+SECOND_CLIP_SIZE = "1920x1080"
+EACH_CLIP_SECONDS = 2
+EACH_CLIP_FRAMES = EACH_CLIP_SECONDS * FIXTURE_FPS
+SECOND_CLIP_IN = "00:00:00:12"
+SECOND_CLIP_OUT = "00:00:01:18"
+SECOND_CLIP_IN_FRAME = 12
+SECOND_CLIP_OUT_FRAME = 42
+KEPT_FRAMES = [EACH_CLIP_FRAMES, SECOND_CLIP_OUT_FRAME - SECOND_CLIP_IN_FRAME]
+TIMELINE_SECONDS = sum(KEPT_FRAMES) / FIXTURE_FPS
+
+CLIP_TITLES = """
+return [...document.querySelectorAll("#timeline-editor .timeline-editor-clip")].map((clip) => clip.title);
+"""
+
+# the middle of an element's first frame, which the editor reads as the clip's first frame
+FIRST_FRAME_OF_CLIP = """
+const clip = document.querySelector(arguments[0]);
+clip.scrollIntoView({ block: "center" });
+const box = clip.getBoundingClientRect();
+return [box.left + box.width / arguments[1] / 2, box.top + box.height / 2];
+"""
+
+
+def click_first_frame_of_clip(window, css, kept_frames):
+    x, y = window.session.execute(FIRST_FRAME_OF_CLIP, css, kept_frames)
+    xdotool(
+        "mousemove", str(window.origin[0] + round(x)), str(window.origin[1] + round(y)), "click", "1"
+    )
+    time.sleep(INPUT_SETTLE_SECONDS)
+
+
+def clip_title(name, in_timecode, out_timecode):
+    return f"{name}, {in_timecode} to {out_timecode}"
+
+
+# each reel's picture duration, as the CPL plays it
+def reel_durations(cpl_path):
+    durations = []
+    for reel in named(ElementTree.parse(cpl_path).getroot(), "Reel"):
+        picture = named(reel, "MainPicture")[0]
+        played = named(picture, "Duration") or named(picture, "IntrinsicDuration")
+        durations.append(int(played[0].text.strip()))
+    return durations
+
+
+def test_two_clips_with_trims_and_a_reel_start_build_a_two_reel_dcp(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    first = write_picture(media / "first.mov", FIXTURE_SIZE, EACH_CLIP_SECONDS)
+    second = write_picture(media / "second.mov", SECOND_CLIP_SIZE, EACH_CLIP_SECONDS)
+    sound = write_sound(media / "timeline.wav", TIMELINE_SECONDS)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    package = tmp_path / PROJECT_TITLE
+    whole_clip = ("00:00:00:00", f"00:00:{EACH_CLIP_SECONDS:02d}:00")
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    choose_in_dialog(window, "#import-video", first)
+    choose_in_dialog(window, "#import-video", second)
+    choose_in_dialog(window, "#import-audio", sound)
+    wait_until(
+        "the two clips never took their sources' lengths",
+        lambda: session.execute(CLIP_TITLES)
+        == [clip_title(first.name, *whole_clip), clip_title(second.name, *whole_clip)],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    assert session.property(TIMELINE_SOUND_LABEL, "textContent") == sound.name
+    assert session.property("#prop-split-at", "disabled") is True
+    assert session.property("#prop-reel-split-hint", "hidden") is False
+
+    window.click(TIMELINE_CLIP.format(1))
+    replace_field_text(window, TIMELINE_IN_FIELD, SECOND_CLIP_IN)
+    window.press(NEXT_FIELD_KEY)
+    replace_field_text(window, TIMELINE_OUT_FIELD, SECOND_CLIP_OUT)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "the second clip never took its in and out points",
+        lambda: session.execute(CLIP_TITLES)[1] == clip_title(second.name, SECOND_CLIP_IN, SECOND_CLIP_OUT),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    click_first_frame_of_clip(window, TIMELINE_CLIP.format(1), KEPT_FRAMES[1])
+    window.click(SPLIT_REEL_BUTTON)
+
+    wait_until(
+        "the Build button stayed disabled",
+        lambda: session.property("#btn-build", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-build")
+    wait_until(
+        "the hints dialog never opened",
+        lambda: session.property("#hints-dialog", "hidden") is False,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    window.click("#hints-build")
+    wait_until(
+        "the build never finished",
+        lambda: session.property("#progress-stage", "textContent") in FINISHED_BUILD_STAGES,
+        CREATE_TIMEOUT_SECONDS,
+    )
+    assert status_text(session) == BUILD_COMPLETE_STATUS
+
+    cpls = list(package.glob("CPL_*.xml"))
+    assert len(cpls) == 1, sorted(package.iterdir())
+    assert reel_durations(cpls[0]) == KEPT_FRAMES
+    built = saved_project(project_path)
+    assert built["version"] == PROJECT_FILE_VERSION
+    timeline = built["form"]["project"]["compositions"][0]["timeline"]
+    assert [(clip["inFrame"], clip["outFrame"]) for clip in timeline["clips"]] == [
+        (0, EACH_CLIP_FRAMES),
+        (SECOND_CLIP_IN_FRAME, SECOND_CLIP_OUT_FRAME),
+    ]
+    assert timeline["reelStarts"] == [EACH_CLIP_FRAMES]
+
+
 def write_mono_channel(path):
     run_ffmpeg(
         "-f", "lavfi",
@@ -1119,7 +1256,7 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert session.execute(CHANNEL_SET_ROWS) == [
         {"name": CHANNEL_SET_NAME, "files": [f"L {left.name}", f"R {right.name}"]}
     ]
-    assert session.text(".track-sound .track-info") == f"{CHANNEL_SET_NAME}, 2 channels"
+    assert session.property(TIMELINE_SOUND_LABEL, "textContent") == f"{CHANNEL_SET_NAME}, 2 channels"
     wait_until(
         "the mapping matrix never named the set's files",
         lambda: session.execute(AUDIO_MAP_ROWS)

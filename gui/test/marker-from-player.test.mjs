@@ -77,8 +77,8 @@ test('trim and pad fields count frames the way the build does', () => {
 });
 
 test('the button says why it cannot read the player', () => {
-  assert.match(markerFromPlayerUnavailable({ compositionPicturePath: undefined, shownPath: '/a.mov' }), /first reel/);
-  assert.match(markerFromPlayerUnavailable({ compositionPicturePath: '/a.mov', shownPath: null }), /Nothing is playing/);
-  assert.match(markerFromPlayerUnavailable({ compositionPicturePath: '/a.mov', shownPath: '/packages/Film' }), /different file/);
-  assert.equal(markerFromPlayerUnavailable({ compositionPicturePath: '/a.mov', shownPath: '/a.mov' }), null);
+  assert.match(markerFromPlayerUnavailable({ timelinePicturePaths: [], shownPath: '/a.mov' }), /on the timeline/);
+  assert.match(markerFromPlayerUnavailable({ timelinePicturePaths: ['/a.mov'], shownPath: null }), /Nothing is playing/);
+  assert.match(markerFromPlayerUnavailable({ timelinePicturePaths: ['/a.mov'], shownPath: '/packages/Film' }), /not on the timeline/);
+  assert.equal(markerFromPlayerUnavailable({ timelinePicturePaths: ['/a.mov', '/b.mov'], shownPath: '/b.mov' }), null);
 });

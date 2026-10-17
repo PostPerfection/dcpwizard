@@ -6,10 +6,10 @@ const TIMECODE_FIELD_DIGITS = 2;
 // parse_pad_frames refuses seconds further than this from a whole frame
 const WHOLE_FRAME_TOLERANCE = 1e-6;
 
-export function markerFromPlayerUnavailable({ compositionPicturePath, shownPath }) {
-  if (!compositionPicturePath) return "Put a video on the first reel to set a marker from the player";
+export function markerFromPlayerUnavailable({ timelinePicturePaths, shownPath }) {
+  if (timelinePicturePaths.length === 0) return "Put a video on the timeline to set a marker from the player";
   if (!shownPath) return "Nothing is playing in the preview";
-  if (shownPath !== compositionPicturePath) return "The preview is playing a different file from the first reel's video";
+  if (!timelinePicturePaths.includes(shownPath)) return "The preview is playing a file that is not on the timeline";
   return null;
 }
 

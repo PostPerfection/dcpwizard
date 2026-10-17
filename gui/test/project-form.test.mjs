@@ -58,12 +58,29 @@ function editedPanel() {
         id: 1,
         name: 'Main',
         contentKind: 'feature',
-        reels: [
-          { id: 1, picture, sound, subtitle },
-          { id: 2, picture: null, sound: null, subtitle: null },
-        ],
+        timeline: {
+          fps: [24, 1],
+          clips: [
+            { picture: picture.id, frames: 240, inFrame: 24, outFrame: 216, sound: { kind: 'file', asset: sound.id }, subtitle: subtitle.id },
+            { picture: trailerPicture.id, frames: 96, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null },
+          ],
+          sound: null,
+          subtitle: null,
+          reelStarts: [192],
+        },
       },
-      { id: 4, name: 'Teaser', contentKind: 'teaser', reels: [{ id: 1, picture: trailerPicture, sound: null, subtitle: null }] },
+      {
+        id: 4,
+        name: 'Teaser',
+        contentKind: 'teaser',
+        timeline: {
+          fps: [24, 1],
+          clips: [{ picture: trailerPicture.id, frames: 96, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null }],
+          sound: sound.id,
+          subtitle: null,
+          reelStarts: [],
+        },
+      },
     ],
     activeComposition: 1,
   };
@@ -92,17 +109,6 @@ test('serialize then restore gives back every field of the build panel', () => {
   }
   assert.equal(restored.form.audioMap, '1:L,2:R@-3');
   assert.deepEqual(restored.notRestored, []);
-});
-
-test('a restored reel holds the restored asset itself, so later edits to the asset reach it', () => {
-  const reopened = emptyPanel(() => '');
-  restoreFormState(JSON.parse(JSON.stringify(serialized(editedPanel()))), serialized(emptyPanel(() => ''), null), reopened);
-
-  const [picture, sound] = reopened.project.assets;
-  const firstReel = reopened.project.compositions[0].reels[0];
-  assert.equal(firstReel.picture, picture);
-  assert.equal(firstReel.sound, sound);
-  assert.equal(reopened.project.compositions[1].reels[0].picture, reopened.project.assets[3]);
 });
 
 test('marker and rating rows come back numbered from 1', () => {
@@ -148,7 +154,13 @@ test('a version 1 project file opens and restores its saved fields', () => {
   assert.equal(form.audioMap, '1:L,2:R@-3');
   const [picture, sound] = reopened.project.assets;
   assert.equal(picture.path, '/media/film.mov');
-  assert.deepEqual(reopened.project.compositions[0].reels, [{ id: 1, picture, sound, subtitle: null }]);
+  assert.deepEqual(reopened.project.compositions[0].timeline, {
+    fps: [24, 1],
+    clips: [{ picture: picture.id, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: sound.id }, subtitle: null }],
+    sound: null,
+    subtitle: null,
+    reelStarts: [],
+  });
   assert.deepEqual(reopened.markerRows, [{ id: 1, label: 'FFEC', position: '00:58:12:03' }]);
   assert.deepEqual(reopened.ratings, [{ id: 1, agency: 'http://www.mpaa.org/2003-ratings', label: 'PG-13' }]);
   assert.deepEqual(reopened.joinedItems, { head: ['Studio logo'], tail: [] });
@@ -201,7 +213,7 @@ test('a version 1 channel WAV directory is dropped on upgrade and named as not r
   assert.equal(reopened.controls.get('prop-title').value, 'Film');
 });
 
-test('a channel set on the sound track comes back with its files', () => {
+test('a channel set as the timeline sound comes back with its files', () => {
   const panel = editedPanel();
   const set = {
     id: 8,
@@ -215,12 +227,13 @@ test('a channel set on the sound track comes back with its files', () => {
     ],
   };
   panel.project.assets.push(set);
-  panel.project.compositions[0].reels[0].sound = set;
+  panel.project.compositions[0].timeline.sound = set.id;
   const reopened = emptyPanel(() => '');
 
   restoreFormState(JSON.parse(JSON.stringify(serialized(panel))), serialized(emptyPanel(() => ''), null), reopened);
 
-  assert.deepEqual(reopened.project.compositions[0].reels[0].sound, set);
+  assert.equal(reopened.project.compositions[0].timeline.sound, set.id);
+  assert.deepEqual(reopened.project.assets.at(-1), set);
   assert.deepEqual(serialized(reopened), serialized(panel));
 });
 
@@ -242,16 +255,98 @@ test('a saved select value the panel does not offer is named and the select keep
   assert.equal(reopened.controls.get('prop-standard').value, 'interop');
 });
 
-test('a reel slot whose asset is gone from the file is named by composition and reel', () => {
+test('a timeline asset gone from the file is named by composition and place, and taken off the timeline', () => {
   const saved = JSON.parse(JSON.stringify(serialized(editedPanel())));
-  saved.project.assets = saved.project.assets.filter((asset) => asset.id !== 5);
+  saved.project.assets = saved.project.assets.filter((asset) => asset.id !== 5 && asset.id !== 7);
   const reopened = emptyPanel(() => '');
 
   const { notRestored } = restoreFormState(saved, serialized(emptyPanel(() => ''), null), reopened);
 
-  assert.deepEqual(notRestored, ['Main reel 1 sound']);
-  assert.equal(reopened.project.compositions[0].reels[0].sound, null);
-  assert.equal(reopened.project.compositions[0].reels[0].picture, reopened.project.assets[0]);
+  assert.deepEqual(notRestored, ['Main clip 2 picture', 'Main clip 1 sound', 'Teaser clip 1 picture', 'Teaser timeline sound']);
+  const [main, teaser] = reopened.project.compositions.map((composition) => composition.timeline);
+  assert.deepEqual(main.clips.map((clip) => clip.picture), [3]);
+  assert.deepEqual(main.clips[0].sound, { kind: 'embedded', asset: null });
+  assert.equal(main.clips[0].subtitle, 6);
+  assert.deepEqual(teaser.clips, []);
+  assert.equal(teaser.sound, null);
+});
+
+function versionTwoProject(project) {
+  return JSON.stringify({ wizard: 'dcpwizard', version: 2, saved: '2026-10-01T09:00:00.000Z', form: { title: 'Film', framerate: '25', project } });
+}
+
+test('a version 2 project opens with reel 1 as the first clip and the later reels appended, naming what moved', () => {
+  const assets = [
+    { id: 1, type: 'video', path: '/media/feature.mov', name: 'feature.mov', meta: '', fps: '24000/1001' },
+    { id: 2, type: 'audio', path: '/media/feature.wav', name: 'feature.wav', meta: '' },
+    { id: 3, type: 'subtitle', path: '/media/feature.srt', name: 'feature.srt', meta: '' },
+    { id: 4, type: 'video', path: '/media/trailer.mov', name: 'trailer.mov', meta: '' },
+    { id: 5, type: 'audio', path: null, name: 'mix', meta: '2 ch: L R', channelFiles: [{ path: '/media/mix_L.wav', lane: 'L' }, { path: '/media/mix_R.wav', lane: 'R' }] },
+    { id: 6, type: 'subtitle', path: '/media/orphan.srt', name: 'orphan.srt', meta: '' },
+  ];
+  const text = versionTwoProject({
+    title: 'Film',
+    assets,
+    compositions: [
+      {
+        id: 1,
+        name: 'Main',
+        contentKind: 'feature',
+        reels: [
+          { id: 1, picture: 1, sound: 2, subtitle: 3 },
+          { id: 2, picture: 4, sound: 5, subtitle: null },
+          { id: 3, picture: null, sound: null, subtitle: 6 },
+        ],
+      },
+    ],
+    activeComposition: 0,
+  });
+
+  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+  const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  assert.equal(PROJECT_FILE_VERSION, 3);
+  assert.deepEqual(reopened.project.compositions[0].timeline, {
+    fps: [24000, 1001],
+    clips: [
+      { picture: 1, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: 2 }, subtitle: 3 },
+      { picture: 4, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'embedded', asset: null }, subtitle: null },
+    ],
+    sound: null,
+    subtitle: null,
+    reelStarts: [],
+  });
+  assert.deepEqual(notRestored, [
+    'Main reel 2 is clip 2 of the timeline',
+    'Main reel 2 sound, a channel set only sounds over the whole timeline',
+    'Main reel 3 subtitle',
+  ]);
+});
+
+test('a version 2 channel set on reel 1 becomes the timeline sound, and a project without assets opens empty', () => {
+  const assets = [
+    { id: 1, type: 'video', path: '/media/feature.mov', name: 'feature.mov', meta: '' },
+    { id: 5, type: 'audio', path: null, name: 'mix', meta: '2 ch: L R', channelFiles: [{ path: '/media/mix_L.wav', lane: 'L' }, { path: '/media/mix_R.wav', lane: 'R' }] },
+  ];
+  const text = versionTwoProject({
+    title: 'Film',
+    assets,
+    compositions: [{ id: 1, name: 'Main', contentKind: 'feature', reels: [{ id: 1, picture: 1, sound: 5, subtitle: null }] }],
+    activeComposition: 0,
+  });
+
+  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+  const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  const { timeline } = reopened.project.compositions[0];
+  assert.deepEqual(notRestored, []);
+  assert.equal(timeline.sound, 5);
+  assert.deepEqual(timeline.clips[0].sound, { kind: 'embedded', asset: null });
+  assert.deepEqual(timeline.fps, [25, 1]);
+  const titleOnly = readProjectFile(versionTwoProject(undefined), 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  assert.equal(titleOnly.form.project, undefined);
 });
 
 test('every build panel control is saved, and every saved control is on the panel', () => {

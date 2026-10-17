@@ -14,7 +14,29 @@ import { initPlaylist, addToPlaylist } from "../../extern/guikit/src/playlist.js
 import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls-panel.js";
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
-import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setPreviewedTimelineReel, setProjectReelSeeker } from "./timeline.js";
+import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
+import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, splitReelAt } from "../../extern/guikit/src/timeline-editor.js";
+import {
+  DEFAULT_TIMELINE_FPS,
+  TIMELINE_KIND_BY_ASSET_TYPE,
+  clipSoundIsChannelSet,
+  emptyTimeline,
+  firstSoundAsset,
+  firstSubtitleAsset,
+  parseFrameRate,
+  reelSpans,
+  sourceFrameCount,
+  splitTimecodeFrames,
+  splitTimecodeSpec,
+  timelineFrameAtSourceFrame,
+  timelineRequestFields,
+  withChannelSets,
+  withFirstClipRate,
+  withImportedAsset,
+  withoutAsset,
+  withProbedFrames,
+  withUnplacedAssetsFilled,
+} from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -429,27 +451,23 @@ const project = {
   title: "",
   assets: [],  // {id, type: 'video'|'audio'|'subtitle', path, name, meta}
   compositions: [
-    { id: 1, name: "Main", contentKind: "feature", reels: [{ id: 1, picture: null, sound: null, subtitle: null }] }
+    { id: 1, name: "Main", contentKind: "feature", timeline: emptyTimeline(DEFAULT_TIMELINE_FPS) }
   ],
   activeComposition: 0,  // index into compositions[]
 };
 
-// Convenience accessor for active composition reels
-function getActiveReels() {
-  return project.compositions[project.activeComposition]?.reels || [];
-}
-function setActiveReels(reels) {
-  if (project.compositions[project.activeComposition]) {
-    project.compositions[project.activeComposition].reels = reels;
-  }
+// the timeline holds asset ids
+function activeTimeline() {
+  return project.compositions[project.activeComposition].timeline;
 }
 
-// Legacy alias for backward compat in this file
-Object.defineProperty(project, 'reels', {
-  get() { return getActiveReels(); },
-  set(v) { setActiveReels(v); },
-  configurable: true,
-});
+function assetById(assetId) {
+  return project.assets.find((asset) => asset.id === assetId);
+}
+
+function assetPath(assetId) {
+  return assetById(assetId).path;
+}
 
 let nextAssetId = 1;
 
@@ -517,20 +535,8 @@ document.getElementById("import-subtitle")?.addEventListener("click", async () =
   if (path) importAssetFromPath(path, 'subtitle');
 });
 
-const REEL_SLOT_BY_ASSET_TYPE = { video: 'picture', audio: 'sound', subtitle: 'subtitle' };
-
-function placedAssetIds() {
-  return new Set(project.reels.flatMap(r => [r.picture, r.sound, r.subtitle]).filter(Boolean).map(a => a.id));
-}
-
-// the first reel takes the first asset of each type no reel holds yet
-function fillFirstReelFromUnplacedAssets() {
-  const reel = project.reels[0];
-  const placed = placedAssetIds();
-  for (const [type, slot] of Object.entries(REEL_SLOT_BY_ASSET_TYPE)) {
-    if (reel[slot]) continue;
-    reel[slot] = project.assets.find(a => a.type === type && !placed.has(a.id)) ?? null;
-  }
+function fillTimelineFromUnplacedAssets() {
+  storeActiveTimeline(withUnplacedAssetsFilled(activeTimeline(), project.assets));
 }
 
 async function importAssetsFromPaths(pathsWithTypes) {
@@ -547,14 +553,10 @@ async function groupAudioIntoChannelSets() {
   const { assets, absorbedInto } = mergeChannelSets(project.assets, groups, () => nextAssetId++);
   if (absorbedInto.size === 0) return;
   project.assets = assets;
-  for (const reel of project.compositions.flatMap((composition) => composition.reels)) {
-    const set = reel.sound && absorbedInto.get(reel.sound.id);
-    if (set) reel.sound = set;
-  }
-  fillFirstReelFromUnplacedAssets();
+  for (const composition of project.compositions) composition.timeline = withChannelSets(composition.timeline, absorbedInto);
+  fillTimelineFromUnplacedAssets();
   renderAssets();
-  renderReels();
-  updateStatusStats();
+  showActiveTimeline();
   const sets = [...new Set(absorbedInto.values())];
   setStatus(`Channel set: ${sets.map((set) => `${set.name} (${set.meta})`).join(", ")}`);
 }
@@ -563,29 +565,49 @@ function importAssetFromPath(path, type) {
   const name = path.split(/[/\\]/).pop();
   const asset = { id: nextAssetId++, type, path, name, meta: '' };
   project.assets.push(asset);
-
-  const reel = project.reels[0];
-  const slot = REEL_SLOT_BY_ASSET_TYPE[type];
-  if (slot && !reel[slot]) reel[slot] = asset;
+  storeActiveTimeline(withImportedAsset(activeTimeline(), asset));
 
   renderAssets();
-  renderReels();
-  updateStatusStats();
+  showActiveTimeline();
   setStatus(`Imported: ${name}`);
 
   // Auto-detect video properties
   if (type === 'video') {
     probeVideo(path).then(info => {
-      if (!info) return;
+      if (!info) {
+        setStatus(`Could not read the frame count of ${name}`);
+        return;
+      }
       asset.meta = `${info.width}×${info.height} ${info.fps}`;
       asset.width = info.width;
       asset.height = info.height;
       asset.fps = info.fps;
+      asset.frames = info.frames;
+      takeProbedFrames(asset);
       if (project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(info);
       refreshIsdcfPreview();
       renderAssets();
     });
   }
+}
+
+// a clip from an older project file holds 0 frames until its source is probed
+async function probeUnprobedClips() {
+  const clips = project.compositions.flatMap((composition) => composition.timeline.clips);
+  const pictures = new Set(clips.filter((clip) => clip.frames === 0).map((clip) => clip.picture));
+  for (const assetId of pictures) {
+    const asset = assetById(assetId);
+    asset.frames = await sourceFrames(assetId);
+    takeProbedFrames(asset);
+  }
+}
+
+// clips placed before their source was probed get its length and rate
+function takeProbedFrames(asset) {
+  for (const composition of project.compositions) {
+    composition.timeline = withFirstClipRate(withProbedFrames(composition.timeline, asset.id, asset.frames), assetById);
+  }
+  showActiveTimeline();
 }
 
 function renderAssets() {
@@ -611,7 +633,7 @@ function renderAssets() {
     </div>
   `).join('');
 
-  // Make assets draggable to reel tracks
+  // Make assets draggable onto the timeline
   list.querySelectorAll('.asset-item').forEach(el => {
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', el.dataset.assetId);
@@ -651,69 +673,107 @@ function soundTrackLabel(sound) {
   return isChannelSet(sound) ? `${sound.name}, ${sound.channelFiles.length} channels` : sound.name;
 }
 
-function renderReels() {
-  const list = document.getElementById("reel-list");
-  if (!list) return;
+const CHANNEL_SET_ON_CLIP_STATUS = "A channel set sounds over the whole timeline: drop it on the Sound label";
 
-  list.innerHTML = project.reels.map((reel, i) => `
-    <div class="reel" data-reel="${reel.id}">
-      <div class="reel-header">
-        <span class="reel-label">Reel ${i + 1}</span>
-        <span class="reel-duration">${reel.picture ? '—' : '--:--:--'}</span>
-      </div>
-      <div class="reel-tracks">
-        <div class="track track-picture" data-reel-id="${reel.id}" data-track="picture">
-          <span class="track-label">Picture</span>
-          <span class="track-info ${reel.picture ? 'has-content' : ''}">${reel.picture ? reel.picture.name : 'Drop video here'}</span>
-        </div>
-        <div class="track track-sound" data-reel-id="${reel.id}" data-track="sound">
-          <span class="track-label">Sound</span>
-          <span class="track-info ${reel.sound ? 'has-content' : ''}">${soundTrackLabel(reel.sound)}</span>
-        </div>
-        <div class="track track-subtitle" data-reel-id="${reel.id}" data-track="subtitle">
-          <span class="track-label">Subtitle</span>
-          <span class="track-info ${reel.subtitle ? 'has-content' : ''}">${reel.subtitle ? reel.subtitle.name : 'Optional'}</span>
-        </div>
-      </div>
-    </div>
-  `).join('');
+function assetName(assetId) {
+  const asset = assetById(assetId);
+  return asset.type === 'audio' ? soundTrackLabel(asset) : asset.name;
+}
 
-  // Drop targets on reel tracks
-  list.querySelectorAll('.track').forEach(track => {
-    track.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      track.style.background = 'var(--surface-hover)';
-    });
-    track.addEventListener('dragleave', () => {
-      track.style.background = '';
-    });
-    track.addEventListener('drop', (e) => {
-      e.preventDefault();
-      track.style.background = '';
-      const assetId = parseInt(e.dataTransfer.getData('text/plain'));
-      const asset = project.assets.find(a => a.id === assetId);
-      if (!asset) return;
-      const reelId = parseInt(track.dataset.reelId);
-      const reel = project.reels.find(r => r.id === reelId);
-      if (!reel) return;
-      const trackType = track.dataset.track;
-      if (REEL_SLOT_BY_ASSET_TYPE[asset.type] !== trackType) return;
-      reel[trackType] = asset;
-      renderReels();
-      updateStatusStats();
-    });
-  });
+async function sourceFrames(assetId) {
+  const asset = assetById(assetId);
+  if (asset.frames) return asset.frames;
+  const info = await probeVideo(asset.path);
+  if (!info) setStatus(`Could not read the frame count of ${asset.name}`);
+  return info?.frames ?? 0;
+}
 
+function storeActiveTimeline(timeline) {
+  project.compositions[project.activeComposition].timeline = timeline;
+}
+
+function timelineEdited(timeline) {
+  if (clipSoundIsChannelSet(timeline, assetById)) {
+    showTimelineInEditor(activeTimeline());
+    setStatus(CHANNEL_SET_ON_CLIP_STATUS);
+    return;
+  }
+  const rated = withFirstClipRate(timeline, assetById);
+  storeActiveTimeline(rated);
+  if (rated !== timeline) showTimelineInEditor(rated);
+  afterTimelineChange();
+}
+
+function showActiveTimeline() {
+  showTimelineInEditor(activeTimeline());
+  afterTimelineChange();
+}
+
+function afterTimelineChange() {
+  previewedClipIndex = clipIndexShowing(previewShownPath, previewedClipIndex);
+  refreshReelSplitFields();
   audioMapDrawn = refreshAudioMapMatrix();
   refreshIsdcfPreview();
   refreshMarkerFromPlayerButtons();
   refreshContainerViewAvailability();
+  updateStatusStats();
+  if (document.getElementById("view-reels").classList.contains("active")) showProjectTimeline();
 }
+
+initTimelineEditor(document.getElementById("timeline-editor"), {
+  fps: DEFAULT_TIMELINE_FPS,
+  assetName,
+  assetKind: (assetId) => TIMELINE_KIND_BY_ASSET_TYPE[assetById(assetId).type],
+  sourceFrames,
+  onChange: timelineEdited,
+  onSeek: seekTimelineFrame,
+});
+
+// === Reels ===
+// the split fields drive a timeline of one clip, and its reel starts mirror the split timecodes
+const REEL_SPLIT_FIELD_IDS = ["prop-reel-length", "prop-split-at", "prop-split-chapters"];
+const CLIP_LENGTH_FIELD_IDS = ["prop-trim-start", "prop-trim-end", "prop-still-length"];
+const splitAtField = document.getElementById("prop-split-at");
+
+function timelineEditRate() {
+  const firstClip = activeTimeline().clips[0];
+  const sourceRate = firstClip ? assetById(firstClip.picture).fps : null;
+  return editRateOf(document.getElementById("prop-framerate")?.value, sourceRate, DEFAULT_FRAMERATE);
+}
+
+function sameFrames(first, second) {
+  return first.length === second.length && first.every((frame, index) => frame === second[index]);
+}
+
+function refreshReelSplitFields() {
+  const multiClip = activeTimeline().clips.length > 1;
+  for (const id of [...REEL_SPLIT_FIELD_IDS, ...CLIP_LENGTH_FIELD_IDS]) document.getElementById(id).disabled = multiClip;
+  document.getElementById("prop-reel-split-hint").hidden = !multiClip;
+  document.getElementById("prop-clip-length-hint").hidden = !multiClip;
+  if (multiClip) return;
+  const editRate = timelineEditRate();
+  const typedFrames = splitTimecodeFrames(splitAtField.value, editRate);
+  const { reelStarts } = activeTimeline();
+  if (typedFrames === null || sameFrames(typedFrames, reelStarts)) return;
+  splitAtField.value = splitTimecodeSpec(reelStarts, editRate);
+}
+
+function withSplitAtReelStarts(timeline) {
+  const typedFrames = splitTimecodeFrames(splitAtField.value, timelineEditRate());
+  if (timeline.clips.length > 1 || typedFrames === null) return timeline;
+  return typedFrames.reduce(splitReelAt, { ...timeline, reelStarts: [] });
+}
+
+splitAtField.addEventListener("input", () => {
+  const mirrored = withSplitAtReelStarts(activeTimeline());
+  if (mirrored !== activeTimeline()) setEditorReelStarts(mirrored.reelStarts);
+});
 
 // === Source picture ===
 
 document.getElementById("prop-auto-crop")?.addEventListener("click", async () => {
-  const video = project.reels[0]?.picture?.path;
+  const clip = previewedOrFirstClip();
+  const video = clip ? assetPath(clip.picture) : null;
   const plan = document.getElementById("prop-crop-plan");
   if (!video) { tauriMessage("Import a video asset first"); return; }
   // a threshold of 0 means pure black only, so it must not fall back to the default
@@ -747,30 +807,49 @@ const PICTURE_PLACEMENT_CONTROLS = [
 let picturePlacementRequest = 0;
 const containerViewToggle = document.getElementById("prop-preview-in-container");
 const containerViewHint = document.getElementById("prop-preview-in-container-hint");
-// the reel whose picture the preview plays, null for any other file
-let previewedJobReel = null;
-// the build's filters for that reel's picture, null until a placement answer is in
+// the timeline clip whose picture the preview plays, null for any other file
+let previewedClipIndex = null;
+// the build's filters for that clip's picture, null until a placement answer is in
 let previewedPictureFilters = null;
 // the picture path the container view was last checked against
 let containerViewCheckedPath;
 
-function picturePlacementOf(reel) {
+// a clip can come twice from one file, so the clip already shown wins
+function clipIndexShowing(path, likelyIndex) {
+  const { clips } = activeTimeline();
+  const shows = (clip) => clip !== undefined && assetPath(clip.picture) === path;
+  if (shows(clips[likelyIndex])) return likelyIndex;
+  const index = clips.findIndex(shows);
+  return index === -1 ? null : index;
+}
+
+// crop detection, placement and the container view follow the clip on screen
+function previewedOrFirstClip() {
+  const { clips } = activeTimeline();
+  return clips[previewedClipIndex ?? 0] ?? null;
+}
+
+function clipJobRequest(clip, packageFields) {
+  return jobRequestFor({ ...activeTimeline(), clips: [clip], reelStarts: [] }, packageFields);
+}
+
+function picturePlacementOf(clip) {
   return invoke("picture_placement", {
-    request: jobRequest({ reel, video: reel.picture.path, title: "", output: "", encrypt: false, keyOut: "" }),
+    request: clipJobRequest(clip, { title: "", output: "", encrypt: false, keyOut: "" }),
   });
 }
 
 async function refreshPicturePlacement() {
   const plan = document.getElementById("prop-crop-plan");
-  const reel = project.reels[0];
-  if (!plan || !reel?.picture) return;
+  const firstClip = activeTimeline().clips[0];
+  if (!plan || !firstClip) return;
   const requestNumber = ++picturePlacementRequest;
   const resolvesAuto = resolutionSelect.value === "auto";
-  const previewedReel = previewedJobReel?.picture ? previewedJobReel : reel;
-  const placesPreviewedReel = containerViewToggle.checked && previewedReel !== reel;
+  const previewedClip = previewedOrFirstClip();
+  const placesPreviewedClip = containerViewToggle.checked && previewedClip.picture !== firstClip.picture;
   const [placement, previewedPlacement] = await Promise.allSettled([
-    picturePlacementOf(reel),
-    placesPreviewedReel ? picturePlacementOf(previewedReel) : null,
+    picturePlacementOf(firstClip),
+    placesPreviewedClip ? picturePlacementOf(previewedClip) : null,
   ]);
   if (requestNumber !== picturePlacementRequest) return;
   const placed = placement.status === "fulfilled";
@@ -778,7 +857,7 @@ async function refreshPicturePlacement() {
   if (placed && resolvesAuto) {
     autoResolutionOption.textContent = autoResolutionLabel([placement.value.containerWidth, placement.value.containerHeight]);
   }
-  const shown = placesPreviewedReel ? previewedPlacement : placement;
+  const shown = placesPreviewedClip ? previewedPlacement : placement;
   previewedPictureFilters = shown.status === "fulfilled" ? shown.value.filters : null;
   sendContainerViewFilters();
 }
@@ -789,7 +868,7 @@ for (const id of PICTURE_PLACEMENT_CONTROLS) {
 
 function sendContainerViewFilters() {
   if (!isPreviewVisible()) return;
-  const showsContainer = containerViewToggle.checked && !containerViewToggle.disabled && previewedJobReel !== null;
+  const showsContainer = containerViewToggle.checked && !containerViewToggle.disabled && previewedClipIndex !== null;
   setPreviewPictureFilters(showsContainer ? previewedPictureFilters : null);
 }
 
@@ -799,7 +878,8 @@ containerViewToggle.addEventListener("change", () => {
 });
 
 async function refreshContainerViewAvailability() {
-  const path = project.reels[0]?.picture?.path ?? null;
+  const clip = previewedOrFirstClip();
+  const path = clip ? assetPath(clip.picture) : null;
   if (path === containerViewCheckedPath) return;
   containerViewCheckedPath = path;
   const takesFilters = path === null || (await previewTakesPictureFilters(path));
@@ -811,7 +891,7 @@ async function refreshContainerViewAvailability() {
 
 // === Audio channel mapping matrix ===
 
-// the sound the drawn matrix belongs to, so re-rendering the reels does not throw
+// the sound the drawn matrix belongs to, so re-rendering the timeline does not throw
 // away gains the user has typed
 let audioMapSource = null;
 let audioMapDrawn = Promise.resolve();
@@ -822,7 +902,7 @@ async function refreshAudioMapMatrix() {
   const grid = document.getElementById("prop-audio-map");
   const hint = document.getElementById("prop-audio-map-hint");
   if (!grid) return;
-  const { audioPath, audioChannelFiles } = soundSource(project.reels[0]?.sound);
+  const { audioPath, audioChannelFiles } = soundSource(firstSoundAsset(activeTimeline(), assetById));
   const sound = audioPath ?? audioChannelFiles?.join("\n") ?? null;
   if (sound === audioMapSource) return;
   audioMapSource = sound;
@@ -881,13 +961,6 @@ async function fillAudioMap(spec) {
   return unroutedCells;
 }
 
-// Add reel button
-document.getElementById("add-reel")?.addEventListener("click", () => {
-  const maxId = project.reels.reduce((m, r) => Math.max(m, r.id), 0);
-  project.reels.push({ id: maxId + 1, picture: null, sound: null, subtitle: null });
-  renderReels();
-});
-
 // === Multi-CPL Management ===
 let nextCplId = 2;
 
@@ -919,7 +992,7 @@ function switchCpl(idx) {
   if (idx < 0 || idx >= project.compositions.length) return;
   project.activeComposition = idx;
   renderCplTabs();
-  renderReels();
+  showActiveTimeline();
   // Update properties panel content kind
   const cpl = project.compositions[idx];
   const kindEl = document.getElementById("prop-content-kind");
@@ -933,7 +1006,7 @@ function removeCpl(idx) {
     project.activeComposition = project.compositions.length - 1;
   }
   renderCplTabs();
-  renderReels();
+  showActiveTimeline();
 }
 
 document.getElementById("add-cpl")?.addEventListener("click", async () => {
@@ -947,7 +1020,7 @@ document.getElementById("add-cpl")?.addEventListener("click", async () => {
     id: nextCplId++,
     name: name,
     contentKind: "feature",
-    reels: [{ id: 1, picture: null, sound: null, subtitle: null }],
+    timeline: emptyTimeline(DEFAULT_TIMELINE_FPS),
   });
   switchCpl(project.compositions.length - 1);
 });
@@ -1282,7 +1355,8 @@ function markerRowElement(markerRow, labels) {
 }
 
 function markerFromPlayerBlocker() {
-  return markerFromPlayerUnavailable({ compositionPicturePath: project.reels[0]?.picture?.path, shownPath: previewShownPath });
+  const timelinePicturePaths = activeTimeline().clips.map((clip) => assetPath(clip.picture));
+  return markerFromPlayerUnavailable({ timelinePicturePaths, shownPath: previewShownPath });
 }
 
 function applyMarkerFromPlayerState(button, blocker = markerFromPlayerBlocker()) {
@@ -1303,26 +1377,37 @@ function fieldFrames(id, label, editRate) {
   }
 }
 
+// the trim fields only reach a timeline of one clip, and only where the clip keeps its whole source
+function clipTrimFrames(timeline, clip, editRate) {
+  const tailFrames = clip.frames - clip.outFrame;
+  const oneClip = timeline.clips.length === 1;
+  return {
+    trimStartFrames: clip.inFrame > 0 || !oneClip ? clip.inFrame : fieldFrames("prop-trim-start", "Trim start", editRate),
+    trimEndFrames: tailFrames > 0 || !oneClip ? tailFrames : fieldFrames("prop-trim-end", "Trim end", editRate),
+  };
+}
+
 async function compositionTimecodeAtPlayer() {
   const blocker = markerFromPlayerBlocker();
   if (blocker) throw new Error(blocker);
-  const picturePath = project.reels[0].picture.path;
+  const timeline = activeTimeline();
+  const clipIndex = clipIndexShowing(previewShownPath, previewedClipIndex);
+  const clip = timeline.clips[clipIndex];
   const [positionSeconds, durationSeconds, source] = await Promise.all([
     invoke("preview_get_position"),
     invoke("preview_get_duration"),
-    probeVideo(picturePath),
+    probeVideo(assetPath(clip.picture)),
   ]);
-  const editRate = editRateOf(document.getElementById("prop-framerate")?.value, source?.fps, DEFAULT_FRAMERATE);
-  const frame = compositionFrameAt({
+  const editRate = timelineEditRate();
+  const frameInClip = compositionFrameAt({
     positionSeconds,
     durationSeconds,
     sourceRate: source?.fps,
     editRate,
-    trimStartFrames: fieldFrames("prop-trim-start", "Trim start", editRate),
-    trimEndFrames: fieldFrames("prop-trim-end", "Trim end", editRate),
+    ...clipTrimFrames(timeline, clip, editRate),
     padHeadFrames: fieldFrames("prop-pad-head", "Head padding", editRate),
   });
-  return markerTimecode(frame, editRate);
+  return markerTimecode(timelineFrameAtSourceFrame(timeline, clipIndex, clip.inFrame) + frameInClip, editRate);
 }
 
 async function setMarkerFromPlayer(element) {
@@ -1451,18 +1536,19 @@ function compositionMetadata() {
 
 // Everything the built name reads, so the preview and the build agree.
 function isdcfNameRequest() {
-  const reel = project.reels[0];
+  const timeline = activeTimeline();
+  const firstPicture = timeline.clips.length ? assetById(timeline.clips[0].picture) : null;
   return {
     title: document.getElementById("prop-title")?.value?.trim() || "",
     standard: document.getElementById("prop-standard")?.value || "smpte",
     resolution: document.getElementById("prop-resolution")?.value || "auto",
     framerate: document.getElementById("prop-framerate")?.value || String(DEFAULT_FRAMERATE),
     contentKind: document.getElementById("prop-content-kind")?.value || "feature",
-    videoPath: reel?.picture?.path || null,
-    ...soundSource(reel?.sound),
+    videoPath: firstPicture?.path || null,
+    ...soundSource(firstSoundAsset(timeline, assetById)),
     audioMap: audioMapSpec(),
     upmix: document.getElementById("prop-upmix")?.value || "none",
-    subtitle: reel?.subtitle?.path || null,
+    subtitle: firstSubtitleAsset(timeline, assetById)?.path || null,
     subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
     burnSubtitle: document.getElementById("prop-burn-subtitle")?.value || null,
     subtitlesBurntIn: document.getElementById("prop-subtitles-burnt-in")?.checked || false,
@@ -1473,9 +1559,9 @@ function isdcfNameRequest() {
     facility: getPrefs().facility || null,
     compositionMetadata: compositionMetadata(),
     naming: namingMetadata(),
-    sourceWidth: reel?.picture?.width || null,
-    sourceHeight: reel?.picture?.height || null,
-    sourceFps: reel?.picture?.fps || null,
+    sourceWidth: firstPicture?.width || null,
+    sourceHeight: firstPicture?.height || null,
+    sourceFps: firstPicture?.fps || null,
     cropLeft: parseInt(document.getElementById("prop-crop-left")?.value) || 0,
     cropRight: parseInt(document.getElementById("prop-crop-right")?.value) || 0,
     cropTop: parseInt(document.getElementById("prop-crop-top")?.value) || 0,
@@ -1517,10 +1603,7 @@ renderRatings();
 
 // Build and Measure both send this request
 function currentJobRequest() {
-  const reel = project.reels[0];
-  return jobRequest({
-    reel,
-    video: reel?.picture?.path || "",
+  return jobRequestFor(activeTimeline(), {
     title: document.getElementById("prop-title")?.value?.trim() || "",
     output: document.getElementById("prop-output")?.value || "",
     encrypt: document.getElementById("prop-encrypt")?.checked || false,
@@ -1528,13 +1611,18 @@ function currentJobRequest() {
   });
 }
 
-function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
-  const { audioPath, audioChannelFiles } = soundSource(reel?.sound);
+function jobRequestFor(timeline, packageFields) {
+  const panelRequest = jobRequest(packageFields);
+  return { ...panelRequest, ...timelineRequestFields(timeline, assetById, panelRequest) };
+}
+
+// the picture, sound and subtitle are left for the timeline to fill
+function jobRequest({ title, output, encrypt, keyOut }) {
   return {
-    videoPath: video,
+    videoPath: "",
     title,
     outputDir: output,
-    audioPath,
+    audioPath: null,
     validate: document.getElementById("prop-validate")?.checked ?? true,
     standard: document.getElementById("prop-standard")?.value || "smpte",
     resolution: document.getElementById("prop-resolution")?.value || "auto",
@@ -1549,7 +1637,7 @@ function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
     signingChain: signingChainFrom(getPrefs()),
     rightEye: document.getElementById("prop-right-eye")?.value || null,
     atmos: document.getElementById("prop-atmos")?.value || null,
-    subtitle: reel?.subtitle?.path || null,
+    subtitle: null,
     subtitleLanguage: document.getElementById("prop-subtitle-language")?.value || "en",
     subtitleFontSize: document.getElementById("prop-subtitle-font-size")?.value || null,
     subtitleColour: document.getElementById("prop-subtitle-colour")?.value || null,
@@ -1584,7 +1672,7 @@ function jobRequest({ reel, video, title, output, encrypt, keyOut }) {
     audioGainDb: optionalNumber(document.getElementById("prop-audio-gain")?.value),
     audioFadeInSeconds: parseFloat(document.getElementById("prop-audio-fade-in")?.value) || null,
     audioFadeOutSeconds: parseFloat(document.getElementById("prop-audio-fade-out")?.value) || null,
-    audioChannelFiles,
+    audioChannelFiles: null,
     audioMap: audioMapSpec(),
     audioInputOrder: document.getElementById("prop-audio-input-order")?.value || "dcp",
     audioChannels: parseInt(document.getElementById("prop-audio-channels")?.value) || null,
@@ -1658,8 +1746,8 @@ function markDeliveredStale() {
 }
 
 document.getElementById("prop-measure-sound")?.addEventListener("click", async () => {
-  const reel = project.reels[0];
-  if (!reel?.picture && !reel?.sound) { setStatus("Import a video or sound asset first"); return; }
+  const timeline = activeTimeline();
+  if (timeline.clips.length === 0 && !firstSoundAsset(timeline, assetById)) { setStatus("Import a video or sound asset first"); return; }
   const fields = loudnessPanelFields();
   fields.measure.disabled = true;
   fields.source.textContent = "Measuring…";
@@ -1703,8 +1791,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   }
   const anotherBuildInFlight = buildsInFlight.anyBuildInFlight();
 
-  const reel = project.reels[0];
-  if (!reel?.picture) { tauriMessage("Import a video asset first"); return; }
+  if (activeTimeline().clips.length === 0) { tauriMessage("Import a video asset first"); return; }
 
   const encrypt = document.getElementById("prop-encrypt")?.checked || false;
   const keyOut = document.getElementById("prop-key-out")?.value || "";
@@ -1897,7 +1984,7 @@ function applyPreviewSelection() {
 function previewTargetInput() {
   return {
     selectedPreview,
-    firstPicturePath: project.reels[0]?.picture?.path,
+    firstPicturePath: activeTimeline().clips.length ? assetPath(activeTimeline().clips[0].picture) : null,
     openedPackage,
     outputPath: submittedPackage,
   };
@@ -2001,37 +2088,74 @@ function askForContentKeys() {
   });
 }
 
-// The preview shows what the build will do to the picture, so a file a reel
-// takes as its picture carries the crop and that reel's timed text, and any
+// The preview shows what the build will do to the picture, so a file a clip
+// takes as its picture carries the crop and that clip's timed text, and any
 // other file plays plain.
-async function previewSourcePicture(path) {
+async function previewSourcePicture(path, clipIndex = clipIndexShowing(path, null)) {
   const { contentKeys, cancelled } = await contentKeysFor(path);
   if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
   const loaded = previewFile(path, contentKeys);
   forgetContentKeysIfRefused(path, loaded);
-  const reel = project.reels.find(r => r.picture?.path === path);
   previewedPackage = null;
-  previewShowsJobPicture = Boolean(reel);
-  previewedJobReel = reel ?? null;
-  setPreviewedTimelineReel(reel ? project.reels.indexOf(reel) : null);
-  setPreviewCrop(reel ? currentCrop() : null);
-  if (!reel) return loaded;
-  showPreviewTrack(reel.subtitle?.path, "subtitle", generation);
+  previewShowsJobPicture = clipIndex !== null;
+  previewedClipIndex = clipIndex;
+  setPreviewCrop(previewShowsJobPicture ? currentCrop() : null);
+  if (!previewShowsJobPicture) return loaded;
+  showPreviewTrack(clipSubtitlePath(clipIndex), "subtitle", generation);
   showPreviewTrack(document.getElementById("prop-ccap")?.value, "closed-caption", generation);
   // the load takes the container view's filters off
   if (containerViewToggle.checked && (await loaded) && generation === previewGeneration) refreshPicturePlacement();
   return loaded;
 }
 
-// a timeline click in another reel loads that reel's picture first
-setProjectReelSeeker(async (reelIndex, seconds) => {
-  const reel = project.reels[reelIndex];
-  if (!reel?.picture) return;
-  if (previewedJobReel !== reel && !(await previewSourcePicture(reel.picture.path))) return;
-  await invoke("preview_seek_absolute", { seconds });
-});
+// the timeline's own subtitle lines up with the source only where the timeline starts at the source's first frame
+function clipSubtitlePath(clipIndex) {
+  const timeline = activeTimeline();
+  const clip = timeline.clips[clipIndex];
+  const startsTimeline = clipIndex === 0 && clip.inFrame === 0;
+  const subtitle = clip.subtitle ?? (startsTimeline ? timeline.subtitle : null);
+  return subtitle === null ? null : assetPath(subtitle);
+}
+
+function clipRate(clip) {
+  return parseFrameRate(assetById(clip.picture).fps) ?? activeTimeline().fps;
+}
+
+// a seek in another clip loads that clip's picture first, and nothing happens while the preview plays no clip
+async function seekTimelineFrame(frame) {
+  if (previewedClipIndex === null) return;
+  const timeline = activeTimeline();
+  const place = clipAtFrame(timeline, frame);
+  if (!place) return;
+  const clip = timeline.clips[place.index];
+  const path = assetPath(clip.picture);
+  if (path !== previewShownPath && !(await previewSourcePicture(path, place.index))) return;
+  previewedClipIndex = place.index;
+  const [numerator, denominator] = clipRate(clip);
+  await invoke("preview_seek_absolute", { seconds: ((clip.inFrame + place.frameInClip) * denominator) / numerator });
+}
+
+setProjectTimelineSeeker(seekTimelineFrame);
+
+const TIMELINE_PLAYHEAD_POLL_MILLISECONDS = 250;
+
+// a playhead before the clip's in point still sets the in point from the source frame under it
+async function followPreviewOnTimeline() {
+  if (previewedClipIndex === null || !isPreviewVisible()) return;
+  // the player is not running
+  const positionSeconds = await invoke("preview_get_position").catch(() => null);
+  if (positionSeconds === null || previewedClipIndex === null) return;
+  const timeline = activeTimeline();
+  const [numerator, denominator] = clipRate(timeline.clips[previewedClipIndex]);
+  const sourceFrame = Math.round((positionSeconds * numerator) / denominator);
+  const frame = timelineFrameAtSourceFrame(timeline, previewedClipIndex, sourceFrame);
+  setEditorPlayhead(frame);
+  setProjectTimelinePlayhead(frame);
+}
+
+setInterval(followPreviewOnTimeline, TIMELINE_PLAYHEAD_POLL_MILLISECONDS);
 
 // A built DCP carries the crop in its pictures already, and its timed text is
 // read back out of the package rather than off the source files.
@@ -2041,9 +2165,8 @@ async function previewPackage(dirPath) {
   previewGeneration += 1;
   const generation = previewGeneration;
   previewShowsJobPicture = false;
-  previewedJobReel = null;
+  previewedClipIndex = null;
   previewedPackage = dirPath;
-  setPreviewedTimelineReel(null);
   forgetContentKeysIfRefused(dirPath, previewDcp(dirPath, contentKeys));
   setPreviewCrop(null);
   showPreviewTrack(dirPath, "subtitle", generation);
@@ -3080,9 +3203,11 @@ async function restoreBuildPanel(saved, projectPath) {
   renderCplTabs();
   // undefined matches no sound path, not even none, so the matrix is drawn again
   audioMapSource = undefined;
-  renderReels();
+  previewedClipIndex = null;
+  storeActiveTimeline(withSplitAtReelStarts(activeTimeline()));
+  showActiveTimeline();
+  probeUnprobedClips();
   renderAssets();
-  updateStatusStats();
   submittedPackage = null;
   openedPackage = null;
   previewedPackage = null;
@@ -3211,7 +3336,7 @@ let finishedBuild = null;
 function updateBuildButton() {
   const buildBtn = document.getElementById("btn-build");
   if (!buildBtn) return;
-  const hasVideo = project.reels.some(r => r.picture);
+  const hasVideo = activeTimeline().clips.length > 0;
   const title = document.getElementById("prop-title")?.value?.trim();
   const alreadyBuilt = finishedBuild !== null && JSON.stringify(currentJobRequest()) === finishedBuild.requestText;
   buildBtn.disabled = !(hasVideo && title) || buildsInFlight.buildInFlight(title) || alreadyBuilt;
@@ -3260,15 +3385,10 @@ async function removeAsset(assetId) {
   if (!(await tauriConfirm(`Remove "${asset.name}" from project?`))) return;
   project.assets = project.assets.filter(a => a.id !== assetId);
   if (selectedPreview?.kind === "source" && selectedPreview.path === asset.path) clearPreviewSelection();
-  project.reels.forEach(r => {
-    if (r.picture?.id === assetId) r.picture = null;
-    if (r.sound?.id === assetId) r.sound = null;
-    if (r.subtitle?.id === assetId) r.subtitle = null;
-  });
-  fillFirstReelFromUnplacedAssets();
+  for (const composition of project.compositions) composition.timeline = withoutAsset(composition.timeline, assetId);
+  fillTimelineFromUnplacedAssets();
   renderAssets();
-  renderReels();
-  updateStatusStats();
+  showActiveTimeline();
 }
 
 ctxMenu?.querySelectorAll("button").forEach(btn => {
@@ -3327,6 +3447,7 @@ async function probeVideo(path) {
       height: vs.height,
       fps: vs.r_frame_rate,
       duration: parseFloat(info.format?.duration || vs.duration || "0"),
+      frames: sourceFrameCount(parseFloat(vs.duration ?? info.format?.duration), vs.r_frame_rate),
       colorPrimaries: vs.color_primaries,
       colorTransfer: vs.color_transfer,
       colorSpace: vs.color_space,
@@ -3519,7 +3640,7 @@ function libraryNameFor(path) {
 
 // === Init ===
 renderAssets();
-renderReels();
+showActiveTimeline();
 const buildPanelDefaults = serializeBuildPanel();
 
 function preferredProjectControls() {
@@ -3535,13 +3656,9 @@ function takeProjectDefaultsFromPreferences() {
   return preferredDefaults;
 }
 
-async function showProjectTimeline() {
+function showProjectTimeline() {
   if (openedPackage) return;
-  const reels = [...project.reels];
-  const sources = await Promise.all(reels.map((reel) => (reel.picture ? probeVideo(reel.picture.path) : null)));
-  const editRate = editRateOf(document.getElementById("prop-framerate")?.value, sources[0]?.fps, DEFAULT_FRAMERATE);
-  const durationsFrames = sources.map((source) => Math.round((source?.duration || 0) * editRate));
-  loadTimelineFromProject(reels, durationsFrames, editRate);
+  loadTimelineFromProject(reelSpans(activeTimeline(), assetById), timelineEditRate());
 }
 
 preferencesLoaded.then(() => {
@@ -3573,7 +3690,12 @@ refreshLibrary();
 updateStatusStats();
 initPreview();
 preferencesLoaded.then(() => initPlayerControlsPanel({ preferences: getPrefs(), save: (controls) => savePrefs({ ...getPrefs(), ...controls }) }));
-watchPreviewShown((path, ended) => { previewShownPath = path; previewPlaybackEnded = ended; updateToolbarState(); });
+watchPreviewShown((path, ended) => {
+  previewShownPath = path;
+  previewPlaybackEnded = ended;
+  previewedClipIndex = path === null ? null : clipIndexShowing(path, previewedClipIndex);
+  updateToolbarState();
+});
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");

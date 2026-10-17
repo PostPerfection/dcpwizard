@@ -165,31 +165,9 @@
 
               <section class="panel reels-panel">
                 <div class="panel-header">
-                  <h2>Reels</h2>
-                  <button id="add-reel" class="btn-sm" data-key="r">+ Reel</button>
+                  <h2>Timeline</h2>
                 </div>
-                <div id="reel-list" class="reel-list">
-                  <div class="reel" data-reel="1">
-                    <div class="reel-header">
-                      <span class="reel-label">Reel 1</span>
-                      <span class="reel-duration" id="reel-1-duration">--:--:--</span>
-                    </div>
-                    <div class="reel-tracks">
-                      <div class="track track-picture" id="reel-1-picture">
-                        <span class="track-label">Picture</span>
-                        <span class="track-info">Drop video here</span>
-                      </div>
-                      <div class="track track-sound" id="reel-1-sound">
-                        <span class="track-label">Sound</span>
-                        <span class="track-info">Drop audio here</span>
-                      </div>
-                      <div class="track track-subtitle" id="reel-1-subtitle">
-                        <span class="track-label">Subtitle</span>
-                        <span class="track-info">Optional</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <div id="timeline-editor"></div>
               </section>
             </div>
 
@@ -448,6 +426,7 @@
                     <input id="prop-video-fade-out" type="number" step="0.1" min="0" placeholder="0">
                   </div>
                   <p class="field-hint">Trim runs before padding. A single-image video needs a still length and cannot be trimmed. Fades run on the trimmed picture, and a still hold takes none.</p>
+                  <p class="field-hint" id="prop-clip-length-hint" hidden>With more than one clip on the timeline, each clip's In and Out set its length.</p>
                 </fieldset>
 
                 <fieldset>
@@ -527,6 +506,7 @@
                     <label><input type="checkbox" id="prop-split-chapters"> Split at source chapter marks</label>
                   </div>
                   <p class="field-hint">Pick one: reel length, timecodes, or chapters.</p>
+                  <p class="field-hint" id="prop-reel-split-hint" hidden>With more than one clip on the timeline, the reel starts come from the timeline: Split reel here adds one at the playhead.</p>
                 </fieldset>
 
                 <fieldset>
