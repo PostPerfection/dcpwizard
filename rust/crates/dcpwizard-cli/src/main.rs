@@ -4767,21 +4767,22 @@ fn run() {
                     .messages
                     .extend(dcpwizard_core::timeline_build::refuse_with_multi_clip(
                         &dcpwizard_core::timeline_build::MultiClipFlags {
-                            burn_subtitle: burn_subtitle.is_some(),
-                            resume,
-                            right_eye: right_eye.is_some(),
-                            hdr_dci,
-                            allow_generic_hdr_tonemap,
-                            input_range: input_range.is_some(),
-                            watermark: watermark_opts.watermark.is_some(),
-                            still_length: still_length.is_some(),
-                            trim_start: trim_start.is_some(),
-                            trim_end: trim_end.is_some(),
-                            split_at: split_at.is_some(),
-                            split_chapters,
-                            reel_length: reel_length.is_some(),
-                            video_fade_in: video_fade_in.is_some(),
-                            video_fade_out: video_fade_out.is_some(),
+                            burn_subtitle: burn_subtitle.is_some().then_some("--burn-subtitle"),
+                            resume: resume.then_some("--resume"),
+                            right_eye: right_eye.is_some().then_some("--right-eye"),
+                            hdr_dci: hdr_dci.then_some("--hdr-dci"),
+                            allow_generic_hdr_tonemap: allow_generic_hdr_tonemap
+                                .then_some("--allow-generic-hdr-tonemap"),
+                            input_range: input_range.is_some().then_some("--input-range"),
+                            watermark: watermark_opts.watermark.is_some().then_some("--watermark"),
+                            still_length: still_length.is_some().then_some("--still-length"),
+                            trim_start: trim_start.is_some().then_some("--trim-start"),
+                            trim_end: trim_end.is_some().then_some("--trim-end"),
+                            split_at: split_at.is_some().then_some("--split-at"),
+                            split_chapters: split_chapters.then_some("--split-chapters"),
+                            reel_length: reel_length.is_some().then_some("--reel-length"),
+                            video_fade_in: video_fade_in.is_some().then_some("--video-fade-in"),
+                            video_fade_out: video_fade_out.is_some().then_some("--video-fade-out"),
                         },
                     ));
             }

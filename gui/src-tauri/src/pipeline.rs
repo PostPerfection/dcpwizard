@@ -465,6 +465,13 @@ pub struct JobConfig {
     video_fade_in_seconds: Option<f64>,
     #[serde(default)]
     video_fade_out_seconds: Option<f64>,
+    // set for more than one clip only
+    #[serde(default)]
+    timeline: Option<postkit::timeline::Timeline>,
+    #[serde(default)]
+    ignore_source_sound: bool,
+    #[serde(default)]
+    timed_text_ignores_trim: bool,
 }
 
 impl JobConfig {
@@ -754,9 +761,118 @@ pub struct SubmitRequest {
     audio_fade_out_seconds: Option<f64>,
     video_fade_in_seconds: Option<f64>,
     video_fade_out_seconds: Option<f64>,
+    timeline: Option<postkit::timeline::Timeline>,
+}
+
+const SOUND_COMES_FROM_THE_TIMELINE: &str = "the sound comes from the timeline's sound track";
+
+// a one-clip timeline builds as one picture
+fn timeline_shape_of(
+    request: &SubmitRequest,
+) -> Result<Option<dcpwizard_core::timeline_build::TimelineShape>, String> {
+    let Some(timeline) = &request.timeline else {
+        return Ok(None);
+    };
+    if !request.video_path.is_empty() {
+        return Err("The job names both a video and a timeline: send one".into());
+    }
+    if timeline.version != postkit::timeline::TIMELINE_FORMAT_VERSION {
+        return Err(format!(
+            "The timeline is version {}, and this build reads version {}",
+            timeline.version,
+            postkit::timeline::TIMELINE_FORMAT_VERSION
+        ));
+    }
+    let given = |value: &Option<String>| filled(value).is_some();
+    let beside_timeline = [
+        (
+            "A sound asset",
+            given(&request.audio_path),
+            SOUND_COMES_FROM_THE_TIMELINE,
+        ),
+        (
+            "A sound channel set",
+            request
+                .audio_channel_files
+                .as_ref()
+                .is_some_and(|files| !files.is_empty()),
+            SOUND_COMES_FROM_THE_TIMELINE,
+        ),
+        (
+            "Trim off the head",
+            given(&request.trim_start),
+            dcpwizard_core::timeline_build::CLIPS_CARRY_THEIR_LENGTH,
+        ),
+        (
+            "Trim off the tail",
+            given(&request.trim_end),
+            dcpwizard_core::timeline_build::CLIPS_CARRY_THEIR_LENGTH,
+        ),
+        (
+            "Still length",
+            given(&request.still_length),
+            dcpwizard_core::timeline_build::CLIPS_CARRY_THEIR_LENGTH,
+        ),
+        (
+            "Split at timecodes",
+            given(&request.split_at),
+            dcpwizard_core::timeline_build::REEL_STARTS_COME_FROM_THE_TIMELINE,
+        ),
+        (
+            "Split at source chapter marks",
+            request.split_chapters == Some(true),
+            dcpwizard_core::timeline_build::REEL_STARTS_COME_FROM_THE_TIMELINE,
+        ),
+        (
+            "Reel length",
+            request
+                .reel_length_minutes
+                .is_some_and(|minutes| minutes > 0),
+            dcpwizard_core::timeline_build::REEL_STARTS_COME_FROM_THE_TIMELINE,
+        ),
+    ];
+    if let Some((field, _, reason)) = beside_timeline.into_iter().find(|(_, set, _)| *set) {
+        return Err(format!("{field} does not apply to a timeline: {reason}"));
+    }
+    if given(&request.subtitle) && dcpwizard_core::timeline_build::carries_subtitle(timeline) {
+        return Err(
+            "A subtitle asset and the timeline's subtitle both time the subtitle track: keep one"
+                .into(),
+        );
+    }
+    let shape = dcpwizard_core::timeline_build::shape(timeline)?;
+    if matches!(
+        shape,
+        dcpwizard_core::timeline_build::TimelineShape::MultiClip
+    ) {
+        let refusals = dcpwizard_core::timeline_build::refuse_with_multi_clip(
+            &dcpwizard_core::timeline_build::MultiClipFlags {
+                burn_subtitle: given(&request.burn_subtitle)
+                    .then_some("Burn subtitles into the picture"),
+                right_eye: given(&request.right_eye).then_some("Right-eye video"),
+                hdr_dci: (request.hdr_dci == Some(true)).then_some("DCI HDR"),
+                allow_generic_hdr_tonemap: (request.allow_generic_hdr_tonemap == Some(true))
+                    .then_some("Allow generic FFmpeg tone mapping"),
+                video_fade_in: request
+                    .video_fade_in_seconds
+                    .is_some()
+                    .then_some("Picture fade in"),
+                video_fade_out: request
+                    .video_fade_out_seconds
+                    .is_some()
+                    .then_some("Picture fade out"),
+                ..Default::default()
+            },
+        );
+        if !refusals.is_empty() {
+            return Err(refusals.join("\n"));
+        }
+    }
+    Ok(Some(shape))
 }
 
 fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
+    let timeline_shape = timeline_shape_of(&request)?;
     let SubmitRequest {
         video_path,
         title,
@@ -859,6 +975,7 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         audio_fade_out_seconds,
         video_fade_in_seconds,
         video_fade_out_seconds,
+        timeline,
     } = request;
 
     // Never encrypt without an explicit key destination.
@@ -874,12 +991,25 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
     let tail_items =
         dcpwizard_core::library_reel::attach_by_name(&library, &tail_items.unwrap_or_default())?;
 
-    let video = PathBuf::from(&video_path);
-    let still_input = postkit::still::is_still_image(&video);
+    let single_clip = match timeline_shape {
+        Some(dcpwizard_core::timeline_build::TimelineShape::SingleClip(build)) => Some(build),
+        Some(dcpwizard_core::timeline_build::TimelineShape::MultiClip) | None => None,
+    };
+    let timeline_rate = timeline
+        .as_ref()
+        .map(|timeline| (timeline.fps.numerator, timeline.fps.denominator));
+    let multi_clip_timeline = timeline.filter(|_| single_clip.is_none());
+    // the probe, placement and naming read the first clip
+    let video = match (&single_clip, &multi_clip_timeline) {
+        (Some(build), _) => build.picture.clone(),
+        (None, Some(timeline)) => timeline.clips[0].picture.clone(),
+        (None, None) => PathBuf::from(&video_path),
+    };
+    let still_input = multi_clip_timeline.is_none() && postkit::still::is_still_image(&video);
     let source = probe_job_source(&video, still_input);
     let framerate = framerate_from_source(
         framerate.unwrap_or_else(|| DEFAULT_FRAME_RATE.0.into()),
-        source.as_ref().map(|info| (info.fps_num, info.fps_den)),
+        timeline_rate.or(source.as_ref().map(|info| (info.fps_num, info.fps_den))),
     );
     let naming = naming.unwrap_or_default();
     let facility = facility.filter(|code| !code.is_empty());
@@ -923,8 +1053,13 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
             None => Ok(0),
         }
     };
-    let trim_start_frames = duration_frames(trim_start.as_deref(), "Trim start")?;
-    let trim_end_frames = duration_frames(trim_end.as_deref(), "Trim end")?;
+    let (trim_start_frames, trim_end_frames) = match &single_clip {
+        Some(build) => (build.trim_start_frames, build.trim_end_frames),
+        None => (
+            duration_frames(trim_start.as_deref(), "Trim start")?,
+            duration_frames(trim_end.as_deref(), "Trim end")?,
+        ),
+    };
     let still_length_frames = duration_frames(still_length.as_deref(), "Still length")?;
 
     if still_input && still_length_frames == 0 {
@@ -1044,13 +1179,40 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
             "Choose one reel split: reel length, split timecodes, or split at chapters".into(),
         );
     }
-    let reel_split_frames = match split_at.as_deref() {
-        Some(spec) => parse_split_timecodes(spec, fps_num)?,
-        None => Vec::new(),
+    let reel_split_frames = match (&single_clip, &multi_clip_timeline, split_at.as_deref()) {
+        (Some(build), _, _) => build.reel_split_frames.clone(),
+        (None, Some(timeline), _) => timeline.reel_starts.clone(),
+        (None, None, Some(spec)) => parse_split_timecodes(spec, fps_num)?,
+        (None, None, None) => Vec::new(),
     };
 
     let versions = load_version_specs(versions.as_deref())?;
-    let subtitle = subtitle.filter(|s| !s.is_empty());
+    // stands in for the joined clip subtitles until the build writes them
+    let timeline_subtitle = match (&single_clip, &multi_clip_timeline) {
+        (Some(build), _) => build.subtitle.clone(),
+        (None, Some(timeline)) => timeline
+            .subtitle
+            .iter()
+            .chain(
+                timeline
+                    .clips
+                    .iter()
+                    .filter_map(|clip| clip.subtitle.as_ref()),
+            )
+            .next()
+            .cloned(),
+        (None, None) => None,
+    };
+    let subtitle = subtitle
+        .filter(|s| !s.is_empty())
+        .or(timeline_subtitle.map(|path| path.to_string_lossy().into_owned()));
+    let audio_path = match &single_clip {
+        Some(build) => build
+            .audio
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        None => audio_path,
+    };
     let ccap = ccap.filter(|s| !s.is_empty());
     if !versions.is_empty() && (subtitle.is_some() || ccap.is_some()) {
         return Err(
@@ -1186,7 +1348,7 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
 
     Ok(JobConfig {
         id,
-        video_path: PathBuf::from(&video_path),
+        video_path: video,
         title: title.clone(),
         output_dir: PathBuf::from(&output_dir),
         audio_path,
@@ -1261,6 +1423,12 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         audio_fade_out_seconds,
         video_fade_in_seconds,
         video_fade_out_seconds,
+        ignore_source_sound: single_clip.as_ref().is_some_and(|build| build.silent),
+        // the timeline's own subtitle is on the timeline clock
+        timed_text_ignores_trim: single_clip
+            .as_ref()
+            .is_some_and(|build| !build.subtitle_from_clip),
+        timeline: multi_clip_timeline,
     })
 }
 
@@ -1271,6 +1439,10 @@ pub async fn submit_job(app: AppHandle, request: SubmitRequest) -> Result<Submit
     let queue = app.state::<JobQueue>();
     let id = queue.reserve_job_id();
 
+    // Measure runs on a sound with no picture
+    if request.video_path.is_empty() && request.timeline.is_none() {
+        return Err("Pick a video or lay clips on the timeline".into());
+    }
     let hints_accepted = request.hints_accepted;
     let mut job = job_config_of(id, request)?;
 
@@ -1401,7 +1573,24 @@ fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeas
         }
     };
     let (fps_num, _) = frame_rate_of(&job.framerate);
-    let mut sound = prepare_audio(job, job_conform(job), scratch.path(), log)?;
+    let timeline_sound_job = match &job.timeline {
+        Some(timeline) => Some(job_with_timeline_sound(
+            job,
+            postkit::timeline::render_sound(
+                timeline,
+                &scratch
+                    .path()
+                    .join(dcpwizard_core::timeline_build::TIMELINE_SOUND_FILE),
+            )?,
+        )),
+        None => None,
+    };
+    let mut sound = prepare_audio(
+        timeline_sound_job.as_ref().unwrap_or(job),
+        job_conform(job),
+        scratch.path(),
+        log,
+    )?;
     let trimmed = job.trim_start_frames + job.trim_end_frames > 0;
     if let (true, Some(input)) = (trimmed, &sound) {
         let window = job_encode_window(job, &job.video_path)?.ok_or(
@@ -1524,7 +1713,7 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
         library_items: job.head_items.len() + job.tail_items.len(),
         output: job.output_dir.clone(),
         resume: false,
-        timeline: None,
+        timeline: job.timeline.clone(),
     }
 }
 
@@ -2552,7 +2741,7 @@ fn prepare_audio(
 
     // no sound named: the picture source's own track is the sound, and enters
     // here so everything below applies to it as it would to a named WAV
-    if audio_path.is_none() && job.audio_channel_files.is_none() {
+    if audio_path.is_none() && job.audio_channel_files.is_none() && !job.ignore_source_sound {
         log("[AUDIO] No sound file named: extracting the source's own audio");
         if let Some(extracted) =
             dcpwizard_core::audio_fallback::extract_embedded_audio(&job.video_path, &work_dir)?
@@ -2650,10 +2839,24 @@ fn map_audio(
 
 fn job_conform(job: &JobConfig) -> dcpwizard_core::hfr::SourceConform {
     let (fps_num, _) = frame_rate_of(&job.framerate);
-    job.source
-        .as_ref()
-        .map(|info| dcpwizard_core::hfr::conform_source_to_dcp(info.fps_num, info.fps_den, fps_num))
+    let source_rate = match &job.timeline {
+        Some(timeline) => Some((timeline.fps.numerator, timeline.fps.denominator)),
+        None => job.source.as_ref().map(|info| (info.fps_num, info.fps_den)),
+    };
+    source_rate
+        .map(|(numerator, denominator)| {
+            dcpwizard_core::hfr::conform_source_to_dcp(numerator, denominator, fps_num)
+        })
         .unwrap_or_default()
+}
+
+// the timeline's joined sound goes through the sound steps where a picked sound file would
+fn job_with_timeline_sound(job: &JobConfig, sound: Option<PathBuf>) -> JobConfig {
+    JobConfig {
+        audio_path: sound.map(|path| path.to_string_lossy().into_owned()),
+        ignore_source_sound: true,
+        ..job.clone()
+    }
 }
 
 // with a window the fade runs after its cut, without one the codestreams are trimmed afterwards
@@ -2745,6 +2948,38 @@ fn encode_still(
         elapsed_secs: started.elapsed().as_secs_f64(),
         picture_findings: postkit::picture_findings::PictureFindings::default(),
     })
+}
+
+fn encode_job_timeline(
+    job: &JobConfig,
+    timeline: &postkit::timeline::Timeline,
+    options: &postkit::pipeline::EncodeRunOptions,
+    cancel: &Arc<AtomicBool>,
+    pause: &Arc<AtomicBool>,
+    on_progress: impl Fn(&postkit::pipeline::PipelineProgress),
+    on_log: impl Fn(&str),
+) -> Result<dcpwizard_core::timeline_build::MaterialisedTimeline, String> {
+    let composition = dcpwizard_core::timeline_build::CompositionPicture::resolve(
+        timeline,
+        &job.picture,
+        &job_geometry(job),
+    )?;
+    on_log(&format!(
+        "[ENCODE] {} clips onto {}x{}",
+        timeline.clips.len(),
+        composition.raster.0,
+        composition.raster.1
+    ));
+    dcpwizard_core::timeline_build::materialise(
+        timeline,
+        &job.output_dir,
+        options,
+        |clip| composition.clip_processing(clip),
+        cancel,
+        pause,
+        on_progress,
+        &on_log,
+    )
 }
 
 /// The window the encode is given so only the kept frames are ever compressed,
@@ -2917,9 +3152,13 @@ fn build_dcp_config(
         pad_head: job.pad_head.clone(),
         pad_tail: job.pad_tail.clone(),
         pad_color: job.pad_color.clone(),
-        source_trim: dcpwizard_core::subtitle::SourceTrim {
-            start_frames: job.trim_start_frames,
-            kept_frames: kept_after_trim,
+        source_trim: if job.timed_text_ignores_trim {
+            dcpwizard_core::subtitle::SourceTrim::default()
+        } else {
+            dcpwizard_core::subtitle::SourceTrim {
+                start_frames: job.trim_start_frames,
+                kept_frames: kept_after_trim,
+            }
         },
         reel_length_minutes: job.reel_length_minutes,
         reel_split_frames,
@@ -3088,45 +3327,6 @@ fn run_logged_job(
         )
     });
 
-    // HDR source handling before the encode: the LUT and already-PQ paths reach
-    // the encoder untransformed, everything else needs the tone map opt-in.
-    let encode_input = prepare_hdr_input(
-        &job.video_path,
-        job,
-        output.join("hdr_tonemap.mov"),
-        |msg| log_to(&log_file, msg),
-    )?;
-
-    // the crop and the fit are planned before the encode, so a source they
-    // cannot land on the raster fails now rather than after an hour of J2K
-    let resolved_picture = resolve_job_picture(job, &encode_input)?;
-    log_to(
-        &log_file,
-        &format!("[ENCODE] Picture: {}", resolved_picture.plan.describe()),
-    );
-    for hint in &job.hints {
-        log_to(&log_file, &format!("[HINT] {hint}"));
-    }
-
-    log_to(
-        &log_file,
-        &format_stage_timing("preflight", preflight_started.elapsed()),
-    );
-
-    // only the kept frames are compressed, so a trim never pays for the encoder
-    // time it then throws away. Both eyes take the same window.
-    let encode_window = job_encode_window(job, &encode_input)?;
-    if let Some(window) = encode_window {
-        log_to(
-            &log_file,
-            &format!(
-                "[ENCODE] Encoding frames {}..{} of the source",
-                window.first_frame,
-                window.end_frame()
-            ),
-        );
-    }
-
     let dci_codestream_byte_cap = dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(
         fps_num,
         job.hdr_dci,
@@ -3160,170 +3360,260 @@ fn run_logged_job(
         (None, None) => {}
     }
 
-    let video_fade_filter = job_video_fade_filter(job, encode_window, encode_fps)?;
-    let encode_options = postkit::pipeline::EncodeRunOptions {
-        compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
-        target_codestream_bytes,
-        quality_psnr: job.quality_psnr,
-        fps: encode_fps,
-        read_source_at: conform.read_source_at,
-        frame_range: encode_window,
-        source_colour: job.source_colour.clone(),
-        codestream_byte_cap: Some(codestream_byte_cap),
-        subtitle_burn: job_subtitle_burn(job, encode_fps)?,
-        picture: resolved_picture.processing.clone(),
-        extra_picture_filter: video_fade_filter,
-        rsiz: postkit::encode::default_rsiz(),
-        encode_threads,
-        detect_picture_findings,
-    };
-
-    // the picture MXF is written as the frames finish where the job allows it, so
-    // packaging no longer reads the whole J2K directory back to wrap it
-    let overlap_refusal = dcpwizard_core::overlapped_picture::overlap_refusal(
-        &dcpwizard_core::overlapped_picture::PictureSource {
-            input_type: postkit::encode::detect_input_type(&encode_input),
-            still_hold: job.still_length_frames > 0,
-        },
-        &dcpwizard_core::overlapped_picture::PackageShape {
-            stereoscopic: job.right_eye.is_some(),
-            pads: job.pad_head.is_some() || job.pad_tail.is_some(),
-            splits_reels: job.reel_length_minutes > 0 || !reel_split_frames.is_empty(),
-            multiple_versions: !job.versions.is_empty(),
-            encrypts: job.encrypt,
-        },
-    );
-    let wrap_target = match overlap_refusal {
-        Some(reason) => {
-            log_to(
-                &log_file,
-                &format!("[ENCODE] Wrapping the picture MXF after the encode: {reason}"),
-            );
-            None
-        }
-        None => Some(dcpwizard_core::overlapped_picture::PictureWrapTarget {
-            dcp_dir: job.output_dir.clone(),
-            fps: fps_num,
-            hdr_dci: job.hdr_dci,
-        }),
-    };
-
-    // Encode using shared pipeline. A still never reaches it: it is one encode
-    // whose codestream is linked for every frame of the hold.
     let job_id = job.id;
     let app_ref = app.clone();
     let log_ref = log_file.clone();
     let encode_breakdown: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let encode_breakdown_ref = encode_breakdown.clone();
-    let encode_started = Instant::now();
-    let device_frames_before = postkit::grok_encoder::accelerated_frames();
+    let on_progress = |p: &postkit::pipeline::PipelineProgress| {
+        emit_progress(
+            &app_ref,
+            job_id,
+            &p.stage,
+            &p.message,
+            p.frame,
+            p.total_frames,
+            p.fps,
+            job_started.elapsed().as_secs_f64(),
+            Some(p.percent),
+        );
+        if let Some(line) = format_encode_breakdown(p) {
+            *encode_breakdown_ref.lock().unwrap() = Some(line);
+        }
+    };
+    let on_log = |msg: &str| log_to(&log_ref, msg);
+    let log_device_frames = |device_frames_before: u64, frames_encoded: u64| {
+        let device_frames =
+            postkit::grok_encoder::accelerated_frames().saturating_sub(device_frames_before);
+        for line in dcpwizard_core::job_log::device_frames_lines(
+            device_frames,
+            frames_encoded,
+            guikit::gpu::accelerator_status().requested,
+        ) {
+            log_to(&log_file, &line);
+        }
+    };
+
+    let encode_started;
+    let mut encode_window = None;
     let mut picture_mxf = None;
-    let encode_result = if job.still_length_frames > 0 {
-        encode_still(
-            job,
-            output,
-            encode_fps,
-            &resolved_picture,
-            encode_threads,
-            |msg| log_to(&log_ref, msg),
-        )?
-    } else {
-        let on_progress = |p: &postkit::pipeline::PipelineProgress| {
-            emit_progress(
-                &app_ref,
-                job_id,
-                &p.stage,
-                &p.message,
-                p.frame,
-                p.total_frames,
-                p.fps,
-                job_started.elapsed().as_secs_f64(),
-                Some(p.percent),
+    let mut right_eye_dir = None;
+    let mut materialised = None;
+    let encoded_j2k_dir = match &job.timeline {
+        Some(timeline) => {
+            for hint in &job.hints {
+                log_to(&log_file, &format!("[HINT] {hint}"));
+            }
+            log_to(
+                &log_file,
+                &format_stage_timing("preflight", preflight_started.elapsed()),
             );
-            if let Some(line) = format_encode_breakdown(p) {
-                *encode_breakdown_ref.lock().unwrap() = Some(line);
-            }
-        };
-        let on_log = |msg: &str| log_to(&log_ref, msg);
-        match wrap_target {
-            Some(target) => {
-                let (encode, wrapped) =
-                    dcpwizard_core::overlapped_picture::encode_and_wrap_picture(
-                        &encode_input,
-                        output,
-                        &encode_options,
-                        target,
-                        &cancel,
-                        &pause,
-                        on_progress,
-                        on_log,
-                    )?;
-                log_to(
-                    &log_file,
-                    &format!(
-                        "[ENCODE] Picture MXF written during the encode: {} ({} frames)",
-                        wrapped.mxf_name(),
-                        wrapped.duration
-                    ),
-                );
-                picture_mxf = Some(wrapped);
-                encode
-            }
-            None => postkit::pipeline::run_encode_with_options(
-                &encode_input,
-                output,
+            let encode_options = postkit::pipeline::EncodeRunOptions {
+                compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
+                target_codestream_bytes,
+                quality_psnr: job.quality_psnr,
+                fps: encode_fps,
+                read_source_at: conform.read_source_at,
+                source_colour: job.source_colour.clone(),
+                codestream_byte_cap: Some(codestream_byte_cap),
+                rsiz: postkit::encode::default_rsiz(),
+                encode_threads,
+                detect_picture_findings,
+                ..Default::default()
+            };
+            encode_started = Instant::now();
+            let device_frames_before = postkit::grok_encoder::accelerated_frames();
+            let built = encode_job_timeline(
+                job,
+                timeline,
                 &encode_options,
                 &cancel,
                 &pause,
                 on_progress,
                 on_log,
-            )?,
+            )?;
+            log_device_frames(device_frames_before, built.frames);
+            for finding in built.picture_findings.describe(encode_fps.as_f64()) {
+                log_to(&log_file, &format!("[ENCODE] {finding}"));
+            }
+            let j2k_dir = built.j2k_dir.clone();
+            materialised = Some(built);
+            j2k_dir
         }
-    };
-    // a still is one encode linked for every frame of the hold
-    if job.still_length_frames == 0 {
-        let device_frames =
-            postkit::grok_encoder::accelerated_frames().saturating_sub(device_frames_before);
-        for line in dcpwizard_core::job_log::device_frames_lines(
-            device_frames,
-            encode_result.frames_encoded,
-            guikit::gpu::accelerator_status().requested,
-        ) {
-            log_to(&log_file, &line);
-        }
-    }
+        None => {
+            // HDR source handling before the encode: the LUT and already-PQ paths reach
+            // the encoder untransformed, everything else needs the tone map opt-in.
+            let encode_input = prepare_hdr_input(
+                &job.video_path,
+                job,
+                output.join("hdr_tonemap.mov"),
+                |msg| log_to(&log_file, msg),
+            )?;
 
-    for finding in encode_result.picture_findings.describe(encode_fps.as_f64()) {
-        log_to(&log_file, &format!("[ENCODE] {finding}"));
-    }
+            // the crop and the fit are planned before the encode, so a source they
+            // cannot land on the raster fails now rather than after an hour of J2K
+            let resolved_picture = resolve_job_picture(job, &encode_input)?;
+            log_to(
+                &log_file,
+                &format!("[ENCODE] Picture: {}", resolved_picture.plan.describe()),
+            );
+            for hint in &job.hints {
+                log_to(&log_file, &format!("[HINT] {hint}"));
+            }
 
-    // Stereoscopic 3D: encode the right eye into its own subdir at the same
-    // ratio/fps (the main input is the left eye).
-    let right_eye_dir = if let Some(re) = job.right_eye.as_deref() {
-        log_to(&log_file, &format!("[ENCODE] Right eye: {re}"));
-        let re_out = output.join("right");
-        let re_input = prepare_hdr_input(
-            std::path::Path::new(re),
-            job,
-            re_out.join("hdr_tonemap.mov"),
-            |msg| log_to(&log_file, msg),
-        )?;
-        let log_ref = log_file.clone();
-        let re_result = postkit::pipeline::run_encode_with_options(
-            &re_input,
-            &re_out,
-            &encode_options,
-            &cancel,
-            &pause,
-            |_p| {},
-            |msg| log_to(&log_ref, msg),
-        )?;
-        for finding in re_result.picture_findings.describe(encode_fps.as_f64()) {
-            log_to(&log_file, &format!("[ENCODE] right eye: {finding}"));
+            log_to(
+                &log_file,
+                &format_stage_timing("preflight", preflight_started.elapsed()),
+            );
+
+            // only the kept frames are compressed, so a trim never pays for the encoder
+            // time it then throws away. Both eyes take the same window.
+            encode_window = job_encode_window(job, &encode_input)?;
+            if let Some(window) = encode_window {
+                log_to(
+                    &log_file,
+                    &format!(
+                        "[ENCODE] Encoding frames {}..{} of the source",
+                        window.first_frame,
+                        window.end_frame()
+                    ),
+                );
+            }
+
+            let video_fade_filter = job_video_fade_filter(job, encode_window, encode_fps)?;
+            let encode_options = postkit::pipeline::EncodeRunOptions {
+                compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
+                target_codestream_bytes,
+                quality_psnr: job.quality_psnr,
+                fps: encode_fps,
+                read_source_at: conform.read_source_at,
+                frame_range: encode_window,
+                source_colour: job.source_colour.clone(),
+                codestream_byte_cap: Some(codestream_byte_cap),
+                subtitle_burn: job_subtitle_burn(job, encode_fps)?,
+                picture: resolved_picture.processing.clone(),
+                extra_picture_filter: video_fade_filter,
+                rsiz: postkit::encode::default_rsiz(),
+                encode_threads,
+                detect_picture_findings,
+            };
+
+            // the picture MXF is written as the frames finish where the job allows it, so
+            // packaging no longer reads the whole J2K directory back to wrap it
+            let overlap_refusal = dcpwizard_core::overlapped_picture::overlap_refusal(
+                &dcpwizard_core::overlapped_picture::PictureSource {
+                    input_type: postkit::encode::detect_input_type(&encode_input),
+                    still_hold: job.still_length_frames > 0,
+                },
+                &dcpwizard_core::overlapped_picture::PackageShape {
+                    stereoscopic: job.right_eye.is_some(),
+                    pads: job.pad_head.is_some() || job.pad_tail.is_some(),
+                    splits_reels: job.reel_length_minutes > 0 || !reel_split_frames.is_empty(),
+                    multiple_versions: !job.versions.is_empty(),
+                    encrypts: job.encrypt,
+                },
+            );
+            let wrap_target = match overlap_refusal {
+                Some(reason) => {
+                    log_to(
+                        &log_file,
+                        &format!("[ENCODE] Wrapping the picture MXF after the encode: {reason}"),
+                    );
+                    None
+                }
+                None => Some(dcpwizard_core::overlapped_picture::PictureWrapTarget {
+                    dcp_dir: job.output_dir.clone(),
+                    fps: fps_num,
+                    hdr_dci: job.hdr_dci,
+                }),
+            };
+
+            // Encode using shared pipeline. A still never reaches it: it is one encode
+            // whose codestream is linked for every frame of the hold.
+            encode_started = Instant::now();
+            let device_frames_before = postkit::grok_encoder::accelerated_frames();
+            let encode_result = if job.still_length_frames > 0 {
+                encode_still(
+                    job,
+                    output,
+                    encode_fps,
+                    &resolved_picture,
+                    encode_threads,
+                    |msg| log_to(&log_ref, msg),
+                )?
+            } else {
+                match wrap_target {
+                    Some(target) => {
+                        let (encode, wrapped) =
+                            dcpwizard_core::overlapped_picture::encode_and_wrap_picture(
+                                &encode_input,
+                                output,
+                                &encode_options,
+                                target,
+                                &cancel,
+                                &pause,
+                                on_progress,
+                                on_log,
+                            )?;
+                        log_to(
+                            &log_file,
+                            &format!(
+                                "[ENCODE] Picture MXF written during the encode: {} ({} frames)",
+                                wrapped.mxf_name(),
+                                wrapped.duration
+                            ),
+                        );
+                        picture_mxf = Some(wrapped);
+                        encode
+                    }
+                    None => postkit::pipeline::run_encode_with_options(
+                        &encode_input,
+                        output,
+                        &encode_options,
+                        &cancel,
+                        &pause,
+                        on_progress,
+                        on_log,
+                    )?,
+                }
+            };
+            // a still is one encode linked for every frame of the hold
+            if job.still_length_frames == 0 {
+                log_device_frames(device_frames_before, encode_result.frames_encoded);
+            }
+
+            for finding in encode_result.picture_findings.describe(encode_fps.as_f64()) {
+                log_to(&log_file, &format!("[ENCODE] {finding}"));
+            }
+
+            // Stereoscopic 3D: encode the right eye into its own subdir at the same
+            // ratio/fps (the main input is the left eye).
+            if let Some(re) = job.right_eye.as_deref() {
+                log_to(&log_file, &format!("[ENCODE] Right eye: {re}"));
+                let re_out = output.join("right");
+                let re_input = prepare_hdr_input(
+                    std::path::Path::new(re),
+                    job,
+                    re_out.join("hdr_tonemap.mov"),
+                    |msg| log_to(&log_file, msg),
+                )?;
+                let log_ref = log_file.clone();
+                let re_result = postkit::pipeline::run_encode_with_options(
+                    &re_input,
+                    &re_out,
+                    &encode_options,
+                    &cancel,
+                    &pause,
+                    |_p| {},
+                    |msg| log_to(&log_ref, msg),
+                )?;
+                for finding in re_result.picture_findings.describe(encode_fps.as_f64()) {
+                    log_to(&log_file, &format!("[ENCODE] right eye: {finding}"));
+                }
+                right_eye_dir = Some(re_result.j2k_dir);
+            }
+            encode_result.j2k_dir
         }
-        Some(re_result.j2k_dir)
-    } else {
-        None
     };
 
     log_to(
@@ -3346,7 +3636,16 @@ fn run_logged_job(
         None,
     );
     let audio_started = Instant::now();
-    let audio_path = prepare_audio(job, conform, output, |msg| log_to(&log_file, msg))?;
+    let audio_path = match &materialised {
+        // the timeline's sound is pulled up as it is rendered
+        Some(materialised) => prepare_audio(
+            &job_with_timeline_sound(job, materialised.audio.clone()),
+            dcpwizard_core::hfr::SourceConform::default(),
+            output,
+            |msg| log_to(&log_file, msg),
+        )?,
+        None => prepare_audio(job, conform, output, |msg| log_to(&log_file, msg))?,
+    };
     log_to(
         &log_file,
         &format_stage_timing("audio", audio_started.elapsed()),
@@ -3356,7 +3655,7 @@ fn run_logged_job(
     // package actually carries
     let (j2k_dir, audio_path) = apply_trim(
         job,
-        &encode_result.j2k_dir,
+        &encoded_j2k_dir,
         output,
         audio_path,
         fps_num,
@@ -3414,6 +3713,9 @@ fn run_logged_job(
         reel_split_frames,
     );
     config.picture_mxf = picture_mxf;
+    if let Some(subtitle) = materialised.and_then(|materialised| materialised.subtitle) {
+        config.subtitle_path = Some(subtitle);
+    }
     config.encode_threads = encode_threads;
     config.detect_picture_findings = detect_picture_findings;
 
@@ -3458,7 +3760,15 @@ fn run_logged_job(
         job_started.elapsed().as_secs_f64(),
         None,
     );
-    dcpwizard_core::intermediates::remove_intermediates(output, &[job.video_path.as_path()]);
+    let handed_in: Vec<&Path> = match &job.timeline {
+        Some(timeline) => timeline
+            .clips
+            .iter()
+            .map(|clip| clip.picture.as_path())
+            .collect(),
+        None => vec![job.video_path.as_path()],
+    };
+    dcpwizard_core::intermediates::remove_intermediates(output, &handed_in);
 
     // Optional validation
     if job.validate {
@@ -3876,6 +4186,9 @@ mod tests {
             audio_fade_out_seconds: None,
             video_fade_in_seconds: None,
             video_fade_out_seconds: None,
+            timeline: None,
+            ignore_source_sound: false,
+            timed_text_ignores_trim: false,
         }
     }
 
@@ -4269,6 +4582,152 @@ mod tests {
         )
         .unwrap();
         assert_eq!(chosen.framerate, "24", "a chosen rate is kept");
+    }
+
+    fn timeline_clip(picture: &Path, in_frame: u64, out_frame: u64) -> postkit::timeline::Clip {
+        postkit::timeline::Clip {
+            picture: picture.to_path_buf(),
+            in_frame,
+            out_frame,
+            sound: postkit::timeline::ClipSound::Embedded,
+            subtitle: None,
+            source_colour: Default::default(),
+            picture_processing: Default::default(),
+        }
+    }
+
+    fn timeline_of(clips: Vec<postkit::timeline::Clip>) -> postkit::timeline::Timeline {
+        postkit::timeline::Timeline {
+            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
+            fps: postkit::encode::FrameRate::whole(24),
+            clips,
+            sound: postkit::timeline::SoundTrack::PerClip,
+            subtitle: None,
+            reel_starts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_one_clip_timeline_builds_the_job_the_trimmed_video_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = clip_at_rate(dir.path(), "24");
+        let subtitle = dir.path().join("clip.srt");
+        std::fs::write(&subtitle, "1\n00:00:00,000 --> 00:00:00,100\nHello\n").unwrap();
+        let mut timeline = timeline_of(vec![postkit::timeline::Clip {
+            subtitle: Some(subtitle.clone()),
+            ..timeline_clip(&picture, 1, 5)
+        }]);
+        timeline.reel_starts = vec![2];
+
+        let from_timeline = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        let from_video = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: picture.to_string_lossy().into_owned(),
+                trim_start: Some("1f".into()),
+                trim_end: Some("1f".into()),
+                subtitle: Some(subtitle.to_string_lossy().into_owned()),
+                split_at: Some("00:00:00:02".into()),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&from_timeline).unwrap(),
+            serde_json::to_value(&from_video).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_picture_fade_on_a_multi_clip_timeline_is_refused_by_its_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = clip_at_rate(dir.path(), "24");
+        let request = SubmitRequest {
+            timeline: Some(timeline_of(vec![
+                timeline_clip(&picture, 0, 6),
+                timeline_clip(&picture, 0, 6),
+            ])),
+            video_fade_in_seconds: Some(1.0),
+            ..SubmitRequest::default()
+        };
+
+        let Err(refusal) = job_config_of(1, request) else {
+            panic!("a fade over more than one clip has to be refused");
+        };
+        assert!(
+            refusal.starts_with("Picture fade in is not supported"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_clip_at_another_rate_is_refused_before_the_job_is_queued() {
+        let dir = tempfile::tempdir().unwrap();
+        let at_24 = clip_at_rate(dir.path(), "24");
+        let at_25 = clip_at_rate(dir.path(), "25");
+        let job = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline_of(vec![
+                    timeline_clip(&at_24, 0, 6),
+                    timeline_clip(&at_25, 0, 6),
+                ])),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        let Err(refusal) = checked_job_plan(&job) else {
+            panic!("a 25 fps clip on a 24 fps timeline has to be refused");
+        };
+        assert!(
+            refusal.contains("clip 2") && refusal.contains("25/1 fps"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_multi_clip_job_measures_the_joined_sound() {
+        const QUIET: f64 = 0.1;
+        const LOUD: f64 = 0.5;
+        let dir = tempfile::tempdir().unwrap();
+        let picture = source_with_five_one_sound(dir.path());
+        let quiet = dir.path().join("quiet.wav");
+        let loud = dir.path().join("loud.wav");
+        write_tone(&quiet, QUIET, 1.0);
+        write_tone(&loud, LOUD, 1.0);
+        let request = SubmitRequest {
+            timeline: Some(timeline_of(vec![
+                postkit::timeline::Clip {
+                    sound: postkit::timeline::ClipSound::File(quiet),
+                    ..timeline_clip(&picture, 0, 24)
+                },
+                postkit::timeline::Clip {
+                    sound: postkit::timeline::ClipSound::File(loud),
+                    ..timeline_clip(&picture, 0, 24)
+                },
+            ])),
+            ..SubmitRequest::default()
+        };
+        let job = job_config_of(0, request).unwrap();
+
+        let measured = measure_job_sound(&job, &dir.path().join("scratch")).unwrap();
+
+        // the second clip's tone sets the peak, the first alone would peak 14 dB lower
+        let loud_peak_dbfs = 20.0 * LOUD.log10();
+        assert!(
+            (measured.before.true_peak_dbtp - loud_peak_dbfs).abs() < 0.5,
+            "peak {} dBTP, the second clip's tone peaks at {loud_peak_dbfs} dBFS",
+            measured.before.true_peak_dbtp
+        );
     }
 
     #[test]

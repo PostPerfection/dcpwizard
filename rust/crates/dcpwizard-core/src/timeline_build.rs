@@ -118,86 +118,58 @@ fn source_frame_count(picture: &Path) -> Result<u64, String> {
     }
 }
 
+// each field is the option's name as the front end shows it, None when it is not set
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MultiClipFlags {
-    pub burn_subtitle: bool,
-    pub resume: bool,
-    pub right_eye: bool,
-    pub hdr_dci: bool,
-    pub allow_generic_hdr_tonemap: bool,
-    pub input_range: bool,
-    pub watermark: bool,
-    pub still_length: bool,
-    pub trim_start: bool,
-    pub trim_end: bool,
-    pub split_at: bool,
-    pub split_chapters: bool,
-    pub reel_length: bool,
-    pub video_fade_in: bool,
-    pub video_fade_out: bool,
+    pub burn_subtitle: Option<&'static str>,
+    pub resume: Option<&'static str>,
+    pub right_eye: Option<&'static str>,
+    pub hdr_dci: Option<&'static str>,
+    pub allow_generic_hdr_tonemap: Option<&'static str>,
+    pub input_range: Option<&'static str>,
+    pub watermark: Option<&'static str>,
+    pub still_length: Option<&'static str>,
+    pub trim_start: Option<&'static str>,
+    pub trim_end: Option<&'static str>,
+    pub split_at: Option<&'static str>,
+    pub split_chapters: Option<&'static str>,
+    pub reel_length: Option<&'static str>,
+    pub video_fade_in: Option<&'static str>,
+    pub video_fade_out: Option<&'static str>,
 }
 
-const CLIPS_CARRY_THEIR_LENGTH: &str = "each clip carries its own in and out points";
-const REEL_STARTS_COME_FROM_THE_FILE: &str = "the reel starts come from the timeline file";
+pub const CLIPS_CARRY_THEIR_LENGTH: &str = "each clip carries its own in and out points";
+pub const REEL_STARTS_COME_FROM_THE_TIMELINE: &str = "the reel starts come from the timeline";
 const FADE_RESTARTS_ON_EVERY_CLIP: &str = "the fade would start again on every clip";
 
 pub fn refuse_with_multi_clip(flags: &MultiClipFlags) -> Vec<String> {
     [
-        ("--burn-subtitle", flags.burn_subtitle, None),
-        ("--resume", flags.resume, None),
-        ("--right-eye", flags.right_eye, None),
-        ("--hdr-dci", flags.hdr_dci, None),
+        (flags.burn_subtitle, None),
+        (flags.resume, None),
+        (flags.right_eye, None),
+        (flags.hdr_dci, None),
+        (flags.allow_generic_hdr_tonemap, None),
+        (flags.input_range, None),
+        (flags.watermark, None),
+        (flags.still_length, Some(CLIPS_CARRY_THEIR_LENGTH)),
+        (flags.trim_start, Some(CLIPS_CARRY_THEIR_LENGTH)),
+        (flags.trim_end, Some(CLIPS_CARRY_THEIR_LENGTH)),
+        (flags.split_at, Some(REEL_STARTS_COME_FROM_THE_TIMELINE)),
         (
-            "--allow-generic-hdr-tonemap",
-            flags.allow_generic_hdr_tonemap,
-            None,
-        ),
-        ("--input-range", flags.input_range, None),
-        ("--watermark", flags.watermark, None),
-        (
-            "--still-length",
-            flags.still_length,
-            Some(CLIPS_CARRY_THEIR_LENGTH),
-        ),
-        (
-            "--trim-start",
-            flags.trim_start,
-            Some(CLIPS_CARRY_THEIR_LENGTH),
-        ),
-        ("--trim-end", flags.trim_end, Some(CLIPS_CARRY_THEIR_LENGTH)),
-        (
-            "--split-at",
-            flags.split_at,
-            Some(REEL_STARTS_COME_FROM_THE_FILE),
-        ),
-        (
-            "--split-chapters",
             flags.split_chapters,
-            Some(REEL_STARTS_COME_FROM_THE_FILE),
+            Some(REEL_STARTS_COME_FROM_THE_TIMELINE),
         ),
-        (
-            "--reel-length",
-            flags.reel_length,
-            Some(REEL_STARTS_COME_FROM_THE_FILE),
-        ),
-        (
-            "--video-fade-in",
-            flags.video_fade_in,
-            Some(FADE_RESTARTS_ON_EVERY_CLIP),
-        ),
-        (
-            "--video-fade-out",
-            flags.video_fade_out,
-            Some(FADE_RESTARTS_ON_EVERY_CLIP),
-        ),
+        (flags.reel_length, Some(REEL_STARTS_COME_FROM_THE_TIMELINE)),
+        (flags.video_fade_in, Some(FADE_RESTARTS_ON_EVERY_CLIP)),
+        (flags.video_fade_out, Some(FADE_RESTARTS_ON_EVERY_CLIP)),
     ]
     .into_iter()
-    .filter(|(_, given, _)| *given)
-    .map(|(flag, _, reason)| match reason {
+    .filter_map(|(name, reason)| Some((name?, reason)))
+    .map(|(name, reason)| match reason {
         Some(reason) => {
-            format!("{flag} is not supported on a timeline of more than one clip: {reason}")
+            format!("{name} is not supported on a timeline of more than one clip: {reason}")
         }
-        None => format!("{flag} is not supported on a timeline of more than one clip"),
+        None => format!("{name} is not supported on a timeline of more than one clip"),
     })
     .collect()
 }
@@ -437,8 +409,8 @@ mod tests {
     #[test]
     fn the_multi_clip_refusals_name_each_flag_given() {
         let refusals = refuse_with_multi_clip(&MultiClipFlags {
-            video_fade_in: true,
-            resume: true,
+            video_fade_in: Some("--video-fade-in"),
+            resume: Some("--resume"),
             ..Default::default()
         });
         assert_eq!(refusals.len(), 2, "{refusals:?}");
