@@ -769,7 +769,7 @@ const SOUND_COMES_FROM_THE_TIMELINE: &str = "the sound comes from the timeline's
 // a one-clip timeline builds as one picture
 fn timeline_shape_of(
     request: &SubmitRequest,
-) -> Result<Option<dcpwizard_core::timeline_build::TimelineShape>, String> {
+) -> Result<Option<postkit::timeline::TimelineShape>, String> {
     let Some(timeline) = &request.timeline else {
         return Ok(None);
     };
@@ -788,14 +788,6 @@ fn timeline_shape_of(
         (
             "A sound asset",
             given(&request.audio_path),
-            SOUND_COMES_FROM_THE_TIMELINE,
-        ),
-        (
-            "A sound channel set",
-            request
-                .audio_channel_files
-                .as_ref()
-                .is_some_and(|files| !files.is_empty()),
             SOUND_COMES_FROM_THE_TIMELINE,
         ),
         (
@@ -840,11 +832,18 @@ fn timeline_shape_of(
                 .into(),
         );
     }
-    let shape = dcpwizard_core::timeline_build::shape(timeline)?;
-    if matches!(
-        shape,
-        dcpwizard_core::timeline_build::TimelineShape::MultiClip
-    ) {
+    let channel_set_given = request
+        .audio_channel_files
+        .as_ref()
+        .is_some_and(|files| !files.is_empty());
+    if channel_set_given && matches!(timeline.sound, postkit::timeline::SoundTrack::Override(_)) {
+        return Err(
+            "A sound channel set and the timeline's own sound file both fill the sound track: keep one"
+                .into(),
+        );
+    }
+    let shape = postkit::timeline::shape(timeline)?;
+    if matches!(shape, postkit::timeline::TimelineShape::MultiClip) {
         let refusals = dcpwizard_core::timeline_build::refuse_with_multi_clip(
             &dcpwizard_core::timeline_build::MultiClipFlags {
                 burn_subtitle: given(&request.burn_subtitle)
@@ -992,8 +991,8 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         dcpwizard_core::library_reel::attach_by_name(&library, &tail_items.unwrap_or_default())?;
 
     let single_clip = match timeline_shape {
-        Some(dcpwizard_core::timeline_build::TimelineShape::SingleClip(build)) => Some(build),
-        Some(dcpwizard_core::timeline_build::TimelineShape::MultiClip) | None => None,
+        Some(postkit::timeline::TimelineShape::SingleClip(build)) => Some(build),
+        Some(postkit::timeline::TimelineShape::MultiClip) | None => None,
     };
     let timeline_rate = timeline
         .as_ref()
@@ -1573,24 +1572,26 @@ fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeas
         }
     };
     let (fps_num, _) = frame_rate_of(&job.framerate);
-    let timeline_sound_job = match &job.timeline {
-        Some(timeline) => Some(job_with_timeline_sound(
-            job,
-            postkit::timeline::render_sound(
-                timeline,
-                &scratch
-                    .path()
-                    .join(dcpwizard_core::timeline_build::TIMELINE_SOUND_FILE),
-            )?,
-        )),
-        None => None,
+    let mut sound = match &job.timeline {
+        Some(timeline) if job.audio_channel_files.is_some() => {
+            prepare_timeline_channel_set(job, timeline, job_conform(job), scratch.path(), log)?
+        }
+        Some(timeline) => prepare_audio(
+            &job_with_timeline_sound(
+                job,
+                postkit::timeline::render_sound(
+                    timeline,
+                    &scratch
+                        .path()
+                        .join(dcpwizard_core::timeline_build::TIMELINE_SOUND_FILE),
+                )?,
+            ),
+            job_conform(job),
+            scratch.path(),
+            log,
+        )?,
+        None => prepare_audio(job, job_conform(job), scratch.path(), log)?,
     };
-    let mut sound = prepare_audio(
-        timeline_sound_job.as_ref().unwrap_or(job),
-        job_conform(job),
-        scratch.path(),
-        log,
-    )?;
     let trimmed = job.trim_start_frames + job.trim_end_frames > 0;
     if let (true, Some(input)) = (trimmed, &sound) {
         let window = job_encode_window(job, &job.video_path)?.ok_or(
@@ -2889,6 +2890,20 @@ fn job_with_timeline_sound(job: &JobConfig, sound: Option<PathBuf>) -> JobConfig
     }
 }
 
+// a channel set stands in for the timeline's sound track, cut or filled to the timeline's length
+fn prepare_timeline_channel_set(
+    job: &JobConfig,
+    timeline: &postkit::timeline::Timeline,
+    conform: dcpwizard_core::hfr::SourceConform,
+    output: &Path,
+    log: impl Fn(&str),
+) -> Result<Option<PathBuf>, String> {
+    let (fps_num, _) = frame_rate_of(&job.framerate);
+    prepare_audio(&job_with_timeline_sound(job, None), conform, output, log)?
+        .map(|sound| trim_sound(job, &sound, output, timeline.total_frames(), fps_num))
+        .transpose()
+}
+
 // with a window the fade runs after its cut, without one the codestreams are trimmed afterwards
 fn job_video_fade_filter(
     job: &JobConfig,
@@ -3000,8 +3015,13 @@ fn encode_job_timeline(
         composition.raster.0,
         composition.raster.1
     ));
+    let sound = match job.audio_channel_files {
+        Some(_) => dcpwizard_core::timeline_build::TimelineSound::FromChannelSet,
+        None => dcpwizard_core::timeline_build::TimelineSound::FromSoundTrack,
+    };
     dcpwizard_core::timeline_build::materialise(
         timeline,
+        sound,
         &job.output_dir,
         options,
         |clip| composition.clip_processing(clip),
@@ -3666,15 +3686,19 @@ fn run_logged_job(
         None,
     );
     let audio_started = Instant::now();
-    let audio_path = match &materialised {
+    let log = |msg: &str| log_to(&log_file, msg);
+    let audio_path = match (&job.timeline, &materialised) {
+        (Some(timeline), _) if job.audio_channel_files.is_some() => {
+            prepare_timeline_channel_set(job, timeline, conform, output, log)?
+        }
         // the timeline's sound is pulled up as it is rendered
-        Some(materialised) => prepare_audio(
+        (_, Some(materialised)) => prepare_audio(
             &job_with_timeline_sound(job, materialised.audio.clone()),
             dcpwizard_core::hfr::SourceConform::default(),
             output,
-            |msg| log_to(&log_file, msg),
+            log,
         )?,
-        None => prepare_audio(job, conform, output, |msg| log_to(&log_file, msg))?,
+        _ => prepare_audio(job, conform, output, log)?,
     };
     log_to(
         &log_file,
@@ -4682,6 +4706,125 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&from_timeline).unwrap(),
             serde_json::to_value(&from_video).unwrap()
+        );
+    }
+
+    const CHANNEL_SET_SECONDS: usize = 1;
+    const SAMPLE_RATE: usize = 48000;
+
+    fn left_and_right_channel_files(dir: &Path) -> Vec<String> {
+        ["L", "R"]
+            .into_iter()
+            .map(|lane| {
+                let file = dir.join(format!("mix_{lane}.wav"));
+                write_mono(&file, 1 << 20, CHANNEL_SET_SECONDS * SAMPLE_RATE);
+                file.to_string_lossy().into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_channel_set_sounds_a_multi_clip_timeline_cut_to_its_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = clip_at_rate(dir.path(), "24");
+        let job = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline_of(vec![
+                    timeline_clip(&picture, 0, 6),
+                    timeline_clip(&picture, 0, 6),
+                ])),
+                audio_channel_files: Some(left_and_right_channel_files(dir.path())),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        let timeline = job.timeline.clone().expect("two clips build as a timeline");
+
+        let sound = prepare_timeline_channel_set(
+            &job,
+            &timeline,
+            job_conform(&job),
+            &dir.path().join("out"),
+            |_| {},
+        )
+        .unwrap()
+        .expect("the channel set is the sound");
+
+        let reader = WavReader::open(&sound).unwrap();
+        assert_eq!(reader.spec().channels, 2);
+        // the 12 frames of the two clips at 24 fps
+        assert_eq!(reader.duration() as usize, SAMPLE_RATE / 2);
+    }
+
+    #[test]
+    fn a_one_clip_timeline_with_a_channel_set_builds_the_job_the_trimmed_video_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = clip_at_rate(dir.path(), "24");
+        let channel_files = left_and_right_channel_files(dir.path());
+
+        let from_timeline = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline_of(vec![timeline_clip(&picture, 1, 5)])),
+                audio_channel_files: Some(channel_files.clone()),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        let from_video = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: picture.to_string_lossy().into_owned(),
+                trim_start: Some("1f".into()),
+                trim_end: Some("1f".into()),
+                audio_channel_files: Some(channel_files),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        let sound_and_picture = |job: &JobConfig| {
+            (
+                job.video_path.clone(),
+                job.trim_start_frames,
+                job.trim_end_frames,
+                job.audio_path.clone(),
+                job.audio_channel_files.clone(),
+                job.ignore_source_sound,
+                job.timeline.is_some(),
+            )
+        };
+        assert!(from_timeline.audio_channel_files.is_some());
+        assert_eq!(
+            sound_and_picture(&from_timeline),
+            sound_and_picture(&from_video)
+        );
+    }
+
+    #[test]
+    fn a_channel_set_beside_a_timeline_with_its_own_sound_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = clip_at_rate(dir.path(), "24");
+        let mut timeline = timeline_of(vec![
+            timeline_clip(&picture, 0, 6),
+            timeline_clip(&picture, 0, 6),
+        ]);
+        timeline.sound = postkit::timeline::SoundTrack::Override(dir.path().join("mix.wav"));
+
+        let Err(refusal) = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline),
+                audio_channel_files: Some(left_and_right_channel_files(dir.path())),
+                ..SubmitRequest::default()
+            },
+        ) else {
+            panic!("two sounds for one track have to be refused");
+        };
+        assert!(
+            refusal.starts_with("A sound channel set and the timeline's own sound file"),
+            "{refusal}"
         );
     }
 

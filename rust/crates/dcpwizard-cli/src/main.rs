@@ -4330,11 +4330,9 @@ fn run() {
                     .unwrap_or_else(|e| exit_failed(e))
             });
             // a one-clip timeline builds through the --video path
-            let single_clip = match timeline.as_ref().map(dcpwizard_core::timeline_build::shape) {
-                Some(Ok(dcpwizard_core::timeline_build::TimelineShape::SingleClip(build))) => {
-                    Some(build)
-                }
-                Some(Ok(dcpwizard_core::timeline_build::TimelineShape::MultiClip)) | None => None,
+            let single_clip = match timeline.as_ref().map(postkit::timeline::shape) {
+                Some(Ok(postkit::timeline::TimelineShape::SingleClip(build))) => Some(build),
+                Some(Ok(postkit::timeline::TimelineShape::MultiClip)) | None => None,
                 Some(Err(e)) => exit_failed(e),
             };
             let timeline_carries_subtitle = timeline
@@ -5889,6 +5887,7 @@ fn run() {
                     let device_frames_before = postkit::grok_encoder::accelerated_frames();
                     let materialised = dcpwizard_core::timeline_build::materialise(
                         timeline,
+                        dcpwizard_core::timeline_build::TimelineSound::FromSoundTrack,
                         &output_dir,
                         &options,
                         |clip| composition.clip_processing(clip),

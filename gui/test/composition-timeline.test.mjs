@@ -14,6 +14,7 @@ import {
   withFirstClipRate,
   withImportedAsset,
   withProbedFrames,
+  withSplitAtFrames,
   withUnplacedAssetsFilled,
   withoutAsset,
 } from '../src/composition-timeline.js';
@@ -193,6 +194,21 @@ test('split timecodes and reel starts read back as the same frames', () => {
   assert.equal(splitTimecodeFrames('00:00', 24), null);
   assert.equal(splitTimecodeFrames('00:00:01:24', 24), null);
   assert.equal(splitTimecodeSpec([48, 1452], 24), '00:00:02:00, 00:01:00:12');
+});
+
+test('a typed split past the end of a one-clip timeline is left out of its reel starts', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48)] };
+
+  assert.deepEqual(withSplitAtFrames(timeline, [24, 48, 120]).reelStarts, [24]);
+});
+
+test('a typed split stays while the one clip is unprobed, and a multi-clip timeline ignores the field', () => {
+  const unprobed = { ...emptyTimeline([24, 1]), clips: [clip(1, 0, 0, 0)] };
+  const twoClips = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48), clip(2, 48, 0, 48)], reelStarts: [48] };
+
+  assert.deepEqual(withSplitAtFrames(unprobed, [24, 120]).reelStarts, [24, 120]);
+  assert.equal(withSplitAtFrames(twoClips, [24]), twoClips);
+  assert.equal(withSplitAtFrames(unprobed, null), unprobed);
 });
 
 test('each reel span is named by the clip it starts in', () => {

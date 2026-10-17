@@ -1314,6 +1314,68 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert abs(ratio - 10 ** (gain_db / 20)) < AUDIO_GAIN_TOLERANCE, (ratio, gain_db)
 
 
+def test_a_channel_set_sounds_a_timeline_of_two_clips(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    first = write_picture(media / "first.mov", FIXTURE_SIZE, EACH_CLIP_SECONDS)
+    second = write_picture(media / "second.mov", FIXTURE_SIZE, EACH_CLIP_SECONDS)
+    left = media / f"{CHANNEL_SET_NAME}_L.wav"
+    right = media / f"{CHANNEL_SET_NAME}_R.wav"
+    write_mono_channel(left)
+    write_mono_channel(right)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    package = tmp_path / PROJECT_TITLE
+    whole_clip = ("00:00:00:00", f"00:00:{EACH_CLIP_SECONDS:02d}:00")
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    choose_in_dialog(window, "#import-video", first)
+    choose_in_dialog(window, "#import-video", second)
+    wait_until(
+        "the two clips never took their sources' lengths",
+        lambda: session.execute(CLIP_TITLES)
+        == [clip_title(first.name, *whole_clip), clip_title(second.name, *whole_clip)],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-audio", left)
+    choose_in_dialog(window, "#import-audio", right)
+    wait_until(
+        "the two channels never became one set",
+        lambda: session.execute(ASSET_PATHS) == [str(first), str(second), CHANNEL_SET_NAME],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property(TIMELINE_SOUND_LABEL, "textContent") == f"{CHANNEL_SET_NAME}, 2 channels"
+
+    wait_until(
+        "the Build button stayed disabled",
+        lambda: session.property("#btn-build", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-build")
+    wait_until(
+        "the hints dialog never opened",
+        lambda: session.property("#hints-dialog", "hidden") is False,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    window.click("#hints-build")
+    wait_until(
+        "the build never finished",
+        lambda: session.property("#progress-stage", "textContent") in FINISHED_BUILD_STAGES,
+        CREATE_TIMEOUT_SECONDS,
+    )
+    assert status_text(session) == BUILD_COMPLETE_STATUS
+    assert packaged_sound_channels(package) == [2]
+    cpls = list(package.glob("CPL_*.xml"))
+    assert len(cpls) == 1, sorted(package.iterdir())
+    assert reel_durations(cpls[0]) == [2 * EACH_CLIP_FRAMES]
+
+
 def replace_field_text(window, css, text):
     window.click(css)
     window.press(SELECT_ALL_CHORD)

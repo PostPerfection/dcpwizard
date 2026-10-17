@@ -14,6 +14,7 @@ import {
   audioMapCells,
   audioMapSpecFrom,
 } from '../src/project-form.js';
+import { withProbedFrames, withReelStartingClipsPlaced } from '../src/composition-timeline.js';
 
 register('../../extern/guikit/test/tauri-plugins-hooks.mjs', import.meta.url);
 
@@ -200,16 +201,17 @@ test('a version 1 project file, saved before the subtitle placement fields, open
   assert.equal(reopened.controls.get('prop-subtitle-no-subset').checked, false);
 });
 
-test('a version 1 channel WAV directory is dropped on upgrade and named as not restored', () => {
+test('a version 1 channel WAV directory is dropped on upgrade with a note saying so', () => {
   const saved = JSON.parse(readFileSync(new URL('./fixtures/Film-version-1.dcpwizard', import.meta.url), 'utf8'));
   saved.form.audioChannelDir = '/media/channels';
-  const { form } = readProjectFile(JSON.stringify(saved), 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const { form, upgradeNotes } = readProjectFile(JSON.stringify(saved), 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
   const reopened = emptyPanel(() => '');
 
   const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
 
   assert.equal('audioChannelDir' in form, false);
-  assert.deepEqual(notRestored, ['Channel WAV directory /media/channels: drop the WAVs on Assets instead']);
+  assert.deepEqual(upgradeNotes, ['Channel WAV directory /media/channels is no longer read: drop the WAVs on Assets instead']);
+  assert.deepEqual(notRestored, []);
   assert.equal(reopened.controls.get('prop-title').value, 'Film');
 });
 
@@ -302,7 +304,7 @@ test('a version 2 project opens with reel 1 as the first clip and the later reel
     activeComposition: 0,
   });
 
-  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const { form, upgradeNotes } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
   const reopened = emptyPanel(() => '');
   const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
 
@@ -317,11 +319,52 @@ test('a version 2 project opens with reel 1 as the first clip and the later reel
     subtitle: null,
     reelStarts: [],
   });
-  assert.deepEqual(notRestored, [
+  assert.deepEqual(upgradeNotes, [
     'Main reel 2 is clip 2 of the timeline',
-    'Main reel 2 sound, a channel set only sounds over the whole timeline',
-    'Main reel 3 subtitle',
+    'Main reel 2 sound stays off the timeline: a channel set only sounds over the whole timeline',
+    'Main reel 3 subtitle stays off the timeline: the reel has no picture',
   ]);
+  assert.deepEqual(notRestored, []);
+});
+
+test('a version 2 project that built two reels starts a reel at its second clip once both clips are probed', () => {
+  const assets = [
+    { id: 1, type: 'video', path: '/media/feature.mov', name: 'feature.mov', meta: '', fps: '24/1' },
+    { id: 2, type: 'video', path: '/media/trailer.mov', name: 'trailer.mov', meta: '', fps: '24/1' },
+  ];
+  const text = versionTwoProject({
+    title: 'Film',
+    assets,
+    compositions: [
+      {
+        id: 1,
+        name: 'Main',
+        contentKind: 'feature',
+        reels: [
+          { id: 1, picture: 1, sound: null, subtitle: null },
+          { id: 2, picture: 2, sound: null, subtitle: null },
+        ],
+      },
+    ],
+    activeComposition: 0,
+  });
+  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+  restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+  const probed = (assetId, frames) => {
+    const [composition] = reopened.project.compositions;
+    reopened.project.compositions = [withReelStartingClipsPlaced({ ...composition, timeline: withProbedFrames(composition.timeline, assetId, frames) })];
+  };
+
+  probed(1, 240);
+  assert.deepEqual(reopened.project.compositions[0].timeline.reelStarts, [], 'the second clip has no start before its probe');
+  assert.equal('reelStartingClipIndices' in serialized(reopened).project.compositions[0], false, 'the file never holds the clip list');
+  probed(2, 96);
+
+  const saved = serialized(reopened).project.compositions[0];
+  assert.deepEqual(saved.timeline.reelStarts, [240]);
+  assert.equal('reelStartingClipIndices' in saved, false);
+  assert.equal('reelStartingClipIndices' in reopened.project.compositions[0], false);
 });
 
 test('a version 2 channel set on reel 1 becomes the timeline sound, and a project without assets opens empty', () => {

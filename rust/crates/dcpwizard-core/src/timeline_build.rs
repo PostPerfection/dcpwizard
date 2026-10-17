@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use postkit::encode::InputType;
 use postkit::picture_processing::PictureProcessing;
 use postkit::pipeline::{EncodeRunOptions, PipelineProgress};
-use postkit::timeline::{Clip, ClipSound, SoundTrack, Timeline};
+use postkit::timeline::{Clip, Timeline};
 
 use crate::source_picture::{EncodeGeometry, ResolvedPicture, SourcePictureOptions};
 
@@ -13,109 +13,12 @@ pub const TIMELINE_SOUND_FILE: &str = "timeline_sound.wav";
 pub const TIMELINE_PULLED_UP_SOUND_FILE: &str = "timeline_sound_pullup.wav";
 pub const TIMELINE_SUBTITLE_FILE: &str = "timeline_subtitles.srt";
 
-pub enum TimelineShape {
-    SingleClip(SingleClipBuild),
-    MultiClip,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SingleClipBuild {
-    pub picture: PathBuf,
-    pub trim_start_frames: u64,
-    pub trim_end_frames: u64,
-    pub audio: Option<PathBuf>,
-    // the picture's own sound is not taken either
-    pub silent: bool,
-    pub subtitle: Option<PathBuf>,
-    // the subtitle is timed against the clip's source
-    pub subtitle_from_clip: bool,
-    pub reel_split_frames: Vec<u64>,
-}
-
-pub fn shape(timeline: &Timeline) -> Result<TimelineShape, String> {
-    let [clip] = timeline.clips.as_slice() else {
-        return Ok(TimelineShape::MultiClip);
-    };
-    timeline.check()?;
-    let name = clip_name(0, clip);
-    if clip.source_colour != postkit::encode::SourceColour::default() {
-        return Err(format!(
-            "{name} carries its own source colour, and a one-clip timeline takes the colour from \
-             --source-colourspace"
-        ));
-    }
-    if !clip.picture_processing.is_identity() {
-        return Err(format!(
-            "{name} carries its own picture processing, and a one-clip timeline takes it from the \
-             picture flags"
-        ));
-    }
-    refuse_two_subtitle_sources(timeline)?;
-    let source_frames = source_frame_count(&clip.picture).map_err(|e| format!("{name}: {e}"))?;
-    let audio = match (&timeline.sound, &clip.sound) {
-        (SoundTrack::Override(path), _) | (SoundTrack::PerClip, ClipSound::File(path)) => {
-            Some(path.clone())
-        }
-        (SoundTrack::PerClip, _) => None,
-    };
-    Ok(TimelineShape::SingleClip(SingleClipBuild {
-        picture: clip.picture.clone(),
-        trim_start_frames: clip.in_frame,
-        trim_end_frames: source_frames - clip.out_frame,
-        audio,
-        silent: timeline.sound == SoundTrack::PerClip && clip.sound == ClipSound::None,
-        subtitle: clip.subtitle.clone().or_else(|| timeline.subtitle.clone()),
-        subtitle_from_clip: clip.subtitle.is_some(),
-        reel_split_frames: timeline.reel_starts.clone(),
-    }))
-}
-
 pub fn carries_subtitle(timeline: &Timeline) -> bool {
     timeline.subtitle.is_some() || timeline.clips.iter().any(|clip| clip.subtitle.is_some())
 }
 
-fn refuse_two_subtitle_sources(timeline: &Timeline) -> Result<(), String> {
-    let Some((index, clip)) = timeline
-        .clips
-        .iter()
-        .enumerate()
-        .find(|(_, clip)| clip.subtitle.is_some())
-    else {
-        return Ok(());
-    };
-    match &timeline.subtitle {
-        Some(subtitle) => Err(format!(
-            "the timeline's subtitle {} and the subtitle of {} both time the subtitle track: keep \
-             one",
-            subtitle.display(),
-            clip_name(index, clip)
-        )),
-        None => Ok(()),
-    }
-}
-
 fn clip_name(index: usize, clip: &Clip) -> String {
     format!("clip {} ({})", index + 1, clip.picture.display())
-}
-
-// counted the way the create command counts the picture it trims
-fn source_frame_count(picture: &Path) -> Result<u64, String> {
-    match postkit::encode::detect_input_type(picture) {
-        InputType::J2kSequence => Ok(crate::trim::frame_count(picture)),
-        InputType::ImageSequence if picture.is_dir() => {
-            postkit::encode::find_source_frames(picture)
-                .map(|frames| frames.len() as u64)
-                .map_err(|e| format!("cannot list {}: {e}", picture.display()))
-        }
-        InputType::Video | InputType::PictureMxf => crate::probe::probe_video(picture)
-            .map(|info| u64::from(info.total_frames))
-            .ok_or_else(|| "ffprobe cannot read it".to_string()),
-        _ => Err(
-            "a one-clip timeline takes a video, a picture MXF, or a directory of images or \
-             codestreams"
-                .to_string(),
-        ),
-    }
 }
 
 // each field is the option's name as the front end shows it, None when it is not set
@@ -284,9 +187,17 @@ pub struct MaterialisedTimeline {
     pub picture_findings: postkit::picture_findings::PictureFindings,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimelineSound {
+    FromSoundTrack,
+    // a channel set given beside the timeline is its sound, the way an override WAV is
+    FromChannelSet,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn materialise(
     timeline: &Timeline,
+    sound: TimelineSound,
     work_dir: &Path,
     options: &EncodeRunOptions,
     per_clip_picture: impl Fn(&Clip) -> Result<PictureProcessing, String>,
@@ -296,7 +207,7 @@ pub fn materialise(
     on_log: impl Fn(&str),
 ) -> Result<MaterialisedTimeline, String> {
     timeline.check()?;
-    refuse_two_subtitle_sources(timeline)?;
+    postkit::timeline::refuse_two_subtitle_sources(timeline)?;
     let mut fitted = timeline.clone();
     for (index, clip) in fitted.clips.iter_mut().enumerate() {
         if clip.picture_processing.is_identity() {
@@ -315,8 +226,12 @@ pub fn materialise(
         on_progress,
         on_log,
     )?;
-    let rendered_sound =
-        postkit::timeline::render_sound(timeline, &work_dir.join(TIMELINE_SOUND_FILE))?;
+    let rendered_sound = match sound {
+        TimelineSound::FromSoundTrack => {
+            postkit::timeline::render_sound(timeline, &work_dir.join(TIMELINE_SOUND_FILE))?
+        }
+        TimelineSound::FromChannelSet => None,
+    };
     // a picture read faster than its own rate needs its sound pulled up to match
     let audio = match (rendered_sound, options.read_source_at) {
         (Some(sound), Some(_)) => {
@@ -346,76 +261,6 @@ pub fn materialise(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postkit::encode::FrameRate;
-
-    const SOURCE_FRAMES: u64 = 10;
-
-    fn codestream_directory(parent: &Path, name: &str) -> PathBuf {
-        let directory = parent.join(name);
-        std::fs::create_dir_all(&directory).unwrap();
-        for frame in 0..SOURCE_FRAMES {
-            std::fs::write(directory.join(format!("frame_{frame:08}.j2c")), [0u8]).unwrap();
-        }
-        directory
-    }
-
-    fn clip(picture: PathBuf, in_frame: u64, out_frame: u64) -> Clip {
-        Clip {
-            picture,
-            in_frame,
-            out_frame,
-            sound: ClipSound::None,
-            subtitle: None,
-            source_colour: Default::default(),
-            picture_processing: Default::default(),
-        }
-    }
-
-    fn timeline(clips: Vec<Clip>) -> Timeline {
-        Timeline {
-            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
-            fps: FrameRate::whole(24),
-            clips,
-            sound: SoundTrack::PerClip,
-            subtitle: None,
-            reel_starts: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn one_clip_maps_its_in_and_out_points_onto_the_trims() {
-        let directory = tempfile::tempdir().unwrap();
-        let picture = codestream_directory(directory.path(), "feature");
-        let one_clip = timeline(vec![clip(picture.clone(), 2, 7)]);
-
-        let TimelineShape::SingleClip(build) = shape(&one_clip).unwrap() else {
-            panic!("one clip is today's one-picture build");
-        };
-        assert_eq!(build.picture, picture);
-        assert_eq!(build.trim_start_frames, 2);
-        assert_eq!(build.trim_end_frames, SOURCE_FRAMES - 7);
-        assert!(build.silent);
-        assert_eq!(build.audio, None);
-    }
-
-    #[test]
-    fn a_clip_subtitle_beside_the_timeline_subtitle_is_refused() {
-        let directory = tempfile::tempdir().unwrap();
-        let picture = codestream_directory(directory.path(), "feature");
-        let mut one_clip = timeline(vec![Clip {
-            subtitle: Some(directory.path().join("clip.srt")),
-            ..clip(picture, 0, SOURCE_FRAMES)
-        }]);
-        one_clip.subtitle = Some(directory.path().join("timeline.srt"));
-
-        let Err(refusal) = shape(&one_clip) else {
-            panic!("two subtitle sources have to be refused");
-        };
-        assert!(
-            refusal.contains("timeline.srt") && refusal.contains("clip 1"),
-            "{refusal}"
-        );
-    }
 
     #[test]
     fn the_multi_clip_refusals_name_each_flag_given() {

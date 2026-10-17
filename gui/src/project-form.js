@@ -7,14 +7,10 @@ const CHECKED = "checked";
 
 export const PROJECT_FILE_VERSION = 3;
 
-// what an upgrade dropped, reported by restoreFormState as not restored
-const DROPPED_ON_UPGRADE = "droppedOnUpgrade";
-
-function withoutChannelDirectory(form) {
+function withoutChannelDirectory(form, upgradeNotes) {
   const { audioChannelDir, ...rest } = form;
-  if (!audioChannelDir) return rest;
-  const dropped = `Channel WAV directory ${audioChannelDir}: drop the WAVs on Assets instead`;
-  return { ...rest, [DROPPED_ON_UPGRADE]: [...(rest[DROPPED_ON_UPGRADE] ?? []), dropped] };
+  if (audioChannelDir) upgradeNotes.push(`Channel WAV directory ${audioChannelDir} is no longer read: drop the WAVs on Assets instead`);
+  return rest;
 }
 
 function migratedTimelineRate(form, assetsById, reels) {
@@ -27,7 +23,7 @@ function migratedClip(picture, sound, subtitle) {
   return { picture, frames: 0, inFrame: 0, outFrame: 0, sound, subtitle };
 }
 
-function timelineFromReels(composition, form, assetsById, moved) {
+function timelineFromReels(composition, form, assetsById, upgradeNotes, reelStartingClipIndices) {
   const timeline = emptyTimeline(migratedTimelineRate(form, assetsById, composition.reels));
   composition.reels.forEach((reel, index) => {
     const reelName = `${composition.name} reel ${index + 1}`;
@@ -42,32 +38,32 @@ function timelineFromReels(composition, form, assetsById, moved) {
         timeline.subtitle = subtitle;
         return;
       }
-      if (sound !== null) moved.push(`${reelName} sound`);
-      if (subtitle !== null) moved.push(`${reelName} subtitle`);
+      if (sound !== null) upgradeNotes.push(`${reelName} sound stays off the timeline: the reel has no picture`);
+      if (subtitle !== null) upgradeNotes.push(`${reelName} subtitle stays off the timeline: the reel has no picture`);
       return;
     }
     const clipSound = sound === null || soundIsChannelSet ? { kind: "embedded", asset: null } : { kind: "file", asset: sound };
     timeline.clips.push(migratedClip(picture, clipSound, subtitle));
     if (index === 0) return;
-    moved.push(`${reelName} is clip ${timeline.clips.length} of the timeline`);
-    if (soundIsChannelSet) moved.push(`${reelName} sound, a channel set only sounds over the whole timeline`);
+    reelStartingClipIndices.push(timeline.clips.length - 1);
+    upgradeNotes.push(`${reelName} is clip ${timeline.clips.length} of the timeline`);
+    if (soundIsChannelSet) {
+      upgradeNotes.push(`${reelName} sound stays off the timeline: a channel set only sounds over the whole timeline`);
+    }
   });
   return timeline;
 }
 
-function reelsIntoTimeline(form) {
+// a version 2 asset holds no frame count to place a reel start with
+function reelsIntoTimeline(form, upgradeNotes) {
   if (!form.project) return form;
   const assetsById = new Map(form.project.assets.map((asset) => [asset.id, asset]));
-  const moved = [];
-  const compositions = form.project.compositions.map(({ reels, ...composition }) => ({
-    ...composition,
-    timeline: timelineFromReels({ ...composition, reels }, form, assetsById, moved),
-  }));
-  return {
-    ...form,
-    project: { ...form.project, compositions },
-    [DROPPED_ON_UPGRADE]: [...(form[DROPPED_ON_UPGRADE] ?? []), ...moved],
-  };
+  const compositions = form.project.compositions.map(({ reels, ...composition }) => {
+    const reelStartingClipIndices = [];
+    const timeline = timelineFromReels({ ...composition, reels }, form, assetsById, upgradeNotes, reelStartingClipIndices);
+    return { ...composition, timeline, reelStartingClipIndices };
+  });
+  return { ...form, project: { ...form.project, compositions } };
 }
 
 // a rename or a meaning change gets a step and a version bump, a new field with a default does not
@@ -247,7 +243,7 @@ export function serializeForm({ elementById, project, markerRows, ratings, joine
     project: {
       title: project.title,
       assets: project.assets.map((asset) => ({ ...asset })),
-      compositions: project.compositions.map((composition) => ({
+      compositions: project.compositions.map(({ reelStartingClipIndices, ...composition }) => ({
         ...composition,
         timeline: structuredClone(composition.timeline),
       })),
@@ -285,7 +281,7 @@ function timelineWithKnownAssets(composition, assetsById, notRestored) {
 // rows get fresh ids from 1, so the caller restarts its id counters after them
 export function restoreFormState(savedForm, defaults, { elementById, project, markerRows, ratings, joinedItems }) {
   const form = { ...defaults, ...savedForm, project: { ...defaults.project, ...savedForm.project } };
-  const notRestored = [...(savedForm[DROPPED_ON_UPGRADE] ?? [])];
+  const notRestored = [];
   for (const [key, id, property] of FORM_CONTROLS) {
     const element = elementById(id);
     const offered = !element.options || offersOption(element, form[key]);

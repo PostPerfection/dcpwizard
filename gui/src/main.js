@@ -15,7 +15,7 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
-import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, splitReelAt } from "../../extern/guikit/src/timeline-editor.js";
+import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame } from "../../extern/guikit/src/timeline-editor.js";
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
@@ -35,6 +35,8 @@ import {
   withImportedAsset,
   withoutAsset,
   withProbedFrames,
+  withReelStartingClipsPlaced,
+  withSplitAtFrames,
   withUnplacedAssetsFilled,
 } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
@@ -604,9 +606,10 @@ async function probeUnprobedClips() {
 
 // clips placed before their source was probed get its length and rate
 function takeProbedFrames(asset) {
-  for (const composition of project.compositions) {
-    composition.timeline = withFirstClipRate(withProbedFrames(composition.timeline, asset.id, asset.frames), assetById);
-  }
+  project.compositions = project.compositions.map((composition) => withReelStartingClipsPlaced({
+    ...composition,
+    timeline: withFirstClipRate(withProbedFrames(composition.timeline, asset.id, asset.frames), assetById),
+  }));
   showActiveTimeline();
 }
 
@@ -760,9 +763,7 @@ function refreshReelSplitFields() {
 }
 
 function withSplitAtReelStarts(timeline) {
-  const typedFrames = splitTimecodeFrames(splitAtField.value, timelineEditRate());
-  if (timeline.clips.length > 1 || typedFrames === null) return timeline;
-  return typedFrames.reduce(splitReelAt, { ...timeline, reelStarts: [] });
+  return withSplitAtFrames(timeline, splitTimecodeFrames(splitAtField.value, timelineEditRate()));
 }
 
 splitAtField.addEventListener("input", () => {

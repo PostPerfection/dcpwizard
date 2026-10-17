@@ -1,4 +1,4 @@
-import { clipStarts, totalFrames, withReelStartsInsideTimeline } from "../../extern/guikit/src/timeline-editor.js";
+import { clipStarts, splitReelAt, totalFrames, withReelStartsInsideTimeline } from "../../extern/guikit/src/timeline-editor.js";
 import { isChannelSet, soundSource } from "./channel-set.js";
 
 // postkit's TIMELINE_FORMAT_VERSION, which submit_job checks
@@ -70,6 +70,16 @@ export function withProbedFrames(timeline, assetId, frames) {
   return probed;
 }
 
+export function withReelStartingClipsPlaced(composition) {
+  const { reelStartingClipIndices, ...placed } = composition;
+  // a clip's start is unknown until every clip is probed
+  const unprobed = composition.timeline.clips.some((clip) => clip.frames === 0);
+  if (!reelStartingClipIndices || unprobed) return composition;
+  const starts = clipStarts(composition.timeline);
+  placed.timeline = reelStartingClipIndices.map((index) => starts[index]).reduce(splitReelAt, composition.timeline);
+  return placed;
+}
+
 export function withoutAsset(timeline, assetId) {
   const kept = structuredClone(timeline);
   kept.clips = kept.clips.filter((clip) => clip.picture !== assetId);
@@ -139,6 +149,14 @@ function timecodeFrames(timecode, editRate) {
   const [hours, minutes, seconds, frame = 0] = fields.map(Number);
   if (minutes >= SECONDS_PER_MINUTE || seconds >= SECONDS_PER_MINUTE || frame >= editRate) return null;
   return ((hours * MINUTES_PER_HOUR + minutes) * SECONDS_PER_MINUTE + seconds) * editRate + frame;
+}
+
+export function withSplitAtFrames(timeline, typedFrames) {
+  if (timeline.clips.length > 1 || typedFrames === null) return timeline;
+  const split = typedFrames.reduce(splitReelAt, { ...timeline, reelStarts: [] });
+  // an unprobed clip has no end to measure against yet
+  if ((timeline.clips[0]?.frames ?? 0) === 0) return split;
+  return withReelStartsInsideTimeline(split);
 }
 
 export function splitTimecodeSpec(frames, editRate) {
