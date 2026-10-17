@@ -716,6 +716,7 @@ function afterTimelineChange() {
   refreshIsdcfPreview();
   refreshMarkerFromPlayerButtons();
   refreshContainerViewAvailability();
+  refreshPicturePlacement();
   updateStatusStats();
   if (document.getElementById("view-reels").classList.contains("active")) showProjectTimeline();
 }
