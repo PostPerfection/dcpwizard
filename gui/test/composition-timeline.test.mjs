@@ -1,23 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  clipSoundIsChannelSet,
-  emptyTimeline,
-  reelSpans,
-  sourceFrameCount,
-  splitTimecodeFrames,
-  splitTimecodeSpec,
-  timelineFrameAtSourceFrame,
-  timelineRequestFields,
-  withChannelSets,
-  withFirstClipRate,
-  withImportedAsset,
-  withProbedFrames,
-  withSplitAtFrames,
-  withUnplacedAssetsFilled,
-  withoutAsset,
-} from '../src/composition-timeline.js';
+import { emptyTimeline } from '../../extern/guikit/src/composition-timeline.js';
+import { clipSoundIsChannelSet, timelineRequestFields, withChannelSets } from '../src/composition-timeline.js';
 
 const ASSETS = [
   { id: 1, type: 'video', path: '/media/a.mov', name: 'a.mov', fps: '24/1', frames: 240 },
@@ -124,6 +109,13 @@ test('a multi-clip timeline sends postkit\'s timeline with paths and none of the
   assert.deepEqual(requestFor({ ...timeline, sound: 6 }).timeline.sound, { Override: '/media/mix.wav' });
 });
 
+test('a channel set over a multi-clip timeline goes as the channel files beside a per-clip wire timeline', () => {
+  const request = requestFor({ ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 48), clip(2, 96, 0, 96)], sound: 7 });
+
+  assert.deepEqual(request.audioChannelFiles, ['/media/mix_L.wav', '/media/mix_R.wav']);
+  assert.equal(request.timeline.sound, 'PerClip');
+});
+
 test('a one-clip timeline the single-picture request cannot say goes as a timeline, with the panel trim for submit_job to refuse', () => {
   const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 48, 240)], reelStarts: [96] };
 
@@ -136,46 +128,6 @@ test('a one-clip timeline the single-picture request cannot say goes as a timeli
   assert.equal(requestFor({ ...timeline, clips: [clip(1, 240, 0, 240, { kind: 'none', asset: null })] }).timeline.clips[0].sound, 'None');
 });
 
-test('an imported video becomes the last clip and the first sound and subtitle cover the timeline', () => {
-  let timeline = emptyTimeline([24, 1]);
-  for (const assetId of [1, 6, 8, 2, 4, 5]) timeline = withImportedAsset(timeline, assetById(assetId));
-
-  assert.deepEqual(timeline, {
-    fps: [24, 1],
-    clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96)],
-    sound: 6,
-    subtitle: 8,
-    reelStarts: [],
-  });
-});
-
-test('an imported sound stays off the timeline while a clip has a sound file of its own', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 4 }, 5)] };
-
-  assert.deepEqual(withImportedAsset(withImportedAsset(timeline, assetById(6)), assetById(8)), timeline);
-});
-
-test('an unprobed clip takes its frame count, and the first clip its rate', () => {
-  const unprobed = withImportedAsset(emptyTimeline([24, 1]), { ...assetById(2), frames: undefined });
-  const probed = withProbedFrames(unprobed, 2, 96);
-
-  assert.deepEqual(unprobed.clips[0], clip(2, 0, 0, 0));
-  assert.deepEqual(probed.clips[0], clip(2, 96, 0, 96));
-  const ntsc = (assetId) => ({ ...assetById(assetId), fps: '24000/1001' });
-  assert.deepEqual(withFirstClipRate(probed, ntsc).fps, [24000, 1001]);
-  assert.equal(withFirstClipRate(probed, assetById), probed);
-  assert.equal(sourceFrameCount(4.004, '24000/1001'), 96);
-});
-
-test('filling the timeline places the first unplaced video only on an empty timeline', () => {
-  const filled = withUnplacedAssetsFilled(emptyTimeline([24, 1]), ASSETS);
-
-  assert.deepEqual(filled.clips.map((placed) => placed.picture), [1]);
-  assert.equal(filled.sound, 4);
-  assert.equal(filled.subtitle, 5);
-  assert.deepEqual(withUnplacedAssetsFilled(filled, ASSETS), filled);
-});
-
 test('a clip sound absorbed into a channel set moves to the timeline, which is the only place a set can go', () => {
   const set = assetById(7);
   const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 6 })] };
@@ -186,59 +138,4 @@ test('a clip sound absorbed into a channel set moves to the timeline, which is t
   assert.equal(grouped.sound, 7);
   assert.equal(clipSoundIsChannelSet(grouped, assetById), false);
   assert.equal(clipSoundIsChannelSet({ ...timeline, clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 7 })] }, assetById), true);
-});
-
-test('split timecodes and reel starts read back as the same frames', () => {
-  assert.deepEqual(splitTimecodeFrames('00:00:02, 00:01:00:12', 24), [48, 1452]);
-  assert.deepEqual(splitTimecodeFrames('', 24), []);
-  assert.equal(splitTimecodeFrames('00:00', 24), null);
-  assert.equal(splitTimecodeFrames('00:00:01:24', 24), null);
-  assert.equal(splitTimecodeSpec([48, 1452], 24), '00:00:02:00, 00:01:00:12');
-});
-
-test('a typed split past the end of a one-clip timeline is left out of its reel starts', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48)] };
-
-  assert.deepEqual(withSplitAtFrames(timeline, [24, 48, 120]).reelStarts, [24]);
-});
-
-test('a typed split stays while the one clip is unprobed, and a multi-clip timeline ignores the field', () => {
-  const unprobed = { ...emptyTimeline([24, 1]), clips: [clip(1, 0, 0, 0)] };
-  const twoClips = { ...emptyTimeline([24, 1]), clips: [clip(1, 48, 0, 48), clip(2, 48, 0, 48)], reelStarts: [48] };
-
-  assert.deepEqual(withSplitAtFrames(unprobed, [24, 120]).reelStarts, [24, 120]);
-  assert.equal(withSplitAtFrames(twoClips, [24]), twoClips);
-  assert.equal(withSplitAtFrames(unprobed, null), unprobed);
-});
-
-test('each reel span is named by the clip it starts in', () => {
-  const timeline = {
-    fps: [24, 1],
-    clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84, { kind: 'file', asset: 4 }, 5)],
-    sound: null,
-    subtitle: null,
-    reelStarts: [96, 500],
-  };
-
-  assert.deepEqual(reelSpans(timeline, assetById), [
-    { frames: 96, picturePath: '/media/a.mov', soundPath: '', subtitlePath: '' },
-    { frames: 72, picturePath: '/media/b.mov', soundPath: '/media/b.wav', subtitlePath: '/media/b.srt' },
-  ]);
-  assert.deepEqual(reelSpans(emptyTimeline([24, 1]), assetById), []);
-});
-
-test('a source frame of the second clip lands after the first clip on the timeline', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84)] };
-
-  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 12), 96);
-  assert.equal(timelineFrameAtSourceFrame(timeline, 1, 50), 134);
-});
-
-test('removing an asset drops its clips and the reel starts now past the end', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 96), clip(2, 96, 12, 84)], reelStarts: [48, 96, 120] };
-
-  const kept = withoutAsset(timeline, 2);
-
-  assert.deepEqual(kept.clips, [clip(1, 240, 0, 96)]);
-  assert.deepEqual(kept.reelStarts, [48]);
 });

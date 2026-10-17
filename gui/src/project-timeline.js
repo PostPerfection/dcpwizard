@@ -1,4 +1,12 @@
+import { soundSource } from "./channel-set.js";
+
 const FULL_TRACK_PERCENT = 100;
+
+// a channel set shows its first file
+function soundFilePath(sound) {
+  const { audioPath, audioChannelFiles } = soundSource(sound);
+  return audioPath ?? audioChannelFiles?.[0] ?? "";
+}
 
 // shaped like get_timeline's entries, one per reel span of the composition's timeline
 export function projectTimelineEntries(spans, editRate) {
@@ -11,9 +19,9 @@ export function projectTimelineEntries(spans, editRate) {
     picture_asset_id: "",
     sound_asset_id: "",
     subtitle_asset_id: "",
-    picture_file: span.picturePath,
-    sound_file: span.soundPath,
-    subtitle_file: span.subtitlePath,
+    picture_file: span.picture.path,
+    sound_file: soundFilePath(span.sound),
+    subtitle_file: span.subtitle?.path ?? "",
   }));
 }
 

@@ -19,18 +19,15 @@ import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
-  clipSoundIsChannelSet,
   emptyTimeline,
+  ffprobeVideoInfo,
   firstSoundAsset,
   firstSubtitleAsset,
   parseFrameRate,
   reelSpans,
-  sourceFrameCount,
   splitTimecodeFrames,
   splitTimecodeSpec,
   timelineFrameAtSourceFrame,
-  timelineRequestFields,
-  withChannelSets,
   withFirstClipRate,
   withImportedAsset,
   withoutAsset,
@@ -38,7 +35,8 @@ import {
   withReelStartingClipsPlaced,
   withSplitAtFrames,
   withUnplacedAssetsFilled,
-} from "./composition-timeline.js";
+} from "../../extern/guikit/src/composition-timeline.js";
+import { clipSoundIsChannelSet, timelineRequestFields, withChannelSets } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -726,6 +724,7 @@ function afterTimelineChange() {
 
 initTimelineEditor(document.getElementById("timeline-editor"), {
   fps: DEFAULT_TIMELINE_FPS,
+  reelWord: "reel",
   assetName,
   assetKind: (assetId) => TIMELINE_KIND_BY_ASSET_TYPE[assetById(assetId).type],
   sourceFrames,
@@ -3438,20 +3437,7 @@ async function probeVideo(path) {
     ]);
     const result = await cmd.execute();
     if (result.code !== 0) return null;
-    const info = JSON.parse(result.stdout);
-    const vs = info.streams?.find(s => s.codec_type === "video");
-    if (!vs) return null;
-    return {
-      width: vs.width,
-      height: vs.height,
-      fps: vs.r_frame_rate,
-      duration: parseFloat(info.format?.duration || vs.duration || "0"),
-      frames: sourceFrameCount(parseFloat(vs.duration ?? info.format?.duration), vs.r_frame_rate),
-      colorPrimaries: vs.color_primaries,
-      colorTransfer: vs.color_transfer,
-      colorSpace: vs.color_space,
-      bitRate: parseInt(vs.bit_rate ?? info.format?.bit_rate) || null,
-    };
+    return ffprobeVideoInfo(JSON.parse(result.stdout));
   } catch { return null; }
 }
 

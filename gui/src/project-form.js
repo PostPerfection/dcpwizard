@@ -1,5 +1,5 @@
 import { ratingRowsFrom } from "./rating-rows.js";
-import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate } from "./composition-timeline.js";
+import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate } from "../../extern/guikit/src/composition-timeline.js";
 import { isChannelSet } from "./channel-set.js";
 
 const VALUE = "value";

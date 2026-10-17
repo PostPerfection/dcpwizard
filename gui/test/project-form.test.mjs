@@ -14,7 +14,7 @@ import {
   audioMapCells,
   audioMapSpecFrom,
 } from '../src/project-form.js';
-import { withProbedFrames, withReelStartingClipsPlaced } from '../src/composition-timeline.js';
+import { withProbedFrames, withReelStartingClipsPlaced } from '../../extern/guikit/src/composition-timeline.js';
 
 register('../../extern/guikit/test/tauri-plugins-hooks.mjs', import.meta.url);
 
