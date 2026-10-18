@@ -236,7 +236,6 @@ pub fn materialise(
                 .map_err(|e| format!("{}: {e}", clip_name(index, clip)))?;
         }
     }
-    // postkit hands these to a clip with no processing of its own, and a compressed clip refuses a fit
     let options = if timeline.base_gaps().is_empty() {
         options.clone()
     } else {

@@ -618,3 +618,96 @@ fn an_image_sequence_clip_is_checked_as_a_picture_to_encode() {
     assert!(run.status.success(), "{}", printed(&run));
     assert!(printed(&run).contains("Pre-build check passed"));
 }
+
+const CODESTREAM_SIZE: &str = "1998x1080";
+
+// a second of blue stills compressed by the encode command, as a mastered J2K sequence arrives
+fn write_codestreams(directory: &Path) -> PathBuf {
+    let stills = directory.join("stills");
+    std::fs::create_dir_all(&stills).unwrap();
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=blue:s={CODESTREAM_SIZE}:rate={FRAME_RATE}:duration=1"
+            ))
+            .arg(stills.join("frame_%04d.png")),
+        "ffmpeg has to write the stills",
+    );
+    let encoded = directory.join("encoded");
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .args(["encode", "--input"])
+        .arg(&stills)
+        .arg("--output")
+        .arg(&encoded)
+        .args(["--bandwidth", "250"])
+        .assert()
+        .success();
+    encoded.join("j2k")
+}
+
+fn write_tone(path: &Path, frames: u64) {
+    let seconds = frames as f64 / f64::from(FRAME_RATE);
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "sine=frequency=440:sample_rate={SAMPLE_RATE}:duration={seconds}"
+            ))
+            .args(["-c:a", "pcm_s24le", "-ac", "2"])
+            .arg(path),
+        "ffmpeg has to write the tone",
+    );
+}
+
+#[test]
+fn codestreams_on_layer_0_after_a_gap_build_with_the_gap_black() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let codestreams = write_codestreams(directory.path());
+    let tone = directory.path().join("tone.wav");
+    write_tone(&tone, GAP_FRAMES + u64::from(FRAME_RATE));
+    let timeline = directory.path().join("timeline.json");
+    Timeline {
+        version: TIMELINE_FORMAT_VERSION,
+        fps: FrameRate::whole(FRAME_RATE),
+        clips: vec![Clip {
+            sound: ClipSound::None,
+            ..clip(codestreams, GAP_FRAMES, 0, u64::from(FRAME_RATE))
+        }],
+        sound: SoundTrack::Override(tone),
+        subtitle: None,
+        reel_starts: vec![GAP_FRAMES],
+    }
+    .write(&timeline)
+    .unwrap();
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let package = output.join(TITLE);
+
+    assert_eq!(
+        reel_picture_durations(&package),
+        vec![GAP_FRAMES, u64::from(FRAME_RATE)],
+        "the gap is a reel of its own and the codestreams fill the second"
+    );
+    let reels = picture_frames_by_length(&package);
+    assert!(
+        reels[0]
+            .iter()
+            .all(|samples| samples == &[Some(Seen::Black); 2]),
+        "every gap frame is black"
+    );
+    assert!(
+        reels[1]
+            .iter()
+            .all(|samples| samples == &[Some(Seen::Blue); 2]),
+        "every codestream frame is the blue it was encoded from"
+    );
+    let verified = dcpwizard_core::verify::verify_dcp(&package);
+    assert!(verified.valid, "verify errors: {:?}", verified.errors);
+}
