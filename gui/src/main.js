@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -854,8 +854,8 @@ const containerViewToggle = document.getElementById("prop-preview-in-container")
 const containerViewHint = document.getElementById("prop-preview-in-container-hint");
 // the timeline clip whose picture the preview plays, null for any other file
 let previewedClipIndex = null;
-// the build's filters for that clip's picture, null until a placement answer is in
-let previewedPictureFilters = null;
+// where the build places that clip's picture, null until a placement answer is in
+let previewedPicturePlacement = null;
 // the picture path the container view was last checked against
 let containerViewCheckedPath;
 
@@ -897,7 +897,7 @@ async function refreshPicturePlacement() {
     autoResolutionOption.textContent = autoResolutionLabel([placement.value.containerWidth, placement.value.containerHeight]);
   }
   const shown = placesPreviewedClip ? previewedPlacement : placement;
-  previewedPictureFilters = shown.status === "fulfilled" ? shown.value.filters : null;
+  previewedPicturePlacement = shown.status === "fulfilled" ? shown.value : null;
   sendContainerViewFilters();
 }
 
@@ -949,7 +949,14 @@ async function refreshTimelineProblem() {
 function sendContainerViewFilters() {
   if (!isPreviewVisible()) return;
   const showsContainer = containerViewToggle.checked && !containerViewToggle.disabled && previewedClipIndex !== null;
-  setPreviewPictureFilters(showsContainer ? previewedPictureFilters : null);
+  const placement = showsContainer ? previewedPicturePlacement : null;
+  setPreviewPictureFilters(placement?.filters ?? null);
+  setPreviewContentOutline(placement && {
+    x: placement.pictureX,
+    y: placement.pictureY,
+    width: placement.pictureWidth,
+    height: placement.pictureHeight,
+  });
 }
 
 containerViewToggle.addEventListener("change", () => {

@@ -5195,6 +5195,37 @@ mod tests {
     }
 
     #[test]
+    fn a_flat_picture_in_scope_is_outlined_where_the_pad_puts_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = clip_of_size(dir.path(), 1920, 1080);
+        let placement = job_picture_placement(
+            SubmitRequest {
+                video_path: source.to_string_lossy().into_owned(),
+                resolution: Some("2k-scope".into()),
+                ..SubmitRequest::default()
+            },
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                placement.picture_x,
+                placement.picture_y,
+                placement.picture_width,
+                placement.picture_height
+            ),
+            (262, 0, 1524, 858)
+        );
+        assert_eq!(
+            placement.filters,
+            [
+                "scale=w=1524:h=858:flags=lanczos",
+                "pad=w=2048:h=858:x=262:y=0:color=black"
+            ]
+        );
+    }
+
+    #[test]
     fn the_preview_names_the_sources_own_five_one_sound_when_no_wav_is_picked() {
         let dir = tempfile::tempdir().unwrap();
         let source = source_with_five_one_sound(dir.path());
