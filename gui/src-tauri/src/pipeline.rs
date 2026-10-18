@@ -197,11 +197,15 @@ fn territory_type_of(
     }
 }
 
-/// The ISDCF content title for what the panel currently holds.
-fn isdcf_name_for(request: &IsdcfNameRequest) -> Result<String, String> {
-    let composition = composition_metadata_of(&request.composition_metadata)?;
-    let (config, options) = isdcf_naming_facts(request, &composition)?;
-    let upmix = parse_upmixer(request.upmix.as_deref())?.is_some();
+fn package_title(
+    request: &IsdcfNameRequest,
+    composition: &CompositionMetadata,
+    upmix: bool,
+) -> Result<String, String> {
+    if !request.naming.isdcf_naming {
+        return Ok(request.title.clone());
+    }
+    let (config, options) = isdcf_naming_facts(request, composition)?;
     isdcf_naming(request, &config, &options, upmix).name()
 }
 
@@ -328,10 +332,26 @@ fn isdcf_naming_facts(
     Ok((config, options))
 }
 
-/// The ISDCF content title the panel would build, for the live preview.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageNamePreview {
+    pub title: String,
+    pub folder_name: String,
+}
+
+fn package_name_for(request: &IsdcfNameRequest) -> Result<PackageNamePreview, String> {
+    let composition = composition_metadata_of(&request.composition_metadata)?;
+    let upmix = parse_upmixer(request.upmix.as_deref())?.is_some();
+    let title = package_title(request, &composition, upmix)?;
+    Ok(PackageNamePreview {
+        folder_name: dcpwizard_core::package_dir::package_folder_name(&title)?,
+        title,
+    })
+}
+
 #[tauri::command]
-pub async fn isdcf_name_preview(request: IsdcfNameRequest) -> Result<String, String> {
-    isdcf_name_for(&request)
+pub async fn package_name_preview(request: IsdcfNameRequest) -> Result<PackageNamePreview, String> {
+    package_name_for(&request)
 }
 
 // ─── Job types ─────────────────────────────────────────────────────────────
@@ -504,46 +524,32 @@ fn apply_package_name_to_job(
     job: &mut JobConfig,
     picture_raster: Option<(u32, u32)>,
 ) -> Result<(), String> {
-    let package = if job.naming.isdcf_naming {
-        let request = IsdcfNameRequest {
-            title: job.title.clone(),
-            standard: Some(job.standard.clone()),
-            resolution: Some(job.resolution.clone()),
-            framerate: Some(job.framerate.clone()),
-            content_kind: Some(job.content_kind.clone()),
-            video_path: Some(job.video_path.to_string_lossy().into_owned()),
-            audio_path: job.audio_path.clone(),
-            audio_channel_files: job.audio_channel_files.clone(),
-            audio_map: job.audio_map.clone(),
-            subtitle: job.subtitle.clone(),
-            subtitle_language: Some(job.subtitle_language.clone()),
-            burn_subtitle: job.burn_subtitle.clone(),
-            subtitles_burnt_in: job.subtitles_burnt_in,
-            ccap: job.ccap.clone(),
-            ccap_language: Some(job.ccap_language.clone()),
-            right_eye: job.right_eye.clone(),
-            atmos: job.atmos.clone(),
-            facility: job.facility.clone(),
-            naming: job.naming.clone(),
-            picture_raster,
-            ..Default::default()
-        };
-        let (config, options) = isdcf_naming_facts(&request, &job.composition_metadata)?;
-        let naming = isdcf_naming(&request, &config, &options, job.upmix.is_some());
-        dcpwizard_core::package_dir::new_package(
-            &job.output_dir,
-            &dcpwizard_core::package_dir::PackageName::Isdcf(naming),
-            false,
-        )?
-    } else {
-        dcpwizard_core::package_dir::new_package(
-            &job.output_dir,
-            &dcpwizard_core::package_dir::PackageName::Title(&job.title),
-            false,
-        )?
+    let request = IsdcfNameRequest {
+        title: job.title.clone(),
+        standard: Some(job.standard.clone()),
+        resolution: Some(job.resolution.clone()),
+        framerate: Some(job.framerate.clone()),
+        content_kind: Some(job.content_kind.clone()),
+        video_path: Some(job.video_path.to_string_lossy().into_owned()),
+        audio_path: job.audio_path.clone(),
+        audio_channel_files: job.audio_channel_files.clone(),
+        audio_map: job.audio_map.clone(),
+        subtitle: job.subtitle.clone(),
+        subtitle_language: Some(job.subtitle_language.clone()),
+        burn_subtitle: job.burn_subtitle.clone(),
+        subtitles_burnt_in: job.subtitles_burnt_in,
+        ccap: job.ccap.clone(),
+        ccap_language: Some(job.ccap_language.clone()),
+        right_eye: job.right_eye.clone(),
+        atmos: job.atmos.clone(),
+        facility: job.facility.clone(),
+        naming: job.naming.clone(),
+        picture_raster,
+        ..Default::default()
     };
-    job.title = package.title;
-    job.output_dir = package.dir;
+    let title = package_title(&request, &job.composition_metadata, job.upmix.is_some())?;
+    job.output_dir = dcpwizard_core::package_dir::new_package_dir(&job.output_dir, &title)?;
+    job.title = title;
     Ok(())
 }
 
@@ -4474,6 +4480,63 @@ mod tests {
     }
 
     #[test]
+    fn the_previewed_folder_is_the_folder_the_build_writes_into() {
+        let mut job = JobConfig {
+            title: "A: B?".into(),
+            output_dir: PathBuf::from("/out/deliveries"),
+            ..test_job()
+        };
+        let request = IsdcfNameRequest {
+            title: "A: B?".into(),
+            ..Default::default()
+        };
+        let preview = package_name_for(&request).unwrap();
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert_eq!(preview.folder_name, "A_ B_");
+        assert_eq!(
+            job.output_dir,
+            Path::new("/out/deliveries").join(&preview.folder_name)
+        );
+    }
+
+    #[test]
+    fn the_previewed_isdcf_folder_is_the_folder_the_build_writes_into() {
+        let fields = CompositionMetadataFields {
+            chain: Some("Odeon/Vue".into()),
+            ..Default::default()
+        };
+        let naming = NamingMetadata {
+            isdcf_naming: true,
+            ..Default::default()
+        };
+        let mut job = JobConfig {
+            title: "My Film".into(),
+            output_dir: PathBuf::from("/out/deliveries"),
+            composition_metadata: composition_metadata_of(&fields).unwrap(),
+            naming: naming.clone(),
+            ..test_job()
+        };
+        let request = IsdcfNameRequest {
+            title: "My Film".into(),
+            resolution: Some("2k-flat".into()),
+            composition_metadata: fields,
+            naming,
+            ..Default::default()
+        };
+        let preview = package_name_for(&request).unwrap();
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+        assert!(
+            preview.folder_name.contains("-Odeon_Vue_"),
+            "{}",
+            preview.folder_name
+        );
+        assert_eq!(
+            job.output_dir,
+            Path::new("/out/deliveries").join(&preview.folder_name)
+        );
+    }
+
+    #[test]
     fn the_isdcf_name_spells_the_composition_metadata_the_cpl_carries() {
         let fields = CompositionMetadataFields {
             version_number: Some("3".into()),
@@ -4497,7 +4560,7 @@ mod tests {
             naming: job.naming.clone(),
             ..Default::default()
         };
-        let preview = isdcf_name_for(&request).unwrap();
+        let preview = package_name_for(&request).unwrap().title;
         apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
         assert!(
             job.title.starts_with("MyFilm_FTR-3-Odeon_"),
@@ -4529,7 +4592,7 @@ mod tests {
             naming,
             ..Default::default()
         };
-        let preview = isdcf_name_for(&request).unwrap();
+        let preview = package_name_for(&request).unwrap().title;
         apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
         assert!(preview.contains("_AR-en_"), "{preview}");
         assert_eq!(preview, job.title);
@@ -4989,7 +5052,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let name = isdcf_name_for(&request).unwrap();
+        let name = package_name_for(&request).unwrap().title;
         assert!(name.contains("-60_"), "{name}");
     }
 
@@ -5052,7 +5115,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let name = isdcf_name_for(&request).unwrap();
+        let name = package_name_for(&request).unwrap().title;
         assert!(name.contains("_XX-XX_51_2K_"), "{name}");
     }
 
@@ -5091,7 +5154,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let name = isdcf_name_for(&request).unwrap();
+        let name = package_name_for(&request).unwrap().title;
         assert!(name.starts_with("MyFilm_TST-1_F_EN-XX_MOS_2K_"), "{name}");
         assert!(name.ends_with("_PPF_SMPTE_OV"), "{name}");
     }
@@ -5111,7 +5174,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let name = isdcf_name_for(&request).unwrap();
+        let name = package_name_for(&request).unwrap().title;
         assert!(name.contains("_S_"), "{name}");
         assert!(name.contains("_4K_"), "{name}");
     }
@@ -5225,11 +5288,12 @@ mod tests {
             title: "My Film".into(),
             naming: NamingMetadata {
                 territory_type: Some("worldwide".into()),
+                isdcf_naming: true,
                 ..Default::default()
             },
             ..Default::default()
         };
-        assert!(isdcf_name_for(&request).is_err());
+        assert!(package_name_for(&request).is_err());
     }
 
     // the LUT and already-PQ paths never open the master, so nothing reads this

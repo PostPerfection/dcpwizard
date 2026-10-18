@@ -12,6 +12,7 @@
 - **The preview height is adjustable**: a drag handle on the preview's edge changes the picture height, remembered across restarts. The handle is on the top edge in the strip and the bottom edge beside the properties.
 - **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
 - **The Properties panel collapses**: double-click the handle between the project view and the Properties panel, or press Enter or Space on it, to hide the panel and give the picture the width. A click on the handle brings it back, and the choice is kept between runs.
+- **The package folder name shows before the build**: the hint under Output > Folder reads the name of the folder the build creates, with the title or ISDCF name and any character a folder cannot hold replaced, so `A: B?` shows as `A_ B_`.
 
 ### Fixed
 - **A timeline clip that is a directory of images takes the picture flags**: the pre-build check took it for JPEG 2000 and refused `--source-colourspace` other than rec709 and any crop, rotation or fit with J2K input is already compressed. It is now checked as a picture to encode, as a `--video` image sequence is.

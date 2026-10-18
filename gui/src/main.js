@@ -430,7 +430,7 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
   if (!await savePrefs(prefs)) return;
   takeProjectDefaultsFromPreferences();
   refreshSignerLine();
-  refreshIsdcfPreview();
+  refreshPackageNamePreview();
   setStatus("Settings saved");
 });
 
@@ -586,7 +586,7 @@ function importAssetFromPath(path, type) {
       asset.frames = info.frames;
       takeProbedFrames(asset);
       if (project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(info);
-      refreshIsdcfPreview();
+      refreshPackageNamePreview();
       renderAssets();
     });
   }
@@ -719,7 +719,7 @@ function afterTimelineChange() {
   refreshReelSplitFields();
   refreshTrimFields();
   audioMapDrawn = refreshAudioMapMatrix();
-  refreshIsdcfPreview();
+  refreshPackageNamePreview();
   refreshMarkerFromPlayerButtons();
   refreshContainerViewAvailability();
   refreshPicturePlacement();
@@ -832,7 +832,7 @@ document.getElementById("prop-auto-crop")?.addEventListener("click", async () =>
       if (field) field.value = crop[side];
     }
     refreshPreviewCrop();
-    refreshIsdcfPreview();
+    refreshPackageNamePreview();
     if (plan) plan.textContent = crop.description;
     refreshPicturePlacement();
   } catch (e) {
@@ -1215,7 +1215,7 @@ function applyProfile(profileName) {
     audioMapSpec,
     afterApply: () => {
       refreshPreviewCrop();
-      refreshIsdcfPreview();
+      refreshPackageNamePreview();
       refreshPicturePlacement();
     },
   });
@@ -1319,7 +1319,7 @@ document.getElementById("prop-browse-burn-subtitle")?.addEventListener("click", 
   });
   if (!path) return;
   document.getElementById("prop-burn-subtitle").value = path;
-  refreshIsdcfPreview();
+  refreshPackageNamePreview();
 });
 
 document.getElementById("prop-browse-burn-subtitle-font")?.addEventListener("click", async () => {
@@ -1539,7 +1539,7 @@ const renderRatings = wireRatingRows({
   listId: "prop-rating-list",
   addButtonId: "prop-add-rating",
   rows: ratings,
-  onChange: refreshIsdcfPreview,
+  onChange: refreshPackageNamePreview,
 });
 
 function namingMetadata() {
@@ -1607,23 +1607,27 @@ function isdcfNameRequest() {
   };
 }
 
-async function refreshIsdcfPreview() {
-  const preview = document.getElementById("prop-isdcf-preview");
-  if (!preview) return;
+async function refreshPackageNamePreview() {
+  const isdcfPreview = document.getElementById("prop-isdcf-preview");
+  const folderHint = document.getElementById("prop-output-folder-hint");
+  const folderPreview = document.getElementById("prop-output-folder-preview");
+  if (!isdcfPreview || !folderHint || !folderPreview) return;
   const request = isdcfNameRequest();
-  if (!request.naming.isdcfNaming || !request.title) {
-    preview.hidden = true;
-    return;
-  }
-  preview.hidden = false;
+  isdcfPreview.hidden = !request.naming.isdcfNaming || !request.title;
+  folderHint.hidden = Boolean(request.title);
+  folderPreview.hidden = !request.title;
+  if (!request.title) return;
   try {
-    preview.textContent = "ISDCF name: " + await invoke("isdcf_name_preview", { request });
+    const name = await invoke("package_name_preview", { request });
+    isdcfPreview.textContent = "ISDCF name: " + name.title;
+    folderPreview.textContent = "The DCP is written to a new folder inside this one: " + name.folderName;
   } catch (e) {
-    preview.textContent = String(e);
+    isdcfPreview.textContent = String(e);
+    folderPreview.textContent = String(e);
   }
 }
 
-const ISDCF_PREVIEW_CONTROLS = [
+const PACKAGE_NAME_PREVIEW_CONTROLS = [
   "prop-title", "prop-content-kind", "prop-standard", "prop-resolution", "prop-framerate",
   "prop-subtitle-language", "prop-subtitles-burnt-in", "prop-ccap-language", "prop-audio-language", "prop-studio",
   "prop-territory-type", "prop-content-versions", "prop-temp-version", "prop-pre-release",
@@ -1632,8 +1636,8 @@ const ISDCF_PREVIEW_CONTROLS = [
   "prop-audio-map", "prop-upmix",
   "prop-version-number", "prop-chain", "prop-facility-name", "prop-luminance", "prop-luminance-units",
 ];
-for (const id of ISDCF_PREVIEW_CONTROLS) {
-  document.getElementById(id)?.addEventListener("input", refreshIsdcfPreview);
+for (const id of PACKAGE_NAME_PREVIEW_CONTROLS) {
+  document.getElementById(id)?.addEventListener("input", refreshPackageNamePreview);
 }
 
 renderRatings();
