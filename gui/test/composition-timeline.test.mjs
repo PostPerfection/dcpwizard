@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { emptyTimeline } from '../../extern/guikit/src/composition-timeline.js';
-import { clipSoundIsChannelSet, timelineRequestFields, withChannelSets } from '../src/composition-timeline.js';
+import { clipSoundIsChannelSet, previewTimelineWire, timelineRequestFields, withChannelSets } from '../src/composition-timeline.js';
 
 const ASSETS = [
   { id: 1, type: 'video', path: '/media/a.mov', name: 'a.mov', fps: '24/1', frames: 240 },
@@ -138,4 +138,16 @@ test('a clip sound absorbed into a channel set moves to the timeline, which is t
   assert.equal(grouped.sound, 7);
   assert.equal(clipSoundIsChannelSet(grouped, assetById), false);
   assert.equal(clipSoundIsChannelSet({ ...timeline, clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 7 })] }, assetById), true);
+});
+
+test('the preview plays a timeline a channel set sounds without sound, and any other with its own', () => {
+  const clips = [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { kind: 'file', asset: 4 })];
+
+  const underChannelSet = previewTimelineWire({ ...emptyTimeline([24, 1]), clips, sound: 7 }, assetById);
+  assert.equal(underChannelSet.sound, 'PerClip');
+  assert.deepEqual(underChannelSet.clips.map((wired) => wired.sound), ['None', 'None']);
+
+  const underWav = previewTimelineWire({ ...emptyTimeline([24, 1]), clips, sound: 6 }, assetById);
+  assert.deepEqual(underWav.sound, { Override: '/media/mix.wav' });
+  assert.deepEqual(underWav.clips.map((wired) => wired.sound), ['Embedded', { File: '/media/b.wav' }]);
 });

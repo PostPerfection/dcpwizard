@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, previewDcp, previewFile, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
+import { initPreview, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -15,7 +15,7 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
-import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame } from "../../extern/guikit/src/timeline-editor.js";
+import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, followTimelinePosition } from "../../extern/guikit/src/timeline-editor.js";
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
@@ -38,7 +38,7 @@ import {
   withSplitAtFrames,
   withUnplacedAssetsFilled,
 } from "../../extern/guikit/src/composition-timeline.js";
-import { clipSoundIsChannelSet, timelineRequestFields, withChannelSets } from "./composition-timeline.js";
+import { clipSoundIsChannelSet, previewTimelineWire, timelineRequestFields, withChannelSets } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -732,6 +732,8 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   sourceFrames,
   onChange: timelineEdited,
   onSeek: seekTimelineFrame,
+  playTimeline: (timeline) => previewTimeline(previewTimelineWire(timeline, assetById)),
+  seekTimeline: previewSeekAbsolute,
 });
 
 // === Reels ===
@@ -3674,6 +3676,7 @@ watchPreviewShown((path, ended) => {
   previewedClipIndex = path === null ? null : clipIndexShowing(path, previewedClipIndex);
   updateToolbarState();
 });
+watchPreviewTimelinePosition(followTimelinePosition);
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");

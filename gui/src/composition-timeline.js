@@ -69,6 +69,16 @@ function timelineFields(timeline, assetById) {
   };
 }
 
+const NO_CLIP_SOUND = { kind: "none", asset: null };
+
+// the preview has no player for a channel set
+export function previewTimelineWire(timeline, assetById) {
+  const sound = timeline.sound === null ? null : assetById(timeline.sound);
+  if (!isChannelSet(sound)) return timelineWire(timeline, assetById);
+  const silent = { ...timeline, sound: null, clips: timeline.clips.map((clip) => ({ ...clip, sound: NO_CLIP_SOUND })) };
+  return timelineWire(silent, assetById);
+}
+
 // the submit_job fields the timeline decides, over a request built from the panel
 export function timelineRequestFields(timeline, assetById, panel) {
   const [firstClip, ...laterClips] = timeline.clips;

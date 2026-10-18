@@ -1535,6 +1535,74 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
     )
 
 
+PLAY_TIMELINE_BUTTON = '#timeline-editor [data-action="play-timeline"]'
+PLAYED_CLIP_SIZE = "640x360"
+FRAME_SECONDS = 1 / FIXTURE_FPS
+
+PREVIEW_METADATA = """
+return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => JSON.parse(text));
+"""
+
+EDITOR_PLAYHEAD_LEFT = """
+return document.querySelector("#timeline-editor .timeline-editor-playhead")?.style.left ?? null;
+"""
+
+
+def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    first = write_picture(media / "first.mov", PLAYED_CLIP_SIZE, EACH_CLIP_SECONDS)
+    second = write_picture(media / "second.mov", PLAYED_CLIP_SIZE, EACH_CLIP_SECONDS)
+    sound = write_sound(media / "timeline.wav", TIMELINE_SECONDS)
+    whole_clip = ("00:00:00:00", f"00:00:{EACH_CLIP_SECONDS:02d}:00")
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", first)
+    choose_in_dialog(window, "#import-video", second)
+    choose_in_dialog(window, "#import-audio", sound)
+    wait_until(
+        "the two clips never took their sources' lengths",
+        lambda: session.execute(CLIP_TITLES)
+        == [clip_title(first.name, *whole_clip), clip_title(second.name, *whole_clip)],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    window.click(TIMELINE_CLIP.format(1))
+    replace_field_text(window, TIMELINE_IN_FIELD, SECOND_CLIP_IN)
+    window.press(NEXT_FIELD_KEY)
+    replace_field_text(window, TIMELINE_OUT_FIELD, SECOND_CLIP_OUT)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "the second clip never took its in and out points",
+        lambda: session.execute(CLIP_TITLES)[1] == clip_title(second.name, SECOND_CLIP_IN, SECOND_CLIP_OUT),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    playhead_before = session.execute(EDITOR_PLAYHEAD_LEFT)
+
+    window.click(PLAY_TIMELINE_BUTTON)
+    wait_until(
+        "the preview never reported the timeline's duration",
+        lambda: reported_duration(session) > 0,
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert reported_duration(session) == pytest.approx(TIMELINE_SECONDS)
+    assert session.execute(PREVIEW_METADATA)["duration"] == pytest.approx(TIMELINE_SECONDS, abs=FRAME_SECONDS)
+    wait_until(
+        "the editor playhead never moved with the timeline",
+        lambda: session.execute(EDITOR_PLAYHEAD_LEFT) != playhead_before,
+        PLAYHEAD_TIMEOUT_SECONDS,
+    )
+    wait_until(
+        "the timeline never played into the second clip",
+        lambda: session.execute(PREVIEW_METADATA).get("timeline_clip_index") == 1,
+        PLAYHEAD_TIMEOUT_SECONDS,
+    )
+
+
 def counted_video_frames(movie):
     probed = subprocess.run(
         (
