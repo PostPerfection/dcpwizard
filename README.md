@@ -390,7 +390,7 @@ pnpm tauri dev                         # or: pnpm tauri build --no-bundle
 
 Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 
-`xvfb-run -a --server-args="-screen 0 2560x1920x24" uv run --no-project --with pytest --with python-xlib python tests/manual_screenshots.py` rewrites the manual's project view screenshot, `docs/manual/project.png`, from the release binary, with the same tools the webdriver suite in `tests/` needs.
+`xvfb-run -a --server-args="-screen 0 2560x1920x24" uv run --no-project --with pytest --with python-xlib python tests/manual_screenshots.py` rewrites the manual's four screenshots in `docs/manual/` from the release binary, with the same tools the webdriver suite in `tests/` needs.
 
 **Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI from a source build, launched without `GRK_PLUGIN_PATH`, finds no plugin, reports `GPU encoding unavailable` and turns the GPU setting off. The GPU rpm and deb set it themselves to `/usr/lib/dcpwizard`. On Metal the same directory must also contain `grok_kernels.metallib`.
 
