@@ -162,8 +162,7 @@ subtitle conversion or KDMs, and they say key distribution is still to come. Gap
 our side:
 
 - Timeline follow-ups: no alpha compositing for title sequences, every clip is a
-  cut. A timeline of JPEG 2000 sources previews picture only, without sound or
-  per-clip subtitles (the grok player path, see postkit's DESIGN_TODO).
+  cut.
 - SDI capture from a card, and SDI or HDMI output on third-party adaptors. Output is
   the DeckLink entry in postkit's DESIGN_TODO, unblocked now that the device decode
   exists. Capture has no entry anywhere and no card to prove it on.

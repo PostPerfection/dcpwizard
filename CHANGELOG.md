@@ -12,6 +12,7 @@
 - **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
 
 ### Fixed
+- **A timeline of JPEG 2000 sources previews with its sound and subtitles**: Play timeline on JPEG 2000 clips played picture only. It now plays the timeline's sound and each clip's subtitles.
 - **A version 2 project keeps a reel start when a clip cannot be read**: opening one where a reel's video could not be probed placed none of its reel starts, and the next save dropped them. The reel starts are now placed once every clip has been probed, a clip that could not be read counting as empty.
 - **Trim off the head and tail are what Play timeline plays**: on a timeline of one clip the Trim fields trimmed the build while Play timeline played the clip from its In to its Out untrimmed. The Trim fields now set the clip's In and Out, and an In or Out set on the timeline shows in the Trim fields, so the preview and the build keep the same frames.
 - **The reels view follows Play timeline**: its playhead stayed where it was while a timeline played, and only the editor's playhead moved. It now follows a playing timeline as it follows a playing DCP.
