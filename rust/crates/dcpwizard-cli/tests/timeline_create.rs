@@ -629,7 +629,7 @@ fn write_codestreams(directory: &Path) -> PathBuf {
         ffmpeg()
             .args(["-f", "lavfi", "-i"])
             .arg(format!(
-                "color=c=blue:s={CODESTREAM_SIZE}:rate={FRAME_RATE}:duration=1"
+                "color=c=blue:s={CODESTREAM_SIZE}:rate={FRAME_RATE}:duration={BASE_SECONDS}"
             ))
             .arg(stills.join("frame_%04d.png")),
         "ffmpeg has to write the stills",
@@ -667,14 +667,14 @@ fn codestreams_on_layer_0_after_a_gap_build_with_the_gap_black() {
     let config_home = TempDir::new().unwrap();
     let codestreams = write_codestreams(directory.path());
     let tone = directory.path().join("tone.wav");
-    write_tone(&tone, GAP_FRAMES + u64::from(FRAME_RATE));
+    write_tone(&tone, GAP_FRAMES + BASE_FRAMES);
     let timeline = directory.path().join("timeline.json");
     Timeline {
         version: TIMELINE_FORMAT_VERSION,
         fps: FrameRate::whole(FRAME_RATE),
         clips: vec![Clip {
             sound: ClipSound::None,
-            ..clip(codestreams, GAP_FRAMES, 0, u64::from(FRAME_RATE))
+            ..clip(codestreams, GAP_FRAMES, 0, BASE_FRAMES)
         }],
         sound: SoundTrack::Override(tone),
         subtitle: None,
@@ -692,7 +692,7 @@ fn codestreams_on_layer_0_after_a_gap_build_with_the_gap_black() {
 
     assert_eq!(
         reel_picture_durations(&package),
-        vec![GAP_FRAMES, u64::from(FRAME_RATE)],
+        vec![GAP_FRAMES, BASE_FRAMES],
         "the gap is a reel of its own and the codestreams fill the second"
     );
     let reels = picture_frames_by_length(&package);
