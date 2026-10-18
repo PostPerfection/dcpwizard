@@ -33,12 +33,13 @@ export async function loadTimelineFromCpl(cplPath) {
 }
 
 // Load timeline from the project model (for DCPs being built)
-export function loadTimelineFromProject(reelSpans, editRate) {
-  if (reelSpans.length === 0) {
+export function loadTimelineFromProject(timeline, assetById, editRate) {
+  const entries = projectTimelineEntries(timeline, assetById, editRate);
+  if (entries.length === 0) {
     renderEmpty();
     return;
   }
-  buildTimelineData(projectTimelineEntries(reelSpans, editRate));
+  buildTimelineData(entries);
   followsProjectTimeline = true;
   render();
 }
@@ -171,7 +172,7 @@ function renderTracks() {
     }
 
     // Sound segment
-    if (reel.sound_file || reel.sound_asset_id) {
+    if (reel.sound_file || reel.sound_asset_id || reel.sound_names) {
       const seg = createSegment(reel, leftPct, widthPct, soundColors[(reel.reel_number - 1) % soundColors.length], 'sound');
       soundEl.appendChild(seg);
     }
@@ -199,7 +200,9 @@ function createSegment(reel, leftPct, widthPct, color, type) {
 
   const label = document.createElement('span');
   label.className = 'segment-label';
-  label.textContent = `R${reel.reel_number}`;
+  // only a project's entries name their clips
+  const names = reel[`${type}_names`];
+  label.textContent = names ? `R${reel.reel_number} ${names}` : `R${reel.reel_number}`;
   seg.appendChild(label);
 
   const dur = document.createElement('span');

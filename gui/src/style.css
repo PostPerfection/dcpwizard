@@ -82,6 +82,18 @@
   border-left: 3px dashed var(--primary);
 }
 
+/* WebKit draws today's date in an empty date field */
+.prop-field input[type="datetime-local"].empty-date {
+  color: var(--text-muted);
+}
+
+/* a project's segment label holds file names */
+.segment-label {
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .field-hint {
   font-size: 12px;
   color: var(--text-muted);

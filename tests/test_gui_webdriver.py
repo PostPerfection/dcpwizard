@@ -1562,6 +1562,10 @@ EDITOR_PLAYHEAD_LEFT = """
 return document.querySelector("#timeline-editor .timeline-editor-playhead")?.style.left ?? null;
 """
 
+SEGMENT_LABELS = """
+return [...document.querySelectorAll(arguments[0] + " .segment-label")].map((label) => label.textContent);
+"""
+
 
 def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
     session = window.session
@@ -1622,6 +1626,7 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
         lambda: session.execute(RULER_PLAYHEAD_LEFT) not in (None, RULER_PLAYHEAD_AT_START),
         REACTION_TIMEOUT_SECONDS,
     )
+    assert session.execute(SEGMENT_LABELS, "#timeline-picture") == [f"R1 {first.name}, {second.name}"]
 
 
 

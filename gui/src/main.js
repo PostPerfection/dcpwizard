@@ -26,7 +26,6 @@ import {
   firstSoundAsset,
   firstSubtitleAsset,
   parseFrameRate,
-  reelSpans,
   splitTimecodeFrames,
   splitTimecodeSpec,
   timelineFrameAtSourceFrame,
@@ -2598,6 +2597,15 @@ for (const id of ["dkdm-from", "dkdm-to", "dkdm-formulation", "dkdm-audio-markin
   document.getElementById(id)?.addEventListener("change", checkRewrapReady);
 }
 document.getElementById("dkdm-no-forensic-picture")?.addEventListener("change", checkRewrapReady);
+
+function markEmptyDateField(field) {
+  field.classList.toggle("empty-date", field.value === "");
+}
+for (const field of document.querySelectorAll('input[type="datetime-local"]')) {
+  markEmptyDateField(field);
+  field.addEventListener("input", () => markEmptyDateField(field));
+  field.addEventListener("change", () => markEmptyDateField(field));
+}
 document.getElementById("dkdm-use-own-key")?.addEventListener("change", () => {
   useOwnKey("dkdm-use-own-key", "dkdm-key", "dkdm-browse-key", getPrefs().recipientKey);
   checkRewrapReady();
@@ -3673,7 +3681,7 @@ function takeProjectDefaultsFromPreferences() {
 
 function showProjectTimeline() {
   if (openedPackage) return;
-  loadTimelineFromProject(reelSpans(activeTimeline(), assetById), timelineEditRate());
+  loadTimelineFromProject(activeTimeline(), assetById, timelineEditRate());
 }
 
 preferencesLoaded.then(() => {
