@@ -133,6 +133,8 @@ pub fn run() {
             pipeline::marker_labels,
             pipeline::detect_source_crop,
             pipeline::picture_placement,
+            pipeline::pull_up_hint,
+            pipeline::check_timeline,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,
             pipeline::group_channel_files,

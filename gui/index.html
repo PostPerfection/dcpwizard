@@ -167,6 +167,7 @@
                 <div class="panel-header">
                   <h2>Timeline</h2>
                 </div>
+                <p class="timeline-problem" id="timeline-problem" hidden></p>
                 <div id="timeline-editor"></div>
               </section>
             </div>
@@ -221,7 +222,7 @@
                   <legend>Naming and metadata</legend>
                   <div class="prop-field">
                     <label for="prop-audio-language">Audio language (RFC 5646)</label>
-                    <input id="prop-audio-language" type="text" placeholder="en">
+                    <input id="prop-audio-language" type="text" placeholder="Not set (for example en)">
                   </div>
                   <div class="prop-field">
                     <label for="prop-studio">Studio</label>
@@ -316,6 +317,7 @@
                       <option value="60">60 fps (HFR, 2K)</option>
                       <option value="auto">Auto (from source)</option>
                     </select>
+                    <p class="field-hint" id="prop-pull-up-hint" hidden></p>
                   </div>
                   <div class="prop-field">
                     <label for="prop-bandwidth">Bandwidth (Mbps)</label>
@@ -813,7 +815,7 @@
                   </div>
                   <div class="prop-field">
                     <label for="prop-sign-language-tag">Sign-language tag (RFC 5646)</label>
-                    <input id="prop-sign-language-tag" type="text" placeholder="sgn-ase">
+                    <input id="prop-sign-language-tag" type="text" placeholder="Not set (for example sgn-ase)">
                   </div>
                 </fieldset>
 

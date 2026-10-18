@@ -275,12 +275,15 @@ fn source_rate_hint(facts: &HintFacts) -> Option<Hint> {
 fn pull_up_hint(facts: &HintFacts) -> Option<Hint> {
     let source_fps = facts.source_fps.filter(|_| facts.conforms_with_pull_up)?;
     Some(Hint {
-        text: format!(
-            "The {source_fps:.3} fps source will play at {} fps, 0.1% faster, and the sound is \
-             pulled up by the same amount to stay in sync. No frame is duplicated or dropped.",
-            facts.fps
-        ),
+        text: pull_up_text(source_fps, facts.fps),
     })
+}
+
+pub fn pull_up_text(source_fps: f64, dcp_fps: u32) -> String {
+    format!(
+        "The {source_fps:.3} fps source will play at {dcp_fps} fps, 0.1% faster, and the sound is \
+         pulled up by the same amount to stay in sync. No frame is duplicated or dropped."
+    )
 }
 
 fn marker_hints(facts: &HintFacts) -> Vec<Hint> {
@@ -840,6 +843,22 @@ mod tests {
             ..pulled_up.clone()
         };
         assert!(!mentions(&matched, "0.1% faster"));
+    }
+
+    #[test]
+    fn the_pull_up_hint_is_the_pull_up_text() {
+        let source_fps = 30000.0 / 1001.0;
+        let pulled_up = HintFacts {
+            fps: 30,
+            source_fps: Some(source_fps),
+            conforms_with_pull_up: true,
+            ..facts()
+        };
+        assert!(
+            texts(&pulled_up).contains(&pull_up_text(source_fps, 30)),
+            "{:?}",
+            texts(&pulled_up)
+        );
     }
 
     #[test]

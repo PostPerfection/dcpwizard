@@ -723,6 +723,8 @@ function afterTimelineChange() {
   refreshMarkerFromPlayerButtons();
   refreshContainerViewAvailability();
   refreshPicturePlacement();
+  refreshPullUpHint();
+  refreshTimelineProblem();
   updateStatusStats();
   if (document.getElementById("view-reels").classList.contains("active")) showProjectTimeline();
 }
@@ -868,11 +870,12 @@ function previewedOrFirstClip() {
   return timeline.clips[previewedClipIndex] ?? null;
 }
 
+function unpackagedJobRequest() {
+  return jobRequestFor(activeTimeline(), { title: "", output: "", encrypt: false, keyOut: "" });
+}
+
 function picturePlacementOf(clipIndex) {
-  return invoke("picture_placement", {
-    request: jobRequestFor(activeTimeline(), { title: "", output: "", encrypt: false, keyOut: "" }),
-    clipIndex,
-  });
+  return invoke("picture_placement", { request: unpackagedJobRequest(), clipIndex });
 }
 
 async function refreshPicturePlacement() {
@@ -900,6 +903,47 @@ async function refreshPicturePlacement() {
 
 for (const id of PICTURE_PLACEMENT_CONTROLS) {
   document.getElementById(id)?.addEventListener("input", refreshPicturePlacement);
+}
+
+let pullUpHintRequest = 0;
+const pullUpHint = document.getElementById("prop-pull-up-hint");
+
+async function refreshPullUpHint() {
+  const requestNumber = ++pullUpHintRequest;
+  if (!firstBaseClip(activeTimeline())) {
+    pullUpHint.hidden = true;
+    return;
+  }
+  let sentence;
+  try {
+    sentence = await invoke("pull_up_hint", { request: unpackagedJobRequest() });
+  } catch (e) {
+    sentence = String(e);
+  }
+  if (requestNumber !== pullUpHintRequest) return;
+  pullUpHint.textContent = sentence ?? "";
+  pullUpHint.hidden = sentence === null;
+}
+
+document.getElementById("prop-framerate").addEventListener("input", refreshPullUpHint);
+
+let timelineProblemRequest = 0;
+const timelineProblem = document.getElementById("timeline-problem");
+
+async function refreshTimelineProblem() {
+  const requestNumber = ++timelineProblemRequest;
+  const { timeline } = unpackagedJobRequest();
+  let problem = null;
+  if (timeline) {
+    try {
+      await invoke("check_timeline", { timeline });
+    } catch (e) {
+      problem = String(e);
+    }
+  }
+  if (requestNumber !== timelineProblemRequest) return;
+  timelineProblem.textContent = problem ?? "";
+  timelineProblem.hidden = problem === null;
 }
 
 function sendContainerViewFilters() {
@@ -964,7 +1008,7 @@ async function refreshAudioMapMatrix() {
     }).join("");
     return `<tr><th title="${name}"><span>${name}</span></th>${cells}</tr>`;
   }).join("");
-  grid.innerHTML = `<table><thead><tr><th></th>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+  grid.innerHTML = `<table style="--lane-count: ${panel.lanes.length}"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
   grid.querySelectorAll("input").forEach(cell => {
     cell.addEventListener("focus", () => {
       if (!cell.value.trim()) cell.value = "0";
@@ -1189,6 +1233,7 @@ function applyProfile(profileName) {
   updateProfileHint(profileName, driven);
   setStatus(`Profile ${profileName}: ${profile.description}`);
   refreshPicturePlacement();
+  refreshPullUpHint();
 }
 
 (async () => {
@@ -1217,6 +1262,7 @@ function applyProfile(profileName) {
       refreshPreviewCrop();
       refreshPackageNamePreview();
       refreshPicturePlacement();
+      refreshPullUpHint();
     },
   });
 })();
@@ -1258,6 +1304,7 @@ async function showDetectedValues(info) {
   detectedHint.textContent = detected.hint;
   detectedHint.hidden = false;
   refreshPicturePlacement();
+  refreshPullUpHint();
   const resolvesFromSource = resolutionSelect.value === "auto" && probeMayFillField("resolution", resolutionSelect);
   resolutionSelect.classList.toggle("detected", resolvesFromSource);
 }

@@ -180,38 +180,49 @@
 }
 
 /* Audio channel mapping matrix: one row per source channel, one column per lane */
+/* WebKitGTK draws an auto scrollbar over the hint below the matrix */
 .audio-map {
-  overflow-x: auto;
+  overflow-x: scroll;
 }
+/* the base scrollbar thumb is nearly the panel colour */
+.audio-map::-webkit-scrollbar {
+  height: 10px;
+}
+.audio-map::-webkit-scrollbar-track {
+  background: var(--surface-alt);
+}
+.audio-map::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+}
+/* each input channel's name takes a full-width line above its cells */
 .audio-map table {
-  border-collapse: collapse;
+  display: grid;
+  /* 40px holds -12.5 at the panel's 12px input font */
+  grid-template-columns: repeat(var(--lane-count), minmax(40px, 1fr));
+}
+.audio-map thead,
+.audio-map tbody,
+.audio-map tr {
+  display: contents;
 }
 .audio-map th,
 .audio-map td {
-  padding: 2px 3px;
+  padding: 2px;
   text-align: center;
-}
-.audio-map td {
-  min-width: 48px;
 }
 .audio-map th {
   color: var(--text-muted);
   font-weight: normal;
 }
 .audio-map tbody th {
+  grid-column: 1 / -1;
+  padding-top: 4px;
   text-align: left;
   white-space: nowrap;
-}
-.audio-map tbody th span {
-  display: inline-block;
-  max-width: 28ch;
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: bottom;
 }
-/* the panel's text inputs fill their field, a cell input keeps its own width */
 .prop-field .audio-map input[type="text"] {
-  width: 44px;
   padding: 2px;
   text-align: center;
 }
@@ -402,4 +413,11 @@
   font-size: 11px;
   color: var(--text-muted);
   padding: 8px 4px;
+}
+
+/* a reason the build would refuse the timeline */
+.timeline-problem {
+  color: #ef4444;
+  font-size: 12px;
+  margin-bottom: 8px;
 }

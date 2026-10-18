@@ -1908,6 +1908,30 @@ fn job_picture_placement(
     Ok(picture_placement_of(&resolved))
 }
 
+#[tauri::command]
+pub async fn pull_up_hint(request: SubmitRequest) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || job_pull_up_hint(request))
+        .await
+        .map_err(|e| format!("the pull-up check stopped: {e}"))?
+}
+
+fn job_pull_up_hint(request: SubmitRequest) -> Result<Option<String>, String> {
+    let job = job_config_of(0, request)?;
+    let (dcp_fps, _) = frame_rate_of(&job.framerate);
+    let pulled_up_source_fps = job_source_rate(&job)
+        .filter(|_| job_conform(&job).audio_pull_up)
+        .map(|(numerator, denominator)| f64::from(numerator) / f64::from(denominator));
+    Ok(pulled_up_source_fps
+        .map(|source_fps| dcpwizard_core::hints::pull_up_text(source_fps, dcp_fps)))
+}
+
+#[tauri::command]
+pub async fn check_timeline(timeline: postkit::timeline::Timeline) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || timeline.check())
+        .await
+        .map_err(|e| format!("the timeline check stopped: {e}"))?
+}
+
 // resolved over the whole timeline, the way encode_job_timeline fits each clip
 fn timeline_clip_picture(
     job: &JobConfig,
@@ -2877,13 +2901,16 @@ fn map_audio(
     Ok(mapped)
 }
 
-fn job_conform(job: &JobConfig) -> dcpwizard_core::hfr::SourceConform {
-    let (fps_num, _) = frame_rate_of(&job.framerate);
-    let source_rate = match &job.timeline {
+fn job_source_rate(job: &JobConfig) -> Option<(u32, u32)> {
+    match &job.timeline {
         Some(timeline) => Some((timeline.fps.numerator, timeline.fps.denominator)),
         None => job.source.as_ref().map(|info| (info.fps_num, info.fps_den)),
-    };
-    source_rate
+    }
+}
+
+fn job_conform(job: &JobConfig) -> dcpwizard_core::hfr::SourceConform {
+    let (fps_num, _) = frame_rate_of(&job.framerate);
+    job_source_rate(job)
         .map(|(numerator, denominator)| {
             dcpwizard_core::hfr::conform_source_to_dcp(numerator, denominator, fps_num)
         })
@@ -4711,6 +4738,72 @@ mod tests {
         )
         .unwrap();
         assert_eq!(chosen.framerate, "24", "a chosen rate is kept");
+    }
+
+    #[test]
+    fn the_pull_up_hint_is_given_only_when_the_build_pulls_the_source_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let ntsc = clip_at_rate(dir.path(), "30000/1001");
+        let pal = clip_at_rate(dir.path(), "25");
+        let hint_for = |video: &Path, framerate: &str| {
+            job_pull_up_hint(SubmitRequest {
+                video_path: video.to_string_lossy().into_owned(),
+                framerate: Some(framerate.into()),
+                ..SubmitRequest::default()
+            })
+            .unwrap()
+        };
+        let pulled_up = hint_for(&ntsc, "30").expect("a 29.97 fps source at 30 fps is pulled up");
+        assert!(
+            pulled_up.starts_with("The 29.970 fps source will play at 30 fps, 0.1% faster"),
+            "{pulled_up}"
+        );
+        assert_eq!(
+            pulled_up,
+            dcpwizard_core::hints::pull_up_text(30000.0 / 1001.0, 30)
+        );
+        assert_eq!(hint_for(&ntsc, AUTO_FRAME_RATE), Some(pulled_up.clone()));
+        assert_eq!(hint_for(&ntsc, "24"), None);
+        assert_eq!(hint_for(&pal, "25"), None);
+
+        let mut timeline = timeline_of(vec![
+            timeline_clip(&ntsc, 0, 0, 6),
+            timeline_clip(&ntsc, 6, 0, 6),
+        ]);
+        timeline.fps = postkit::encode::FrameRate::new(30000, 1001);
+        let from_timeline = job_pull_up_hint(SubmitRequest {
+            timeline: Some(timeline),
+            framerate: Some("30".into()),
+            ..SubmitRequest::default()
+        })
+        .unwrap();
+        assert_eq!(from_timeline, Some(pulled_up));
+    }
+
+    #[test]
+    fn the_timeline_check_names_a_clip_at_another_frame_rate() {
+        let dir = tempfile::tempdir().unwrap();
+        let pal = clip_at_rate(dir.path(), "25");
+        let ntsc = clip_at_rate(dir.path(), "30000/1001");
+        let mut timeline = timeline_of(vec![
+            timeline_clip(&pal, 0, 0, 6),
+            timeline_clip(&ntsc, 6, 0, 6),
+        ]);
+        timeline.fps = postkit::encode::FrameRate::whole(25);
+        let refused = tauri::async_runtime::block_on(check_timeline(timeline.clone())).unwrap_err();
+        assert_eq!(
+            refused,
+            format!(
+                "clip 2 ({}) runs at 30000/1001 fps and the timeline at 25/1 fps",
+                ntsc.display()
+            )
+        );
+
+        timeline.clips[1] = timeline_clip(&pal, 6, 0, 6);
+        assert_eq!(
+            tauri::async_runtime::block_on(check_timeline(timeline)),
+            Ok(())
+        );
     }
 
     fn timeline_clip(
