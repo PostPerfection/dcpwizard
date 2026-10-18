@@ -15,7 +15,7 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
-import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, followTimelinePosition } from "../../extern/guikit/src/timeline-editor.js";
+import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, followTimelinePosition, frameAtSeconds } from "../../extern/guikit/src/timeline-editor.js";
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
@@ -38,7 +38,7 @@ import {
   withSplitAtFrames,
   withUnplacedAssetsFilled,
 } from "../../extern/guikit/src/composition-timeline.js";
-import { clipSoundIsChannelSet, previewTimelineWire, timelineRequestFields, withChannelSets } from "./composition-timeline.js";
+import { clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, timelineRequestFields, withChannelSets, withClipTrims } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -602,14 +602,17 @@ async function probeUnprobedClips() {
     asset.frames = await sourceFrames(assetId);
     takeProbedFrames(asset);
   }
+  project.compositions = project.compositions.map(withReelStartingClipsPlaced);
+  showActiveTimeline();
 }
 
 // clips placed before their source was probed get its length and rate
 function takeProbedFrames(asset) {
-  project.compositions = project.compositions.map((composition) => withReelStartingClipsPlaced({
+  project.compositions = project.compositions.map((composition) => ({
     ...composition,
     timeline: withFirstClipRate(withProbedFrames(composition.timeline, asset.id, asset.frames), assetById),
   }));
+  takeTrimFields();
   showActiveTimeline();
 }
 
@@ -715,6 +718,7 @@ function showActiveTimeline() {
 function afterTimelineChange() {
   previewedClipIndex = clipIndexShowing(previewShownPath, previewedClipIndex);
   refreshReelSplitFields();
+  refreshTrimFields();
   audioMapDrawn = refreshAudioMapMatrix();
   refreshIsdcfPreview();
   refreshMarkerFromPlayerButtons();
@@ -739,7 +743,9 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
 // === Reels ===
 // the split fields drive a timeline of one clip, and its reel starts mirror the split timecodes
 const REEL_SPLIT_FIELD_IDS = ["prop-reel-length", "prop-split-at", "prop-split-chapters"];
-const CLIP_LENGTH_FIELD_IDS = ["prop-trim-start", "prop-trim-end", "prop-still-length"];
+const TRIM_START_FIELD_ID = "prop-trim-start";
+const TRIM_END_FIELD_ID = "prop-trim-end";
+const CLIP_LENGTH_FIELD_IDS = [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID, "prop-still-length"];
 const splitAtField = document.getElementById("prop-split-at");
 
 function timelineEditRate() {
@@ -773,6 +779,34 @@ splitAtField.addEventListener("input", () => {
   const mirrored = withSplitAtReelStarts(activeTimeline());
   if (mirrored !== activeTimeline()) setEditorReelStarts(mirrored.reelStarts);
 });
+
+function refreshTrimFields() {
+  const { clips } = activeTimeline();
+  if (clips.length !== 1 || clips[0].frames === 0) return;
+  const { trimStart, trimEnd } = clipTrimSpecs(clips[0]);
+  document.getElementById(TRIM_START_FIELD_ID).value = trimStart;
+  document.getElementById(TRIM_END_FIELD_ID).value = trimEnd;
+}
+
+// false when the clip cannot take the typed trims, which the status names
+function takeTrimFields() {
+  const editRate = timelineEditRate();
+  try {
+    const trimStartFrames = fieldFrames(TRIM_START_FIELD_ID, "Trim start", editRate);
+    const trimEndFrames = fieldFrames(TRIM_END_FIELD_ID, "Trim end", editRate);
+    storeActiveTimeline(withClipTrims(activeTimeline(), trimStartFrames, trimEndFrames));
+  } catch (error) {
+    setStatus(error.message);
+    return false;
+  }
+  return true;
+}
+
+for (const id of [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID]) {
+  document.getElementById(id).addEventListener("change", () => {
+    if (takeTrimFields()) showActiveTimeline();
+  });
+}
 
 // === Source picture ===
 
@@ -3197,6 +3231,7 @@ async function restoreBuildPanel(saved, projectPath) {
   // undefined matches no sound path, not even none, so the matrix is drawn again
   audioMapSource = undefined;
   previewedClipIndex = null;
+  takeTrimFields();
   storeActiveTimeline(withSplitAtReelStarts(activeTimeline()));
   showActiveTimeline();
   probeUnprobedClips();
@@ -3676,7 +3711,12 @@ watchPreviewShown((path, ended) => {
   previewedClipIndex = path === null ? null : clipIndexShowing(path, previewedClipIndex);
   updateToolbarState();
 });
-watchPreviewTimelinePosition(followTimelinePosition);
+function followPlayingTimeline(position) {
+  followTimelinePosition(position);
+  if (position !== null && position.seconds !== null) setProjectTimelinePlayhead(frameAtSeconds(activeTimeline(), position.seconds));
+}
+
+watchPreviewTimelinePosition(followPlayingTimeline);
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");

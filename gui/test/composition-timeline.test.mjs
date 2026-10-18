@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { emptyTimeline } from '../../extern/guikit/src/composition-timeline.js';
-import { clipSoundIsChannelSet, previewTimelineWire, timelineRequestFields, withChannelSets } from '../src/composition-timeline.js';
+import { clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, timelineRequestFields, withChannelSets, withClipTrims } from '../src/composition-timeline.js';
 
 const ASSETS = [
   { id: 1, type: 'video', path: '/media/a.mov', name: 'a.mov', fps: '24/1', frames: 240 },
@@ -116,16 +116,39 @@ test('a channel set over a multi-clip timeline goes as the channel files beside 
   assert.equal(request.timeline.sound, 'PerClip');
 });
 
-test('a one-clip timeline the single-picture request cannot say goes as a timeline, with the panel trim for submit_job to refuse', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 48, 240)], reelStarts: [96] };
+test('a one-clip timeline the single-picture request cannot say goes as a timeline, the side its clip trims in the wire and a whole side\'s panel trim for submit_job to refuse', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 48, 240, { kind: 'none', asset: null })], reelStarts: [96] };
 
-  const request = requestFor(timeline, { ...PANEL_REQUEST, trimStart: '2s', splitAt: '00:00:04' });
+  const request = requestFor(timeline, { ...PANEL_REQUEST, trimStart: '48f', trimEnd: '1s', splitAt: '00:00:04' });
 
   assert.equal(request.videoPath, '');
-  assert.equal(request.trimStart, '2s');
+  assert.equal(request.trimStart, null);
+  assert.equal(request.timeline.clips[0].in_frame, 48);
+  assert.equal(request.trimEnd, '1s');
   assert.equal(request.splitAt, null);
   assert.deepEqual(request.timeline.reel_starts, [96]);
-  assert.equal(requestFor({ ...timeline, clips: [clip(1, 240, 0, 240, { kind: 'none', asset: null })] }).timeline.clips[0].sound, 'None');
+  assert.equal(request.timeline.clips[0].sound, 'None');
+});
+
+test('the Trim fields set a one-clip timeline\'s in and out points, which the build and the preview both read', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240)], sound: 6 };
+
+  const trimmed = withClipTrims(timeline, 48, 24);
+  const trimSpecs = clipTrimSpecs(trimmed.clips[0]);
+  const request = requestFor(trimmed, { ...PANEL_REQUEST, ...trimSpecs });
+  const played = previewTimelineWire(trimmed, assetById).clips[0];
+
+  assert.deepEqual(trimmed.clips[0], clip(1, 240, 48, 216));
+  assert.deepEqual(trimSpecs, { trimStart: '48f', trimEnd: '24f' });
+  assert.deepEqual([request.videoPath, request.trimStart, request.trimEnd], ['/media/a.mov', '48f', '24f']);
+  assert.equal('timeline' in request, false);
+  assert.deepEqual([played.in_frame, played.out_frame], [48, 216]);
+  assert.deepEqual(clipTrimSpecs(timeline.clips[0]), { trimStart: '', trimEnd: '' });
+  assert.throws(() => withClipTrims(timeline, 200, 40), RangeError);
+  const unprobed = { ...timeline, clips: [clip(1, 0, 0, 0)] };
+  assert.equal(withClipTrims(unprobed, 48, 24), unprobed, 'an unprobed clip has no end to trim from');
+  const twoClips = { ...timeline, clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96)] };
+  assert.equal(withClipTrims(twoClips, 48, 24), twoClips);
 });
 
 test('a clip sound absorbed into a channel set moves to the timeline, which is the only place a set can go', () => {

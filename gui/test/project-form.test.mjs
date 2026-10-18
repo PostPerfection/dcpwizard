@@ -327,7 +327,7 @@ test('a version 2 project opens with reel 1 as the first clip and the later reel
   assert.deepEqual(notRestored, []);
 });
 
-test('a version 2 project that built two reels starts a reel at its second clip once both clips are probed', () => {
+test('a version 2 project that built two reels starts a reel at its second clip once the clips are probed, even when the second probe fails', () => {
   const assets = [
     { id: 1, type: 'video', path: '/media/feature.mov', name: 'feature.mov', meta: '', fps: '24/1' },
     { id: 2, type: 'video', path: '/media/trailer.mov', name: 'trailer.mov', meta: '', fps: '24/1' },
@@ -348,23 +348,30 @@ test('a version 2 project that built two reels starts a reel at its second clip 
     ],
     activeComposition: 0,
   });
-  const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
-  const reopened = emptyPanel(() => '');
-  restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
-  const probed = (assetId, frames) => {
+  const opened = () => {
+    const { form } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+    const reopened = emptyPanel(() => '');
+    restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+    return reopened;
+  };
+  // what the restore's probe pass does: each clip's frames, a failed probe giving 0, then the reel starts
+  const probedAndPlaced = (reopened, framesByAsset) => {
     const [composition] = reopened.project.compositions;
-    reopened.project.compositions = [withReelStartingClipsPlaced({ ...composition, timeline: withProbedFrames(composition.timeline, assetId, frames) })];
+    const timeline = Object.entries(framesByAsset).reduce(
+      (probed, [assetId, frames]) => withProbedFrames(probed, Number(assetId), frames),
+      composition.timeline,
+    );
+    assert.equal('reelStartingClipIndices' in serialized(reopened).project.compositions[0], false, 'the file never holds the clip list');
+    reopened.project.compositions = [withReelStartingClipsPlaced({ ...composition, timeline })];
+    return serialized(reopened).project.compositions[0];
   };
 
-  probed(1, 240);
-  assert.deepEqual(reopened.project.compositions[0].timeline.reelStarts, [], 'the second clip has no start before its probe');
-  assert.equal('reelStartingClipIndices' in serialized(reopened).project.compositions[0], false, 'the file never holds the clip list');
-  probed(2, 96);
-
-  const saved = serialized(reopened).project.compositions[0];
+  const saved = probedAndPlaced(opened(), { 1: 240, 2: 96 });
   assert.deepEqual(saved.timeline.reelStarts, [240]);
   assert.equal('reelStartingClipIndices' in saved, false);
-  assert.equal('reelStartingClipIndices' in reopened.project.compositions[0], false);
+  const unreadableTrailerFrames = 0;
+  const savedWithoutTrailer = probedAndPlaced(opened(), { 1: 240, 2: unreadableTrailerFrames });
+  assert.deepEqual(savedWithoutTrailer.timeline.reelStarts, [240], 'the reel start outlives the failed probe');
 });
 
 test('a version 2 channel set on reel 1 becomes the timeline sound, and a project without assets opens empty', () => {

@@ -1468,6 +1468,7 @@ TIMELINE_CLIP_SECONDS = 10
 TIMELINE_SEEK_SECONDS = 5
 TIMELINE_HALFWAY = "50%"
 REELS_VIEW_BUTTON = '.sidebar-btn[data-view="reels"]'
+PROJECT_VIEW_BUTTON = '.sidebar-btn[data-view="project"]'
 
 PREVIEW_DURATION = """
 return window.__TAURI_INTERNALS__.invoke("preview_get_metadata").then((text) => JSON.parse(text).duration);
@@ -1489,6 +1490,10 @@ return window.__TAURI_INTERNALS__.invoke("preview_seek_absolute", {seconds: argu
 RULER_PLAYHEAD_LEFT = """
 return document.getElementById("ruler-playhead")?.style.left ?? null;
 """
+RULER_PLAYHEAD_AT_START = "0%"
+TRIM_START_FIELD = "#prop-trim-start"
+TRIM_START = "12f"
+TRIM_START_TIMECODE = "00:00:00:12"
 
 
 def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_path):
@@ -1531,6 +1536,16 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
     wait_until(
         "the timeline playhead never followed the preview",
         lambda: session.execute(RULER_PLAYHEAD_LEFT) == TIMELINE_HALFWAY,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.click(PROJECT_VIEW_BUTTON)
+    replace_field_text(window, TRIM_START_FIELD, TRIM_START)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "Trim off the head never moved the clip's in point, which Play timeline plays from",
+        lambda: session.execute(CLIP_TITLES)
+        == [clip_title(picture.name, TRIM_START_TIMECODE, f"00:00:{TIMELINE_CLIP_SECONDS:02d}:00")],
         REACTION_TIMEOUT_SECONDS,
     )
 
@@ -1600,6 +1615,12 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
         "the timeline never played into the second clip",
         lambda: session.execute(PREVIEW_METADATA).get("timeline_clip_index") == 1,
         PLAYHEAD_TIMEOUT_SECONDS,
+    )
+    window.click(REELS_VIEW_BUTTON)
+    wait_until(
+        "the reels view playhead never followed the playing timeline",
+        lambda: session.execute(RULER_PLAYHEAD_LEFT) not in (None, RULER_PLAYHEAD_AT_START),
+        REACTION_TIMEOUT_SECONDS,
     )
 
 
