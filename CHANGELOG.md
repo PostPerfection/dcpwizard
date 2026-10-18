@@ -10,6 +10,7 @@
 - **Deep colour preview on macOS and Windows**: the preview draws a DCP frame at 10 bits or more when the display framebuffer carries that depth. Linux stays 8 bit, its GL surface has no deeper mode.
 - **The preview height is adjustable**: a drag handle on the preview's edge changes the picture height, remembered across restarts. The handle is on the top edge in the strip and the bottom edge beside the properties.
 - **Subtitles already burnt into the source can be named**: `create --subtitles-burnt-in` and the Properties checkbox Subtitles are already burnt into the picture say the source picture carries subtitles in the subtitle language, so the ISDCF name spells them in lower case, `AR-en` for Arabic sound with English subtitles in the picture. A packaged subtitle track still decides the name. The Subtitle language field is now labelled Subtitle language (subtitle track or burnt-in subtitles).
+- **The Properties panel collapses**: double-click the handle between the project view and the Properties panel, or press Enter or Space on it, to hide the panel and give the picture the width. A click on the handle brings it back, and the choice is kept between runs.
 
 ### Fixed
 - **The reels view names a project's clips and its sound**: a reel's picture segment read only R1, and a reel whose clips played their embedded sound had no sound segment. The picture segment now names the clips the reel covers in order, as in R1 movie.mov, trailer.mov, and the sound segment names the sound files or embedded.

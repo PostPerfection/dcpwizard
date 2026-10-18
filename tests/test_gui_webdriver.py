@@ -1697,6 +1697,54 @@ def test_a_preview_scrolled_partly_out_of_its_column_stays_inside_it(window, tmp
     app_output = window.log_path.read_text(errors="replace")
     assert GTK_ALLOCATION_WARNING not in app_output, "GTK could not place the scrolled picture"
 
+
+TOGGLE_PROPERTIES_KEY = "Return"
+FOCUS_PROPERTIES_HANDLE = 'document.getElementById("properties-resize-handle").focus();'
+PROPERTIES_LAYOUT = """
+const workspace = document.querySelector("#view-project .workspace");
+const handle = document.getElementById("properties-resize-handle");
+return {
+  collapsed: workspace.classList.contains("properties-collapsed"),
+  panelShown: getComputedStyle(document.getElementById("properties")).display !== "none",
+  handleLabel: handle.getAttribute("aria-label"),
+  storedCollapsed: localStorage.getItem("dcpwizard-properties-collapsed"),
+};
+"""
+EXPANDED_PROPERTIES = {
+    "collapsed": False,
+    "panelShown": True,
+    "handleLabel": "Resize Properties",
+    "storedCollapsed": None,
+}
+COLLAPSED_PROPERTIES = {
+    "collapsed": True,
+    "panelShown": False,
+    "handleLabel": "Show Properties",
+    "storedCollapsed": "1",
+}
+
+
+def test_enter_on_the_properties_handle_hides_and_shows_the_panel(window):
+    session = window.session
+    wait_for_view(session, PROJECT_VIEW)
+    assert session.execute(PROPERTIES_LAYOUT) == EXPANDED_PROPERTIES
+
+    session.execute(FOCUS_PROPERTIES_HANDLE)
+    window.press(TOGGLE_PROPERTIES_KEY)
+    wait_until(
+        "Enter on the handle never hid the properties",
+        lambda: session.execute(PROPERTIES_LAYOUT) == COLLAPSED_PROPERTIES,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.press(TOGGLE_PROPERTIES_KEY)
+    wait_until(
+        "Enter on the handle never showed the properties again",
+        lambda: session.execute(PROPERTIES_LAYOUT) == EXPANDED_PROPERTIES,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
 def counted_video_frames(movie):
     probed = subprocess.run(
         (
