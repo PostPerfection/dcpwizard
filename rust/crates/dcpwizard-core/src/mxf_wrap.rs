@@ -20,6 +20,19 @@ pub enum AudioInputOrder {
     LrcLsRsLfe,
 }
 
+impl AudioInputOrder {
+    // only a six-channel source is reordered
+    pub fn source_channel_of_slot(self, channels: u32) -> Vec<usize> {
+        if channels != CANONICAL_51_CHANNELS {
+            return (0..channels as usize).collect();
+        }
+        match self {
+            AudioInputOrder::Canonical51 => vec![0, 1, 2, 3, 4, 5],
+            AudioInputOrder::LrcLsRsLfe => vec![0, 1, 2, 5, 3, 4],
+        }
+    }
+}
+
 /// MXF essence type. There is no separate DTS:X essence: no public DTS:X
 /// DataEssenceCoding UL exists. Since ST 429-18/-19 (2019) DTS:X is delivered as
 /// a standard IAB track (ST 2098-2, "DTS:X for IAB"), which is exactly the `Atmos`
@@ -208,14 +221,7 @@ pub fn prepare_packaged_channels(
     }
     let frame_count = payload_len / source_frame_bytes as u64;
 
-    let order: Vec<usize> = if channels == CANONICAL_51_CHANNELS {
-        match input_order {
-            AudioInputOrder::Canonical51 => vec![0, 1, 2, 3, 4, 5],
-            AudioInputOrder::LrcLsRsLfe => vec![0, 1, 2, 5, 3, 4],
-        }
-    } else {
-        (0..channels as usize).collect()
-    };
+    let order = input_order.source_channel_of_slot(channels);
     let packaged_sample_bytes = (PACKAGED_BITS_PER_SAMPLE / 8) as usize;
     let output_frame_bytes = packaged_sample_bytes * target_channels as usize;
     let cannot_write = |e: std::io::Error| format!("cannot write {}: {e}", output.display());

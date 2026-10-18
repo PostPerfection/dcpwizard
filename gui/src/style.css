@@ -180,8 +180,11 @@
 }
 
 /* Audio channel mapping matrix: one row per source channel, one column per lane */
-/* WebKitGTK draws an auto scrollbar over the hint below the matrix */
+/* WebKitGTK draws an auto scrollbar over the hint below the matrix, so the scrollbar is switched on from JS */
 .audio-map {
+  overflow-x: hidden;
+}
+.audio-map.lanes-overflow {
   overflow-x: scroll;
 }
 /* the base scrollbar thumb is nearly the panel colour */
@@ -214,6 +217,10 @@
   color: var(--text-muted);
   font-weight: normal;
 }
+.audio-map thead th.upmix-lane {
+  color: var(--primary);
+  font-weight: bold;
+}
 .audio-map tbody th {
   grid-column: 1 / -1;
   padding-top: 4px;
@@ -234,6 +241,11 @@
 }
 .audio-map input.auto-routed::placeholder {
   color: var(--text-muted);
+}
+#prop-audio-input-order:disabled,
+.prop-field .audio-map input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* the mono files of a channel set, under its asset row */
@@ -421,3 +433,4 @@
   font-size: 12px;
   margin-bottom: 8px;
 }
+

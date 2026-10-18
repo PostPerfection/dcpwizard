@@ -9,6 +9,7 @@ pub mod audio_map;
 pub mod audio_route;
 pub mod burnin;
 pub mod certificate;
+pub mod channel_placement;
 pub mod combine;
 pub mod conform;
 pub mod copy_drive;

@@ -1201,6 +1201,39 @@ fn create_refuses_an_audio_map_beside_another_way_of_placing_channels() {
 }
 
 #[test]
+fn create_refuses_the_alternate_input_order_beside_the_upmix_or_a_channel_directory() {
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("hd.mp4");
+    write_test_video(&video, 1920, 1080);
+    let stereo = dir.path().join("stereo.wav");
+    write_wav(&stereo, 2, &[0; 96]);
+    let channels = dir.path().join("channels");
+    std::fs::create_dir_all(&channels).unwrap();
+    for lane in ["L", "R", "C", "LFE", "Ls", "Rs"] {
+        write_wav(&channels.join(format!("mix_{lane}.wav")), 1, &[0; 48]);
+    }
+
+    for (audio, extra, conflict) in [
+        (&stereo, vec!["--upmix", "a"], "--upmix"),
+        (&channels, vec![], "a channel WAV directory as --audio"),
+    ] {
+        let mut args = vec![
+            "--audio",
+            audio.to_str().unwrap(),
+            "--audio-input-order",
+            "lrc-ls-rs-lfe",
+        ];
+        args.extend(extra);
+        create_with(&dir, &video, &args)
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(format!(
+                "--audio-input-order lrc-ls-rs-lfe and {conflict} both decide"
+            )));
+    }
+}
+
+#[test]
 fn create_refuses_an_audio_map_that_names_an_unknown_lane() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("hd.mp4");

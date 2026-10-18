@@ -1147,23 +1147,15 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
     if dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video)) {
         dcpwizard_core::source_picture::check_precompressed_picture(&picture)?;
     }
-    // the map places every channel by hand, and each of these places channels
-    // its own way, so two of them would fight over the same lanes
     let audio_map = audio_map.filter(|spec| !spec.trim().is_empty());
-    if audio_map.is_some() {
-        let competing = [
-            (
-                audio_input_order == dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe,
-                "the six-channel input order",
-            ),
-            (upmix.is_some(), "the stereo upmix"),
-        ];
-        if let Some((_, name)) = competing.into_iter().find(|(set, _)| *set) {
-            return Err(format!(
-                "The audio mapping and {name} both decide which DCP lane each channel lands on: \
-                 use one or the other"
-            ));
-        }
+    let placement = dcpwizard_core::channel_placement::ChannelPlacement {
+        audio_map: audio_map.is_some(),
+        input_order: audio_input_order,
+        upmix: upmix.is_some(),
+        channel_set: audio_channel_files.is_some(),
+    };
+    if let Some(conflict) = placement.conflict() {
+        return Err(channel_placement_refusal(conflict));
     }
     if let (Some(files), Some(spec)) = (&audio_channel_files, &audio_map) {
         let routed = dcpwizard_core::audio_route::channel_lanes(files)?;
@@ -1987,8 +1979,11 @@ pub struct AudioMapPanel {
     pub channels: usize,
     pub lanes: Vec<String>,
     pub channel_names: Vec<String>,
-    // the lane each row lands on when no map is typed
+    // the lane each row lands on when no map is typed, none for a row the upmix spreads
     pub auto_routes: Vec<Option<String>>,
+    pub upmix_lanes: Vec<String>,
+    pub upmix_description: Option<String>,
+    pub typed_map_refusal: Option<String>,
 }
 
 /// The rows a channel set or an interleaved WAV gives the grid, and the lanes a
@@ -1997,41 +1992,150 @@ pub struct AudioMapPanel {
 pub async fn probe_audio_map(
     audio_path: Option<String>,
     channel_files: Option<Vec<String>>,
+    audio_input_order: Option<String>,
+    upmix: Option<String>,
 ) -> Result<AudioMapPanel, String> {
-    audio_map_panel(audio_path, channel_files)
+    audio_map_panel(
+        audio_path,
+        channel_files,
+        audio_input_order.as_deref(),
+        upmix.as_deref(),
+    )
 }
+
+#[tauri::command]
+pub fn input_order_refusal(
+    upmix: Option<String>,
+    channel_set: bool,
+) -> Result<Option<String>, String> {
+    let placement = dcpwizard_core::channel_placement::ChannelPlacement {
+        upmix: parse_upmixer(upmix.as_deref())?.is_some(),
+        channel_set,
+        ..Default::default()
+    };
+    Ok(placement
+        .conflict_if_set(dcpwizard_core::channel_placement::ChannelPlacer::InputOrder)
+        .map(channel_placement_refusal))
+}
+
+const STEREO_CHANNELS: usize = 2;
 
 fn audio_map_panel(
     audio_path: Option<String>,
     channel_files: Option<Vec<String>>,
+    audio_input_order: Option<&str>,
+    upmix: Option<&str>,
 ) -> Result<AudioMapPanel, String> {
+    let input_order = parse_audio_input_order(audio_input_order)?;
+    let upmix = parse_upmixer(upmix)?;
+    let placement = dcpwizard_core::channel_placement::ChannelPlacement {
+        input_order,
+        upmix: upmix.is_some(),
+        channel_set: channel_files.is_some(),
+        ..Default::default()
+    };
+    let typed_map_refusal = placement
+        .conflict_if_set(dcpwizard_core::channel_placement::ChannelPlacer::AudioMap)
+        .map(channel_placement_refusal);
     let lanes = dcpwizard_core::audio_map::DCP_LANE_NAMES
         .iter()
         .map(|lane| lane.to_string())
         .collect();
-    if let Some(files) = channel_files {
-        let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-        let routed = dcpwizard_core::audio_route::channel_lanes(&files)?;
-        return Ok(AudioMapPanel {
-            channels: routed.len(),
-            lanes,
-            channel_names: routed.iter().map(|(_, path)| file_name_of(path)).collect(),
-            auto_routes: routed
+    let (channel_names, routes): (Vec<String>, Vec<Option<String>>) = match channel_files {
+        Some(files) => {
+            let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+            dcpwizard_core::audio_route::channel_lanes(&files)?
                 .iter()
-                .map(|(lane, _)| dcp_lane_name(*lane).map(str::to_string))
-                .collect(),
+                .map(|(lane, path)| (file_name_of(path), dcp_lane_name(*lane).map(str::to_string)))
+                .unzip()
+        }
+        None => {
+            let audio_path = audio_path.ok_or("no sound to map")?;
+            let channels = postkit::wav_io::channel_count(Path::new(&audio_path))?;
+            let source_of_slot = input_order.source_channel_of_slot(channels as u32);
+            (0..channels)
+                .map(|input| {
+                    let slot = source_of_slot.iter().position(|source| *source == input);
+                    (
+                        format!("Channel {}", input + 1),
+                        slot.and_then(dcp_lane_name).map(str::to_string),
+                    )
+                })
+                .unzip()
+        }
+    };
+    let channels = channel_names.len();
+    let Some(variant) = upmix else {
+        return Ok(AudioMapPanel {
+            channels,
+            lanes,
+            channel_names,
+            auto_routes: routes,
+            upmix_lanes: Vec::new(),
+            upmix_description: None,
+            typed_map_refusal,
         });
-    }
-    let audio_path = audio_path.ok_or("no sound to map")?;
-    let channels = postkit::wav_io::channel_count(Path::new(&audio_path))?;
+    };
+    let upmix_description = if channels == STEREO_CHANNELS {
+        upmix_variant_description(variant).to_string()
+    } else {
+        format!(
+            "The upmix takes a stereo sound, and this one has {channels} channels, so the build \
+             stops at the upmix."
+        )
+    };
     Ok(AudioMapPanel {
         channels,
         lanes,
-        channel_names: (1..=channels).map(|n| format!("Channel {n}")).collect(),
-        auto_routes: (0..channels)
-            .map(|lane| dcp_lane_name(lane).map(str::to_string))
+        channel_names,
+        auto_routes: vec![None; channels],
+        upmix_lanes: (0..dcpwizard_core::mxf_wrap::CANONICAL_51_CHANNELS as usize)
+            .filter_map(dcp_lane_name)
+            .map(str::to_string)
             .collect(),
+        upmix_description: Some(upmix_description),
+        typed_map_refusal,
     })
+}
+
+// the filters postkit::upmix runs for each variant
+fn upmix_variant_description(variant: postkit::upmix::Upmixer) -> &'static str {
+    match variant {
+        postkit::upmix::Upmixer::A => {
+            "Variant A makes L and R from 1.9 to 4.8 kHz of L and R, C from 150 Hz to 1.9 kHz of \
+             L plus R, LFE from L plus R below 150 Hz, and Ls and Rs from L and R above 4.8 kHz."
+        }
+        postkit::upmix::Upmixer::B => {
+            "Variant B passes L and R through and makes C from L plus R, LFE from L plus R below \
+             150 Hz, and both Ls and Rs from L minus R delayed by 20 ms."
+        }
+    }
+}
+
+fn channel_placer_name(placer: dcpwizard_core::channel_placement::ChannelPlacer) -> &'static str {
+    match placer {
+        dcpwizard_core::channel_placement::ChannelPlacer::AudioMap => "the audio mapping",
+        dcpwizard_core::channel_placement::ChannelPlacer::InputOrder => {
+            "the six-channel input order"
+        }
+        dcpwizard_core::channel_placement::ChannelPlacer::Upmix => "the stereo upmix",
+        dcpwizard_core::channel_placement::ChannelPlacer::ChannelSet => "a channel set",
+    }
+}
+
+fn channel_placement_refusal(
+    (first, second): (
+        dcpwizard_core::channel_placement::ChannelPlacer,
+        dcpwizard_core::channel_placement::ChannelPlacer,
+    ),
+) -> String {
+    let first = channel_placer_name(first);
+    let (initial, rest) = first.split_at(1);
+    format!(
+        "{}{rest} and {} both decide which DCP lane each channel lands on: use one or the other",
+        initial.to_uppercase(),
+        channel_placer_name(second)
+    )
 }
 
 fn dcp_lane_name(lane: usize) -> Option<&'static str> {
@@ -5650,6 +5754,8 @@ mod tests {
                 right.to_string_lossy().into_owned(),
                 left.to_string_lossy().into_owned(),
             ]),
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(set.channels, 2);
@@ -5664,11 +5770,208 @@ mod tests {
             sample_format: SampleFormat::Int,
         };
         WavWriter::create(&wide, spec).unwrap().finalize().unwrap();
-        let interleaved = audio_map_panel(Some(wide.to_string_lossy().into_owned()), None).unwrap();
+        let interleaved =
+            audio_map_panel(Some(wide.to_string_lossy().into_owned()), None, None, None).unwrap();
         assert_eq!(interleaved.channel_names[0], "Channel 1");
         assert_eq!(interleaved.auto_routes[3], Some("LFE".into()));
         assert_eq!(interleaved.auto_routes[10], None);
         assert_eq!(interleaved.auto_routes[14], Some("HI".into()));
+    }
+
+    fn write_channels(path: &std::path::Path, values: &[i32], frames: usize) {
+        let spec = WavSpec {
+            channels: values.len() as u16,
+            sample_rate: 48000,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(path, spec).unwrap();
+        for _ in 0..frames {
+            for value in values {
+                writer.write_sample(*value).unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn the_map_panel_puts_the_alternate_order_on_the_lanes_the_wrap_routes_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("six.wav");
+        let values = [1000, 2000, 3000, 4000, 5000, 6000];
+        write_channels(&source, &values, 4);
+        let panel = audio_map_panel(
+            Some(source.to_string_lossy().into_owned()),
+            None,
+            Some("lrc-ls-rs-lfe"),
+            None,
+        )
+        .unwrap();
+
+        let wrapped = dir.path().join("wrapped.wav");
+        dcpwizard_core::mxf_wrap::prepare_packaged_channels(
+            &source,
+            &wrapped,
+            dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe,
+            None,
+        )
+        .unwrap();
+        let mut reader = WavReader::open(&wrapped).unwrap();
+        let slots = usize::from(reader.spec().channels);
+        let first_frame: Vec<i32> = reader
+            .samples::<i32>()
+            .take(slots)
+            .map(Result::unwrap)
+            .collect();
+        let wrapped_routes: Vec<Option<String>> = values
+            .iter()
+            .map(|value| {
+                let slot = first_frame.iter().position(|sample| sample == value);
+                slot.and_then(dcp_lane_name).map(str::to_string)
+            })
+            .collect();
+        assert_eq!(panel.auto_routes, wrapped_routes);
+        assert_eq!(
+            panel.auto_routes,
+            ["L", "R", "C", "Ls", "Rs", "LFE"].map(|lane| Some(lane.to_string()))
+        );
+        assert!(
+            panel
+                .typed_map_refusal
+                .as_deref()
+                .is_some_and(|refusal| refusal.contains("the six-channel input order")),
+            "{:?}",
+            panel.typed_map_refusal
+        );
+    }
+
+    #[test]
+    fn the_map_panel_marks_the_lanes_the_upmix_writes_and_refuses_typed_gains() {
+        let dir = tempfile::tempdir().unwrap();
+        let stereo = dir.path().join("stereo.wav");
+        write_channels(&stereo, &[1000, -1000], 4800);
+        let panel = audio_map_panel(
+            Some(stereo.to_string_lossy().into_owned()),
+            None,
+            None,
+            Some("a"),
+        )
+        .unwrap();
+
+        let upmixed = dir.path().join("upmixed.wav");
+        postkit::upmix::upmix_wav(postkit::upmix::Upmixer::A, &stereo, &upmixed).unwrap();
+        let written = usize::from(WavReader::open(&upmixed).unwrap().spec().channels);
+        let written_lanes: Vec<String> = (0..written)
+            .map(|lane| dcp_lane_name(lane).unwrap().to_string())
+            .collect();
+        assert_eq!(panel.upmix_lanes, written_lanes);
+        assert_eq!(panel.upmix_lanes, ["L", "R", "C", "LFE", "Ls", "Rs"]);
+        assert_eq!(panel.auto_routes, [None, None]);
+        assert!(
+            panel
+                .upmix_description
+                .as_deref()
+                .is_some_and(|text| text.starts_with("Variant A makes L and R")),
+            "{:?}",
+            panel.upmix_description
+        );
+        assert!(
+            panel
+                .typed_map_refusal
+                .as_deref()
+                .is_some_and(|refusal| refusal.contains("the stereo upmix")),
+            "{:?}",
+            panel.typed_map_refusal
+        );
+
+        let six = dir.path().join("six.wav");
+        write_channels(&six, &[0; 6], 4);
+        let not_stereo = audio_map_panel(
+            Some(six.to_string_lossy().into_owned()),
+            None,
+            None,
+            Some("b"),
+        )
+        .unwrap();
+        assert_eq!(
+            not_stereo.upmix_description.as_deref(),
+            Some(
+                "The upmix takes a stereo sound, and this one has 6 channels, so the build stops \
+                 at the upmix."
+            )
+        );
+        assert!(
+            postkit::upmix::upmix_wav(postkit::upmix::Upmixer::B, &six, &upmixed).is_err(),
+            "the build's upmix stops on a six-channel sound"
+        );
+
+        let plain = audio_map_panel(
+            Some(stereo.to_string_lossy().into_owned()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(plain.upmix_lanes.is_empty());
+        assert_eq!(plain.typed_map_refusal, None);
+        assert_eq!(plain.auto_routes, [Some("L".into()), Some("R".into())]);
+    }
+
+    #[test]
+    fn a_scrambling_input_order_never_reaches_the_wrap() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = clip_at_rate(dir.path(), "24")
+            .to_string_lossy()
+            .into_owned();
+        let stereo = dir.path().join("stereo.wav");
+        write_channels(&stereo, &[0, 0], 4);
+        let left = dir.path().join("mix_L.wav");
+        let right = dir.path().join("mix_R.wav");
+        write_mono(&left, 0, 4);
+        write_mono(&right, 0, 4);
+        let alternate = || Some("lrc-ls-rs-lfe".to_string());
+
+        let upmixed = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: video.clone(),
+                audio_path: Some(stereo.to_string_lossy().into_owned()),
+                audio_input_order: alternate(),
+                upmix: Some("a".into()),
+                ..SubmitRequest::default()
+            },
+        );
+        assert_eq!(
+            upmixed.err().as_deref(),
+            Some(
+                "The six-channel input order and the stereo upmix both decide which DCP lane \
+                 each channel lands on: use one or the other"
+            )
+        );
+
+        let channel_set = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: video,
+                audio_channel_files: Some(vec![
+                    left.to_string_lossy().into_owned(),
+                    right.to_string_lossy().into_owned(),
+                ]),
+                audio_input_order: alternate(),
+                ..SubmitRequest::default()
+            },
+        );
+        assert!(channel_set
+            .err()
+            .is_some_and(|refusal| refusal.contains("input order and a channel set")),);
+
+        assert!(input_order_refusal(Some("b".into()), false)
+            .unwrap()
+            .is_some_and(|refusal| refusal.contains("the stereo upmix")));
+        assert!(input_order_refusal(None, true)
+            .unwrap()
+            .is_some_and(|refusal| refusal.contains("a channel set")));
+        assert_eq!(input_order_refusal(Some("none".into()), false), Ok(None));
     }
 
     /// A short clip with a sine track, false when ffmpeg cannot build one.

@@ -2808,6 +2808,19 @@ fn isdcf_package(
     )
 }
 
+fn channel_placer_flag(placer: dcpwizard_core::channel_placement::ChannelPlacer) -> &'static str {
+    match placer {
+        dcpwizard_core::channel_placement::ChannelPlacer::AudioMap => "--audio-map",
+        dcpwizard_core::channel_placement::ChannelPlacer::InputOrder => {
+            "--audio-input-order lrc-ls-rs-lfe"
+        }
+        dcpwizard_core::channel_placement::ChannelPlacer::Upmix => "--upmix",
+        dcpwizard_core::channel_placement::ChannelPlacer::ChannelSet => {
+            "a channel WAV directory as --audio"
+        }
+    }
+}
+
 fn delivery_profile(name: &str) -> Result<dcpwizard_core::profiles::Profile, String> {
     dcpwizard_core::profiles::get_profile(name).ok_or_else(|| {
         let names: Vec<String> = dcpwizard_core::profiles::all_profiles()
@@ -4522,28 +4535,27 @@ fn run() {
                 "lrc-ls-rs-lfe" => Ok(dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe),
                 value => Err(format!("Unknown audio input order: {value}")),
             });
-            // --audio-map places every channel by hand, and each of these places
-            // channels its own way, so two of them would fight over the same
-            // lanes.
-            if audio_map.is_some() {
-                let competing = [
-                    (
-                        audio_input_order
-                            == Some(dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe),
-                        "--audio-input-order lrc-ls-rs-lfe",
-                    ),
-                    (upmix.is_some(), "--upmix"),
-                    (
-                        audio.as_deref().map(|a| Path::new(a).is_dir()) == Some(true),
-                        "a channel WAV directory as --audio",
-                    ),
-                ];
-                if let Some((_, name)) = competing.into_iter().find(|(set, _)| *set) {
-                    refusals.messages.push(format!(
-                        "--audio-map and {name} both decide which DCP lane each channel lands \
-                         on: pass one or the other"
-                    ));
-                }
+            let channel_directory = audio.as_deref().map(|a| Path::new(a).is_dir()) == Some(true);
+            let placement = dcpwizard_core::channel_placement::ChannelPlacement {
+                audio_map: audio_map.is_some(),
+                input_order: audio_input_order.unwrap_or_default(),
+                upmix: upmix.is_some(),
+                channel_set: channel_directory,
+            };
+            // create has no map over a channel directory's files, which the GUI has
+            let conflict = placement.conflict().or_else(|| {
+                (audio_map.is_some() && channel_directory).then_some((
+                    dcpwizard_core::channel_placement::ChannelPlacer::AudioMap,
+                    dcpwizard_core::channel_placement::ChannelPlacer::ChannelSet,
+                ))
+            });
+            if let Some((first, second)) = conflict {
+                refusals.messages.push(format!(
+                    "{} and {} both decide which DCP lane each channel lands on: pass one or the \
+                     other",
+                    channel_placer_flag(first),
+                    channel_placer_flag(second)
+                ));
             }
 
             // parse the multi-version manifest up front so a bad manifest fails

@@ -64,6 +64,7 @@ import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
+import { audioMapHint, audioMapTable } from "./audio-map-matrix.js";
 import { initPresets, savedPresetNamed, applySavedPreset, clearProfileDriven } from "./presets.js";
 import {
   chainPaths,
@@ -718,7 +719,7 @@ function afterTimelineChange() {
   previewedClipIndex = clipIndexShowing(previewShownPath, previewedClipIndex);
   refreshReelSplitFields();
   refreshTrimFields();
-  audioMapDrawn = refreshAudioMapMatrix();
+  refreshAudioMapMatrix();
   refreshPackageNamePreview();
   refreshMarkerFromPlayerButtons();
   refreshContainerViewAvailability();
@@ -978,50 +979,86 @@ async function refreshContainerViewAvailability() {
 
 // === Audio channel mapping matrix ===
 
-// the sound the drawn matrix belongs to, so re-rendering the timeline does not throw
+// the sound and settings the drawn matrix belongs to, so re-rendering the timeline does not throw
 // away gains the user has typed
 let audioMapSource = null;
+let audioMapSettings = null;
 let audioMapDrawn = Promise.resolve();
+let audioMapRequest = 0;
+const audioMapGrid = document.getElementById("prop-audio-map");
+const upmixSelect = document.getElementById("prop-upmix");
+const inputOrderSelect = document.getElementById("prop-audio-input-order");
+const inputOrderHint = document.getElementById("prop-audio-input-order-hint");
 
-const AUDIO_MAP_HINT = "Dotted cells route at 0 dB unless you type in their row. Click a cell to route it at 0 dB, or type a gain in dB. Upmix and the input channel order change the automatic routing, the cells show the plain one.";
+async function refreshInputOrderField(channelSet) {
+  const refusal = await invoke("input_order_refusal", { upmix: upmixSelect.value, channelSet });
+  inputOrderSelect.disabled = refusal !== null;
+  inputOrderHint.textContent = refusal ? `${refusal}.` : "";
+  inputOrderHint.hidden = refusal === null;
+}
 
-async function refreshAudioMapMatrix() {
-  const grid = document.getElementById("prop-audio-map");
-  const hint = document.getElementById("prop-audio-map-hint");
-  if (!grid) return;
+function typedAudioMapCells() {
+  return [...document.querySelectorAll("#prop-audio-map input")]
+    .filter((cell) => cell.value.trim())
+    .map((cell) => ({ input: cell.dataset.input, lane: cell.dataset.lane, value: cell.value }));
+}
+
+function refreshAudioMapMatrix() {
   const { audioPath, audioChannelFiles } = soundSource(firstSoundAsset(activeTimeline(), assetById));
+  refreshInputOrderField(Boolean(audioChannelFiles));
   const sound = audioPath ?? audioChannelFiles?.join("\n") ?? null;
-  if (sound === audioMapSource) return;
+  const settings = `${inputOrderSelect.value} ${upmixSelect.value}`;
+  if (sound === audioMapSource && settings === audioMapSettings) return audioMapDrawn;
+  const keptCells = sound === audioMapSource ? typedAudioMapCells() : [];
   audioMapSource = sound;
-  grid.innerHTML = "";
-  if (!sound) {
-    if (hint) hint.textContent = "Import a sound asset to map its channels.";
+  audioMapSettings = settings;
+  audioMapDrawn = drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells });
+  return audioMapDrawn;
+}
+
+async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
+  const hint = document.getElementById("prop-audio-map-hint");
+  const requestNumber = ++audioMapRequest;
+  audioMapGrid.innerHTML = "";
+  if (!audioPath && !audioChannelFiles) {
+    hint.textContent = "Import a sound asset to map its channels.";
     return;
   }
   let panel;
   try {
-    panel = await invoke("probe_audio_map", { audioPath, channelFiles: audioChannelFiles });
+    panel = await invoke("probe_audio_map", {
+      audioPath,
+      channelFiles: audioChannelFiles,
+      audioInputOrder: inputOrderSelect.value,
+      upmix: upmixSelect.value,
+    });
   } catch (e) {
-    if (hint) hint.textContent = String(e);
+    if (requestNumber === audioMapRequest) hint.textContent = String(e);
     return;
   }
-  if (hint) hint.textContent = AUDIO_MAP_HINT;
-  const header = panel.lanes.map(lane => `<th>${lane}</th>`).join("");
-  const rows = panel.channelNames.map((name, channel) => {
-    const autoLane = panel.autoRoutes[channel];
-    const cells = panel.lanes.map(lane => {
-      const auto = lane === autoLane ? ' class="auto-routed" placeholder="auto"' : '';
-      return `<td><input type="text" inputmode="decimal"${auto} data-input="${channel + 1}" data-lane="${lane}" title="${name} to ${lane}, gain in dB"></td>`;
-    }).join("");
-    return `<tr><th title="${name}"><span>${name}</span></th>${cells}</tr>`;
-  }).join("");
-  grid.innerHTML = `<table style="--lane-count: ${panel.lanes.length}"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
-  grid.querySelectorAll("input").forEach(cell => {
+  if (requestNumber !== audioMapRequest) return;
+  hint.textContent = audioMapHint(panel);
+  audioMapGrid.innerHTML = audioMapTable(panel);
+  markAudioMapOverflow();
+  for (const { input, lane, value } of keptCells) {
+    const cell = audioMapGrid.querySelector(`input[data-input="${input}"][data-lane="${lane}"]`);
+    if (cell) cell.value = value;
+  }
+  audioMapGrid.querySelectorAll("input").forEach(cell => {
     cell.addEventListener("focus", () => {
       if (!cell.value.trim()) cell.value = "0";
     });
   });
 }
+
+function markAudioMapOverflow() {
+  audioMapGrid.classList.toggle("lanes-overflow", audioMapGrid.scrollWidth > audioMapGrid.clientWidth);
+}
+
+new ResizeObserver(markAudioMapOverflow).observe(audioMapGrid);
+
+upmixSelect.addEventListener("change", refreshAudioMapMatrix);
+inputOrderSelect.addEventListener("change", refreshAudioMapMatrix);
 
 // The grid as an IN:LANE@GAIN spec, or null when nothing is typed.
 function audioMapSpec() {
@@ -1037,7 +1074,7 @@ function audioMapSpec() {
 
 // the number of routes the drawn matrix has no cell for
 async function fillAudioMap(spec) {
-  await audioMapDrawn;
+  await refreshAudioMapMatrix();
   for (const cell of document.querySelectorAll("#prop-audio-map input")) cell.value = "";
   let unroutedCells = 0;
   for (const { input, lane, gain } of audioMapCells(spec)) {

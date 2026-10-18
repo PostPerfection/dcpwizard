@@ -137,6 +137,7 @@ pub fn run() {
             pipeline::check_timeline,
             pipeline::subtitle_file_for_preview,
             pipeline::probe_audio_map,
+            pipeline::input_order_refusal,
             pipeline::group_channel_files,
             pipeline::package_name_preview,
             pipeline::create_vf,
