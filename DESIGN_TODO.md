@@ -151,6 +151,30 @@ with the exact graph into `cat` before starting any of it.
   reads as frozen sooner. Baseline to beat on the CPU path: decoder wait 6 s of 19 s on
   the box.
 
+### Clipster 7 survey (2026-10-17)
+
+From cinecert.com/products/clipster-7 and the June 2026 press release. CineCert took
+Clipster over from Rohde & Schwarz in March 2025 and 7 is the first software-only
+version, licensed annual, burst or perpetual, with no public datasheet, manual or
+release notes, so their column is the one press page plus what the 6.x pages said.
+Nothing public on their side covers validation, Photon, QC reports, loudness,
+subtitle conversion or KDMs, and they say key distribution is still to come. Gaps on
+our side:
+
+- Timeline follow-ups: no alpha compositing for title sequences, every clip is a
+  cut. A timeline of JPEG 2000 sources previews picture only, without sound or
+  per-clip subtitles (the grok player path, see postkit's DESIGN_TODO).
+- SDI capture from a card, and SDI or HDMI output on third-party adaptors. Output is
+  the DeckLink entry in postkit's DESIGN_TODO, unblocked now that the device decode
+  exists. Capture has no entry anywhere and no card to prove it on.
+- 8K picture. Every raster here stops at 4K, which is where DCI stops too, so this
+  is an IMF item if it is one at all.
+- Atmos playback and QC: nothing here decodes or monitors an IAB track, so an Atmos
+  DCP previews with its main sound only.
+- Dolby Vision cinema authoring (DV2, eCMU) is licensed from Dolby and is not
+  attempted, as under the Transkoder entry.
+- AS-11 wrapping and tape I/O are broadcast deliverables and stay out of scope.
+
 ## Keep in sync with imfwizard (deliberately duplicated, no clean shared home)
 
 The shared *logic* lives in postkit (mpv::MpvPlayer, packaging writers, escape_xml,
