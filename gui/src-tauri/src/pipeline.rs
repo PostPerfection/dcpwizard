@@ -1983,7 +1983,16 @@ pub struct AudioMapPanel {
     pub auto_routes: Vec<Option<String>>,
     pub upmix_lanes: Vec<String>,
     pub upmix_description: Option<String>,
+    // the build refuses any typed value while this is set
+    pub typed_gains_off: Option<String>,
     pub typed_map_refusal: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputOrderField {
+    pub disabled: bool,
+    pub hint: Option<String>,
 }
 
 /// The rows a channel set or an interleaved WAV gives the grid, and the lanes a
@@ -2003,19 +2012,40 @@ pub async fn probe_audio_map(
     )
 }
 
+// a saved alternate order stays editable beside its conflict
 #[tauri::command]
-pub fn input_order_refusal(
+pub fn input_order_field(
     upmix: Option<String>,
     channel_set: bool,
-) -> Result<Option<String>, String> {
+    audio_input_order: Option<String>,
+) -> Result<InputOrderField, String> {
+    let input_order = parse_audio_input_order(audio_input_order.as_deref())?;
     let placement = dcpwizard_core::channel_placement::ChannelPlacement {
+        input_order,
         upmix: parse_upmixer(upmix.as_deref())?.is_some(),
         channel_set,
         ..Default::default()
     };
-    Ok(placement
-        .conflict_if_set(dcpwizard_core::channel_placement::ChannelPlacer::InputOrder)
-        .map(channel_placement_refusal))
+    let input_order_placer = dcpwizard_core::channel_placement::ChannelPlacer::InputOrder;
+    let Some(conflict) = placement.conflict_if_set(input_order_placer) else {
+        return Ok(InputOrderField {
+            disabled: false,
+            hint: None,
+        });
+    };
+    if input_order == dcpwizard_core::mxf_wrap::AudioInputOrder::LrcLsRsLfe {
+        return Ok(InputOrderField {
+            disabled: false,
+            hint: Some(format!("{}.", channel_placement_refusal(conflict))),
+        });
+    }
+    Ok(InputOrderField {
+        disabled: true,
+        hint: Some(format!(
+            "Not used: {}.",
+            placer_in_charge(other_placer(conflict, input_order_placer))
+        )),
+    })
 }
 
 const STEREO_CHANNELS: usize = 2;
@@ -2034,9 +2064,15 @@ fn audio_map_panel(
         channel_set: channel_files.is_some(),
         ..Default::default()
     };
-    let typed_map_refusal = placement
-        .conflict_if_set(dcpwizard_core::channel_placement::ChannelPlacer::AudioMap)
-        .map(channel_placement_refusal);
+    let audio_map_placer = dcpwizard_core::channel_placement::ChannelPlacer::AudioMap;
+    let typed_map_conflict = placement.conflict_if_set(audio_map_placer);
+    let typed_gains_off = typed_map_conflict.map(|conflict| {
+        format!(
+            "Typed gains are off: {}.",
+            placer_in_charge(other_placer(conflict, audio_map_placer))
+        )
+    });
+    let typed_map_refusal = typed_map_conflict.map(channel_placement_refusal);
     let lanes = dcpwizard_core::audio_map::DCP_LANE_NAMES
         .iter()
         .map(|lane| lane.to_string())
@@ -2073,6 +2109,7 @@ fn audio_map_panel(
             auto_routes: routes,
             upmix_lanes: Vec::new(),
             upmix_description: None,
+            typed_gains_off,
             typed_map_refusal,
         });
     };
@@ -2094,6 +2131,7 @@ fn audio_map_panel(
             .map(str::to_string)
             .collect(),
         upmix_description: Some(upmix_description),
+        typed_gains_off,
         typed_map_refusal,
     })
 }
@@ -2120,6 +2158,24 @@ fn channel_placer_name(placer: dcpwizard_core::channel_placement::ChannelPlacer)
         }
         dcpwizard_core::channel_placement::ChannelPlacer::Upmix => "the stereo upmix",
         dcpwizard_core::channel_placement::ChannelPlacer::ChannelSet => "a channel set",
+    }
+}
+
+fn placer_in_charge(placer: dcpwizard_core::channel_placement::ChannelPlacer) -> String {
+    format!("{} places the channels itself", channel_placer_name(placer))
+}
+
+fn other_placer(
+    (first, second): (
+        dcpwizard_core::channel_placement::ChannelPlacer,
+        dcpwizard_core::channel_placement::ChannelPlacer,
+    ),
+    placer: dcpwizard_core::channel_placement::ChannelPlacer,
+) -> dcpwizard_core::channel_placement::ChannelPlacer {
+    if first == placer {
+        second
+    } else {
+        first
     }
 }
 
@@ -5835,6 +5891,10 @@ mod tests {
             panel.auto_routes,
             ["L", "R", "C", "Ls", "Rs", "LFE"].map(|lane| Some(lane.to_string()))
         );
+        assert_eq!(
+            panel.typed_gains_off.as_deref(),
+            Some("Typed gains are off: the six-channel input order places the channels itself.")
+        );
         assert!(
             panel
                 .typed_map_refusal
@@ -5875,6 +5935,10 @@ mod tests {
             "{:?}",
             panel.upmix_description
         );
+        assert_eq!(
+            panel.typed_gains_off.as_deref(),
+            Some("Typed gains are off: the stereo upmix places the channels itself.")
+        );
         assert!(
             panel
                 .typed_map_refusal
@@ -5914,6 +5978,7 @@ mod tests {
         .unwrap();
         assert!(plain.upmix_lanes.is_empty());
         assert_eq!(plain.typed_map_refusal, None);
+        assert_eq!(plain.typed_gains_off, None);
         assert_eq!(plain.auto_routes, [Some("L".into()), Some("R".into())]);
     }
 
@@ -5965,13 +6030,41 @@ mod tests {
             .err()
             .is_some_and(|refusal| refusal.contains("input order and a channel set")),);
 
-        assert!(input_order_refusal(Some("b".into()), false)
-            .unwrap()
-            .is_some_and(|refusal| refusal.contains("the stereo upmix")));
-        assert!(input_order_refusal(None, true)
-            .unwrap()
-            .is_some_and(|refusal| refusal.contains("a channel set")));
-        assert_eq!(input_order_refusal(Some("none".into()), false), Ok(None));
+        let field = |upmix: &str, channel_set: bool, order: &str| {
+            input_order_field(Some(upmix.into()), channel_set, Some(order.into())).unwrap()
+        };
+        assert_eq!(
+            field("b", false, "dcp"),
+            InputOrderField {
+                disabled: true,
+                hint: Some("Not used: the stereo upmix places the channels itself.".into()),
+            }
+        );
+        assert_eq!(
+            field("none", true, "dcp"),
+            InputOrderField {
+                disabled: true,
+                hint: Some("Not used: a channel set places the channels itself.".into()),
+            }
+        );
+        assert_eq!(
+            field("a", false, "lrc-ls-rs-lfe"),
+            InputOrderField {
+                disabled: false,
+                hint: Some(
+                    "The six-channel input order and the stereo upmix both decide which DCP \
+                     lane each channel lands on: use one or the other."
+                        .into()
+                ),
+            }
+        );
+        assert_eq!(
+            field("none", false, "lrc-ls-rs-lfe"),
+            InputOrderField {
+                disabled: false,
+                hint: None,
+            }
+        );
     }
 
     /// A short clip with a sine track, false when ffmpeg cannot build one.

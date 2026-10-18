@@ -985,16 +985,22 @@ let audioMapSource = null;
 let audioMapSettings = null;
 let audioMapDrawn = Promise.resolve();
 let audioMapRequest = 0;
+// the panel answer the drawn matrix came from, null while none is drawn
+let drawnAudioMapPanel = null;
 const audioMapGrid = document.getElementById("prop-audio-map");
 const upmixSelect = document.getElementById("prop-upmix");
 const inputOrderSelect = document.getElementById("prop-audio-input-order");
 const inputOrderHint = document.getElementById("prop-audio-input-order-hint");
 
 async function refreshInputOrderField(channelSet) {
-  const refusal = await invoke("input_order_refusal", { upmix: upmixSelect.value, channelSet });
-  inputOrderSelect.disabled = refusal !== null;
-  inputOrderHint.textContent = refusal ? `${refusal}.` : "";
-  inputOrderHint.hidden = refusal === null;
+  const field = await invoke("input_order_field", {
+    upmix: upmixSelect.value,
+    channelSet,
+    audioInputOrder: inputOrderSelect.value,
+  });
+  inputOrderSelect.disabled = field.disabled;
+  inputOrderHint.textContent = field.hint ?? "";
+  inputOrderHint.hidden = field.hint === null;
 }
 
 function typedAudioMapCells() {
@@ -1020,6 +1026,7 @@ async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
   const hint = document.getElementById("prop-audio-map-hint");
   const requestNumber = ++audioMapRequest;
   audioMapGrid.innerHTML = "";
+  drawnAudioMapPanel = null;
   if (!audioPath && !audioChannelFiles) {
     hint.textContent = "Import a sound asset to map its channels.";
     return;
@@ -1037,18 +1044,25 @@ async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
     return;
   }
   if (requestNumber !== audioMapRequest) return;
-  hint.textContent = audioMapHint(panel);
   audioMapGrid.innerHTML = audioMapTable(panel);
+  drawnAudioMapPanel = panel;
   markAudioMapOverflow();
   for (const { input, lane, value } of keptCells) {
     const cell = audioMapGrid.querySelector(`input[data-input="${input}"][data-lane="${lane}"]`);
     if (cell) cell.value = value;
   }
+  showAudioMapHint();
   audioMapGrid.querySelectorAll("input").forEach(cell => {
     cell.addEventListener("focus", () => {
       if (!cell.value.trim()) cell.value = "0";
     });
   });
+}
+
+function showAudioMapHint() {
+  if (!drawnAudioMapPanel) return;
+  const hasTypedGains = typedAudioMapCells().length > 0;
+  document.getElementById("prop-audio-map-hint").textContent = audioMapHint(drawnAudioMapPanel, { hasTypedGains });
 }
 
 function markAudioMapOverflow() {
@@ -1082,6 +1096,7 @@ async function fillAudioMap(spec) {
     if (cell) cell.value = gain;
     else unroutedCells += 1;
   }
+  showAudioMapHint();
   return unroutedCells;
 }
 

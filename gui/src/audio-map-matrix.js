@@ -7,7 +7,7 @@ function headerCell(lane, upmixLanes) {
 }
 
 export function audioMapTable(panel) {
-  const disabled = panel.typedMapRefusal ? " disabled" : "";
+  const disabled = panel.typedGainsOff ? " disabled" : "";
   const header = panel.lanes.map((lane) => headerCell(lane, panel.upmixLanes)).join("");
   const rows = panel.channelNames.map((name, channel) => {
     const autoLane = panel.autoRoutes[channel];
@@ -20,10 +20,16 @@ export function audioMapTable(panel) {
   return `<table style="--lane-count: ${panel.lanes.length}"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-export function audioMapHint(panel) {
+// the build refuses typed gains only once a cell holds one
+function typingHint(panel, hasTypedGains) {
+  if (!panel.typedGainsOff) return TYPING_HINT;
+  return hasTypedGains ? `Typed gains are off. ${panel.typedMapRefusal}.` : panel.typedGainsOff;
+}
+
+export function audioMapHint(panel, { hasTypedGains }) {
   const parts = [];
   if (panel.upmixDescription) parts.push(panel.upmixDescription);
   if (panel.autoRoutes.some((lane) => lane !== null)) parts.push(AUTO_ROUTE_HINT);
-  parts.push(panel.typedMapRefusal ? `Typed gains are off. ${panel.typedMapRefusal}.` : TYPING_HINT);
+  parts.push(typingHint(panel, hasTypedGains));
   return parts.join(" ");
 }
