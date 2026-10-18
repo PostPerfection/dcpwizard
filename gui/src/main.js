@@ -503,15 +503,15 @@ function guessType(name) {
 
 // === Asset import ===
 document.getElementById("import-video")?.addEventListener("click", async () => {
-  const path = await open({
-    directory: false, multiple: false,
+  const paths = await open({
+    directory: false, multiple: true,
     filters: [
       { name: 'Video', extensions: ['mp4','mkv','mov','avi','mxf','webm'] },
       { name: 'Still image', extensions: ['png','jpg','jpeg','tif','tiff','bmp','dpx','exr'] },
       { name: 'All', extensions: ['*'] }
     ]
   });
-  if (path) importAssetFromPath(path, 'video');
+  if (paths) importAssetsFromPaths(paths.map((path) => [path, guessType(path)]));
 });
 
 document.getElementById("import-audio")?.addEventListener("click", async () => {

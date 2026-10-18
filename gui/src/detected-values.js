@@ -61,7 +61,7 @@ function sourceSummary(probe, colourLabel) {
   if (fps) parts.push(`${decimal(fps, FRAME_RATE_DECIMALS)} fps`);
   parts.push(colourLabel);
   if (probe.bitRate) parts.push(`${decimal(probe.bitRate / BITS_PER_MEGABIT, BIT_RATE_DECIMALS)} Mbit/s`);
-  return `From the source: ${parts.join(", ")}. Edit any field to override.`;
+  return `From the source: ${parts.join(", ")}. A dashed blue edge marks each field it filled. Edit any field to override.`;
 }
 
 // bandwidth is the encode target, not the source's bit rate

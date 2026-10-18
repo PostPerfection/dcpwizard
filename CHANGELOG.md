@@ -36,6 +36,8 @@
 - **The ISDCF name preview follows the burn-in subtitle pick**: picking a file for Burn subtitles into the picture left the name under the title without its lower case subtitle language until another field changed.
 - **The channel mapping matrix shows a 5.1 set without scrolling**: in a 1280 px window the Properties panel showed the L and R lanes and half of C, and the rest needed a sideways scroll with no scrollbar drawn. Each input's name now sits on its own line above its cells, the cells share the panel width down to the width of -12.5, and the lanes past the panel's edge scroll with a visible scrollbar.
 - **An empty Audio language reads as empty**: the field showed en in grey while the ISDCF name wrote XX and the hints before the build said no language was set. It now reads Not set (for example en). The Sign-language tag field reads Not set (for example sgn-ase) for the same reason.
+- **+ Video takes several files**: the video picker selects more than one file, and each picked file lands as a video, sound or subtitle asset by its extension, so a movie and its channel WAVs go in from one dialog and the WAVs become one channel set.
+- **The source line says what the dashed edge means**: "From the source" now ends with "A dashed blue edge marks each field it filled".
 
 ### Changed
 - **Project files are version 4**: each timeline clip is saved with its start, layer and opacity. A version 3 project opens with its clips on layer 0 one after another, where they played before, and a version 2 project goes through the version 3 upgrade first.

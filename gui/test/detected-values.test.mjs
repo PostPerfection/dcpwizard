@@ -62,14 +62,14 @@ test("a whole frame rate picks its option and an NTSC rate picks the rate it is 
 test("the hint lists size, rate, colour and bit rate", () => {
   assert.equal(
     detectedValues(HD_PRORES, FRAMERATE_OPTIONS).hint,
-    "From the source: 1920x1080, 23.976 fps, bt709, 179 Mbit/s. Edit any field to override.",
+    "From the source: 1920x1080, 23.976 fps, bt709, 179 Mbit/s. A dashed blue edge marks each field it filled. Edit any field to override.",
   );
 });
 
 test("the hint leaves out a bit rate the source does not carry", () => {
   assert.equal(
     detected({ colorSpace: "bt709", bitRate: null }).hint,
-    "From the source: 1920x1080, 24 fps, bt709. Edit any field to override.",
+    "From the source: 1920x1080, 24 fps, bt709. A dashed blue edge marks each field it filled. Edit any field to override.",
   );
 });
 

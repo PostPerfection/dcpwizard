@@ -115,7 +115,7 @@ FIXTURE_ASSET_SIZE = FIXTURE_SIZE.replace("x", "\u00d7")
 # the fixture's x264 stream carries no colour tags
 DETECTED_HINT_PREFIX = f"From the source: {FIXTURE_SIZE}, {FIXTURE_FPS} fps, colour space not declared, "
 # the bit rate between the two varies by encoder build
-DETECTED_HINT_SUFFIX = " Mbit/s. Edit any field to override."
+DETECTED_HINT_SUFFIX = " Mbit/s. A dashed blue edge marks each field it filled. Edit any field to override."
 DETECTED_HINT = "#prop-detected-hint"
 AUTO_RESOLUTION_OPTION = '#prop-resolution option[value="auto"]'
 FIXTURE_AUTO_RESOLUTION = f"Auto ({FIXTURE_ASSET_SIZE})"
