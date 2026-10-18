@@ -19,6 +19,8 @@ import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
+  clipIndexShowing as clipIndexShowingInTimeline,
+  clipPreviewSubtitle,
   emptyTimeline,
   ffprobeVideoInfo,
   firstSoundAsset,
@@ -815,13 +817,8 @@ let previewedPictureFilters = null;
 // the picture path the container view was last checked against
 let containerViewCheckedPath;
 
-// a clip can come twice from one file, so the clip already shown wins
 function clipIndexShowing(path, likelyIndex) {
-  const { clips } = activeTimeline();
-  const shows = (clip) => clip !== undefined && assetPath(clip.picture) === path;
-  if (shows(clips[likelyIndex])) return likelyIndex;
-  const index = clips.findIndex(shows);
-  return index === -1 ? null : index;
+  return clipIndexShowingInTimeline(activeTimeline(), path, likelyIndex, assetById);
 }
 
 // crop detection, placement and the container view follow the clip on screen
@@ -2108,12 +2105,8 @@ async function previewSourcePicture(path, clipIndex = clipIndexShowing(path, nul
   return loaded;
 }
 
-// the timeline's own subtitle lines up with the source only where the timeline starts at the source's first frame
 function clipSubtitlePath(clipIndex) {
-  const timeline = activeTimeline();
-  const clip = timeline.clips[clipIndex];
-  const startsTimeline = clipIndex === 0 && clip.inFrame === 0;
-  const subtitle = clip.subtitle ?? (startsTimeline ? timeline.subtitle : null);
+  const subtitle = clipPreviewSubtitle(activeTimeline(), clipIndex);
   return subtitle === null ? null : assetPath(subtitle);
 }
 

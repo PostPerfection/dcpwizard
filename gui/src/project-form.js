@@ -1,5 +1,5 @@
 import { ratingRowsFrom } from "./rating-rows.js";
-import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate } from "../../extern/guikit/src/composition-timeline.js";
+import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate, timelineWithKnownAssets } from "../../extern/guikit/src/composition-timeline.js";
 import { isChannelSet } from "./channel-set.js";
 
 const VALUE = "value";
@@ -258,24 +258,6 @@ export function serializeForm({ elementById, project, markerRows, ratings, joine
 
 export function offersOption(select, value) {
   return [...select.options].some((option) => option.value === value);
-}
-
-// an asset id the file does not list is taken off the timeline and named
-function timelineWithKnownAssets(composition, assetsById, notRestored) {
-  const timeline = structuredClone(composition.timeline);
-  const known = (assetId, place) => {
-    if (assetId === null || assetsById.has(assetId)) return true;
-    notRestored.push(`${composition.name} ${place}`);
-    return false;
-  };
-  timeline.clips = timeline.clips.filter((clip, index) => known(clip.picture, `clip ${index + 1} picture`));
-  timeline.clips.forEach((clip, index) => {
-    if (!known(clip.sound.asset, `clip ${index + 1} sound`)) clip.sound = { kind: "embedded", asset: null };
-    if (!known(clip.subtitle, `clip ${index + 1} subtitle`)) clip.subtitle = null;
-  });
-  if (!known(timeline.sound, "timeline sound")) timeline.sound = null;
-  if (!known(timeline.subtitle, "timeline subtitle")) timeline.subtitle = null;
-  return timeline;
 }
 
 // rows get fresh ids from 1, so the caller restarts its id counters after them
