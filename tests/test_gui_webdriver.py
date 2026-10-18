@@ -1624,6 +1624,74 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
     )
 
 
+
+SCROLLED_PREVIEW_SIZE = [640, 360]
+SCROLLED_PREVIEW_SECONDS = 10
+# at the test window size the docked preview scrolls with the project view's left column
+PREVIEW_SCROLL_CONTAINER = "#view-project .workspace-main"
+# a surface top above the window is what GTK margins could not place
+SURFACE_ABOVE_WINDOW_PIXELS = 40
+GTK_ALLOCATION_WARNING = "adjust its size allocation"
+LAYOUT_SETTLE_SECONDS = 1
+
+SCROLL_SURFACE_ABOVE_WINDOW = """
+const container = document.querySelector(arguments[0]);
+const surface = document.getElementById("preview-surface");
+container.scrollTop += surface.getBoundingClientRect().top + arguments[1];
+const surfaceBox = surface.getBoundingClientRect();
+const containerBox = container.getBoundingClientRect();
+return {
+  surfaceTop: surfaceBox.top,
+  surfaceHeight: surfaceBox.height,
+  visibleTop: Math.max(surfaceBox.top, containerBox.top, 0),
+  visibleBottom: Math.min(surfaceBox.bottom, containerBox.bottom, window.innerHeight),
+  centreX: surfaceBox.left + surfaceBox.width / 2,
+};
+"""
+
+WATCH_POINTER_OVER_SURFACE = """
+window.pointerReachedSurface = false;
+document.getElementById("preview-surface").addEventListener("pointermove", () => {
+  window.pointerReachedSurface = true;
+});
+"""
+
+POINTER_REACHED_SURFACE = "return window.pointerReachedSurface;"
+
+
+def test_a_preview_scrolled_partly_out_of_its_column_stays_inside_it(window, tmp_path):
+    session = window.session
+    width, height = SCROLLED_PREVIEW_SIZE
+    picture = write_picture(tmp_path / "source.mov", f"{width}x{height}", SCROLLED_PREVIEW_SECONDS)
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", picture)
+    window.click("#btn-preview")
+    wait_for_shown_frame_size(session, SCROLLED_PREVIEW_SIZE, "the preview never showed the source")
+
+    scrolled = session.execute(SCROLL_SURFACE_ABOVE_WINDOW, PREVIEW_SCROLL_CONTAINER, SURFACE_ABOVE_WINDOW_PIXELS)
+    assert scrolled["surfaceTop"] == pytest.approx(-SURFACE_ABOVE_WINDOW_PIXELS, abs=1), scrolled
+    visible_height = scrolled["visibleBottom"] - scrolled["visibleTop"]
+    assert 0 < visible_height < scrolled["surfaceHeight"], scrolled
+    time.sleep(LAYOUT_SETTLE_SECONDS)
+
+    session.execute(WATCH_POINTER_OVER_SURFACE)
+    xdotool(
+        "mousemove",
+        str(window.origin[0] + round(scrolled["centreX"])),
+        str(window.origin[1] + round((scrolled["visibleTop"] + scrolled["visibleBottom"]) / 2)),
+    )
+    wait_until(
+        "the page never saw the pointer over the picture",
+        lambda: session.execute(POINTER_REACHED_SURFACE),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    app_output = window.log_path.read_text(errors="replace")
+    assert GTK_ALLOCATION_WARNING not in app_output, "GTK could not place the scrolled picture"
+
 def counted_video_frames(movie):
     probed = subprocess.run(
         (
