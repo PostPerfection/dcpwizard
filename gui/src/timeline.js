@@ -166,7 +166,7 @@ function renderTracks() {
     const { leftPercent: leftPct, widthPercent: widthPct } = segmentSpan(reel, reels.length, totalFrames);
 
     // Picture segment
-    if (reel.picture_file || reel.picture_asset_id) {
+    if (reel.picture_file || reel.picture_asset_id || reel.picture_names) {
       const seg = createSegment(reel, leftPct, widthPct, colors[(reel.reel_number - 1) % colors.length], 'picture');
       pictureEl.appendChild(seg);
     }

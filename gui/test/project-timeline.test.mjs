@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { emptyTimeline, withImportedAsset } from "../../extern/guikit/src/composition-timeline.js";
-import { splitReelAt } from "../../extern/guikit/src/timeline-editor.js";
+import { moveClipTo, splitReelAt } from "../../extern/guikit/src/timeline-editor.js";
 import { projectTimelineEntries, reelClipIndices, segmentSpan } from "../src/project-timeline.js";
 
 const ASSETS = [
@@ -54,6 +54,26 @@ test("a reel with no reel start names every clip it covers in order", () => {
 
 test("a clip running over a reel start is in both reels", () => {
   assert.deepEqual(reelClipIndices(splitReelAt(timelineOf(1, 2), 120)), [[0], [0, 1]]);
+});
+
+test("a reel starting in a gap has no picture file and names the black before its clips", () => {
+  const afterBlack = moveClipTo(timelineOf(1), 0, 48, 0);
+
+  const [whole] = projectTimelineEntries(afterBlack, assetById, 24);
+  const [black, movie] = projectTimelineEntries(splitReelAt(afterBlack, 48), assetById, 24);
+
+  assert.equal(whole.duration_frames, 288);
+  assert.equal(whole.picture_file, "");
+  assert.equal(whole.picture_names, "black, movie.mov");
+  assert.deepEqual([black.duration_frames, black.picture_file, black.picture_names], [48, "", "black"]);
+  assert.deepEqual([movie.duration_frames, movie.picture_file, movie.picture_names], [240, "/media/movie.mov", "movie.mov"]);
+});
+
+test("a clip above layer 0 is in no reel's clip list", () => {
+  const overlaid = moveClipTo(timelineOf(1, 2), 1, 24, 1);
+
+  assert.deepEqual(reelClipIndices(splitReelAt(overlaid, 120)), [[0], [0]]);
+  assert.equal(projectTimelineEntries(overlaid, assetById, 24)[0].picture_names, "movie.mov");
 });
 
 test("a clip with embedded sound gives its reel a sound segment", () => {

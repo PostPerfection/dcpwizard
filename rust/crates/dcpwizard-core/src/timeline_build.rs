@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use postkit::encode::InputType;
-use postkit::picture_processing::PictureProcessing;
+use postkit::picture_processing::{Fit, PictureProcessing, Placement};
 use postkit::pipeline::{EncodeRunOptions, PipelineProgress};
 use postkit::timeline::{Clip, Timeline};
 
@@ -77,7 +77,15 @@ pub fn refuse_with_multi_clip(flags: &MultiClipFlags) -> Vec<String> {
     .collect()
 }
 
-// one raster for every clip: the first clip's unless a flag fixed it
+// the probe, the raster and the package name read this clip
+pub fn first_base_clip(timeline: &Timeline) -> Result<(usize, &Clip), String> {
+    timeline.base_clips().first().copied().ok_or_else(|| {
+        "layer 0 of the timeline holds no clip, and the picture is sized from its first one"
+            .to_string()
+    })
+}
+
+// one raster for every clip: the first layer 0 clip's unless a flag fixed it
 pub struct CompositionPicture {
     pub raster: (u32, u32),
     geometry: EncodeGeometry,
@@ -90,14 +98,11 @@ impl CompositionPicture {
         options: &SourcePictureOptions,
         geometry: &EncodeGeometry,
     ) -> Result<CompositionPicture, String> {
-        let first_clip = timeline
-            .clips
-            .first()
-            .ok_or_else(|| "the timeline has no clips".to_string())?;
+        let (first_index, first_clip) = first_base_clip(timeline)?;
         let raster = match geometry.forced_raster {
             Some(raster) => raster,
             None => clip_raster(first_clip, options, geometry)
-                .map_err(|e| format!("{}: {e}", clip_name(0, first_clip)))?,
+                .map_err(|e| format!("{}: {e}", clip_name(first_index, first_clip)))?,
         };
         Ok(CompositionPicture {
             raster,
@@ -111,6 +116,21 @@ impl CompositionPicture {
 
     pub fn clip_processing(&self, clip: &Clip) -> Result<PictureProcessing, String> {
         Ok(self.resolved_clip_picture(clip)?.processing)
+    }
+
+    // postkit sizes the black in a layer 0 gap from the fit of the encode's own picture options
+    fn gap_processing(&self) -> PictureProcessing {
+        let (width, height) = self.raster;
+        PictureProcessing {
+            fit: Some(Fit {
+                box_width: width,
+                box_height: height,
+                raster_width: width,
+                raster_height: height,
+                placement: Placement::default(),
+            }),
+            ..PictureProcessing::default()
+        }
     }
 
     pub fn resolved_clip_picture(&self, clip: &Clip) -> Result<ResolvedPicture, String> {
@@ -200,7 +220,7 @@ pub fn materialise(
     sound: TimelineSound,
     work_dir: &Path,
     options: &EncodeRunOptions,
-    per_clip_picture: impl Fn(&Clip) -> Result<PictureProcessing, String>,
+    composition: &CompositionPicture,
     cancel: &Arc<AtomicBool>,
     pause: &Arc<AtomicBool>,
     on_progress: impl Fn(&PipelineProgress),
@@ -211,16 +231,26 @@ pub fn materialise(
     let mut fitted = timeline.clone();
     for (index, clip) in fitted.clips.iter_mut().enumerate() {
         if clip.picture_processing.is_identity() {
-            clip.picture_processing =
-                per_clip_picture(clip).map_err(|e| format!("{}: {e}", clip_name(index, clip)))?;
+            clip.picture_processing = composition
+                .clip_processing(clip)
+                .map_err(|e| format!("{}: {e}", clip_name(index, clip)))?;
         }
     }
+    // postkit hands these to a clip with no processing of its own, and a compressed clip refuses a fit
+    let options = if timeline.base_gaps().is_empty() {
+        options.clone()
+    } else {
+        EncodeRunOptions {
+            picture: composition.gap_processing(),
+            ..options.clone()
+        }
+    };
     std::fs::create_dir_all(work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
     let encoded = postkit::pipeline::run_encode_timeline(
         &fitted,
         work_dir,
-        options,
+        &options,
         cancel,
         pause,
         on_progress,

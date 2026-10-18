@@ -4502,7 +4502,12 @@ fn run() {
             );
             let video_path = match (&single_clip, &multi_clip_timeline) {
                 (Some(build), _) => build.picture.clone(),
-                (None, Some(timeline)) => timeline.clips[0].picture.clone(),
+                (None, Some(timeline)) => {
+                    match dcpwizard_core::timeline_build::first_base_clip(timeline) {
+                        Ok((_, clip)) => clip.picture.clone(),
+                        Err(e) => exit_failed(e),
+                    }
+                }
                 (None, None) => {
                     PathBuf::from(video.expect("clap requires --video without --timeline"))
                 }
@@ -5890,7 +5895,7 @@ fn run() {
                         dcpwizard_core::timeline_build::TimelineSound::FromSoundTrack,
                         &output_dir,
                         &options,
-                        |clip| composition.clip_processing(clip),
+                        &composition,
                         &cancel,
                         &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                         print_encode_progress,

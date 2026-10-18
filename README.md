@@ -32,7 +32,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Head/tail padding** via `create --pad-head <dur> --pad-tail <dur>` (`48f`/`2s`), with `--pad-color <RRGGBB>` for a filled pad instead of black
 - **Trim** via `create --trim-start <dur> --trim-end <dur>` (same syntax), cutting the source before any padding; picture, sound and subtitles move together
 - **Still images** via `create --video <image> --still-length <dur>`: one image held for a duration, encoded once and repeated
-- **Timelines** via `create --timeline <file>`: clips in order, each cut to its own in and out point with its own sound and subtitle, fitted onto one raster and joined into one package with a reel at each reel start. See [Timeline file](#timeline-file)
+- **Timelines** via `create --timeline <file>`: clips placed at their own start frames, each cut to its own in and out point with its own sound and subtitle, fitted onto one raster and joined into one package with a reel at each reel start. Clips on higher layers composite over the base layer with their alpha and opacity, and a gap in the base layer is black and silent. See [Timeline file](#timeline-file)
 - **Source colour space** via `create --source-colourspace rec709|p3|rec2020|xyz|logc` (default `rec709`), declaring what the source carries; P3, Rec.2020 and ARRI LogC3 are converted to X'Y'Z' during the encode
 - **Input decode range** override via `create --input-range full|legal`, correcting wrong or absent source range flags
 - **Picture bandwidth** via `--video-bit-rate`, held to the DCI cap of 250 Mbit/s (1,302,083 bytes a frame at 24 fps), 450 Mbit/s with `--hdr-dci`
@@ -354,7 +354,7 @@ The GUI uses [Tauri 2](https://tauri.app/) (Rust backend + web frontend) with a 
 
 **GUI features:**
 - Drag & drop file import (video, audio, subtitle)
-- Timeline: the project view lays the clips on picture, sound and subtitle tracks, each clip a video cut to an In and an Out point typed as a timecode or taken from the preview's playhead, and builds them into one DCP with a reel at each reel start. Split reel here puts a reel start at the playhead. A timeline of one clip builds the way a single video does, with the reel fields cutting it. More clips go to the build as a timeline, with their sound joined in order and each clip fitted onto the first clip's container
+- Timeline: the project view lays the clips on picture rows, one per layer, and sound and subtitle tracks, each clip a video or image sequence cut to an In and an Out point typed as a timecode or taken from the preview's playhead, and builds them into one DCP with a reel at each reel start. A clip drags along its row to a new start, or onto another row to change its layer, and a picture dropped on the empty row at the top starts a new layer. Clips on higher layers composite over the clips under them through their alpha at the Opacity the clip sets, and an empty stretch of the bottom row builds black and silent. Split reel here puts a reel start at the playhead. A timeline of one clip at the start of the bottom row builds the way a single video does, with the reel fields cutting it. Anything else goes to the build as a timeline, with the bottom row's sound joined in order and each clip fitted onto the container of the first clip on the bottom row
 - Keyboard shortcuts: Ctrl+N/O/S/B/P/I, Ctrl+1–9 for the views in sidebar order, Ctrl+Shift+P/A/E/F for Play, Queue, Inspect and Reveal on a finished build, and Space/arrows/,/./Home/F during preview. Every button in a view has an Alt+letter, underlined while Alt is held and named in its tooltip. Alt letters don't work while a text field has focus, Escape leaves the field first. Ctrl+Enter runs the action of the focused section, Alt+Down in a path field opens its file dialog, and Alt+P opens the Project menu, where N, O, S and A run its items and the arrow keys pick a recent project. Ctrl+K opens the shortcut list, where clicking a shortcut rebinds it (Backspace clears, Escape cancels) and the rebindings are saved
 - Project menu in the toolbar: New, Open, Save, Save As and the recent projects
 - Projects: New (Ctrl+N) picks where the `.dcpwizard` file lives and starts from the default panel named after it. Save (Ctrl+S), Save As (Ctrl+Shift+S) and Open (Ctrl+O) write and read the whole build panel, with the sources, the timeline, markers, ratings, idents and output folder but not Settings. Every build also writes `<title>.dcpwizard` beside the package and saves the open project, the Project menu lists these files, and unsaved changes are kept as a draft in the app data folder that comes back on the next launch. A file saved by an older version is upgraded on open and rewritten on Save, one saved by a newer version is refused
@@ -960,24 +960,36 @@ dcpwizard dashboard serve --port 9090
 
 ### Timeline file
 
-`create --timeline` reads a JSON file of clips in order. `conform --media-dir`
-writes one as `timeline.json` beside `conform_plan.json`, a clip per picture event
-with a reel start at each reel.
+`create --timeline` reads a JSON file of clips, postkit's version 2 timeline.
+`conform --media-dir` writes one as `timeline.json` beside `conform_plan.json`, a
+clip per picture event laid end to end on layer 0 with a reel start at each reel.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "fps": { "numerator": 24, "denominator": 1 },
   "clips": [
     {
       "picture": "/media/feature.mov",
+      "start": 0,
       "in_frame": 192,
       "out_frame": 151200,
       "sound": "Embedded",
       "subtitle": "/media/feature.srt"
     },
     {
+      "picture": "/media/logo_png",
+      "start": 240,
+      "layer": 1,
+      "opacity": 0.8,
+      "in_frame": 0,
+      "out_frame": 120,
+      "sound": "None",
+      "subtitle": null
+    },
+    {
       "picture": "/media/trailer.mov",
+      "start": 151032,
       "in_frame": 0,
       "out_frame": 2880,
       "sound": { "File": "/media/trailer.wav" },
@@ -990,12 +1002,21 @@ with a reel start at each reel.
 }
 ```
 
-Frames count from the source's first frame and `out_frame` is exclusive. Every
+Frames count from the source's first frame and `out_frame` is exclusive. `start`
+is the timeline frame the clip's `in_frame` lands on. `layer` is 0 when left out,
+and `opacity`, 0 to 1, is 1. Clips on one layer cannot overlap. Layer 0 is the
+picture and its sound, and a stretch of it with no clip is black and silent, as
+the 24 frames before the trailer above are. Higher layers composite over it
+bottom to top, through each picture's alpha at the clip's `opacity`, so a PNG
+sequence or a video with alpha keys over the clips under it. A clip above layer 0
+carries no sound, and one that is already JPEG 2000 or lies over a JPEG 2000 clip
+is refused by name, as is a clip whose source colour differs from the clip under
+it. The timeline runs to the furthest clip end on any layer. Every
 clip has to run at `fps`, and a clip at another rate is refused by name. A clip's
 `sound` is `"Embedded"` (the audio in its picture file), `{ "File": "<wav>" }` (a
 48 kHz WAV cut at the clip's frames) or `"None"` (silence for its length), and the
 clips with sound have to share a channel count. The timeline's `sound` is
-`"PerClip"`, the clips' sound joined in order, or `{ "Override": "<wav>" }`, one WAV
+`"PerClip"`, the layer 0 clips' sound joined in order, or `{ "Override": "<wav>" }`, one WAV
 for the whole timeline. A clip's `subtitle` is an SRT timed against its own source,
 shifted to the clip's place and cut to its range. The timeline's `subtitle` is timed
 against the timeline. One file cannot carry both. `reel_starts` are timeline frames,
@@ -1004,7 +1025,9 @@ and `picture_processing` in postkit's shapes, which replace the create flags for
 that clip. A one-clip timeline refuses them.
 
 Each clip is fitted onto one raster: the container `--container`, `--twok` or
-`--fourk` names, else the one the first clip fits onto. The picture flags and
+`--fourk` names, else the one the first layer 0 clip fits onto, which also names
+the package and gives the probed source. A timeline with no layer 0 clip is
+refused. The picture flags and
 `--auto-crop` resolve per clip from its own size. `--timeline` is refused beside
 `--video`, `--audio`, `--trim-start`, `--trim-end`, `--still-length`, `--split-at`,
 `--split-chapters` and `--reel-length`, and beside `--subtitle` when the file
@@ -1012,9 +1035,9 @@ carries a subtitle. A timeline of more than one clip also refuses
 `--burn-subtitle`, `--resume`, `--right-eye`, `--hdr-dci`,
 `--allow-generic-hdr-tonemap`, `--input-range`, `--watermark`, `--video-fade-in`
 and `--video-fade-out`. `--check` runs the picture checks a `--video` gets on every
-clip.
+clip, except that a clip above layer 0 may have alpha.
 
-A timeline of one clip builds as `--video` does, with `--trim-start` and
+A timeline of one clip at frame 0 of layer 0 at full opacity builds as `--video` does, with `--trim-start` and
 `--trim-end` taken from its in and out points, `--audio` from its WAV and
 `--split-at` from its reel starts, so fades, burn-in and the other create flags work.
 Its subtitle stays timed against the source when the clip carries it.

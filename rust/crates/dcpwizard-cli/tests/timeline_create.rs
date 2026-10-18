@@ -59,9 +59,12 @@ fn write_clip(directory: &Path, name: &str, size: &str, frame_rate: u32) -> Path
     path
 }
 
-fn clip(picture: PathBuf, in_frame: u64, out_frame: u64) -> Clip {
+fn clip(picture: PathBuf, start: u64, in_frame: u64, out_frame: u64) -> Clip {
     Clip {
         picture,
+        start,
+        layer: 0,
+        opacity: 1.0,
         in_frame,
         out_frame,
         sound: ClipSound::Embedded,
@@ -92,8 +95,8 @@ fn two_clip_timeline(directory: &Path) -> PathBuf {
     write_timeline(
         directory,
         vec![
-            clip(first, FIRST_IN, FIRST_OUT),
-            clip(second, SECOND_IN, SECOND_OUT),
+            clip(first, 0, FIRST_IN, FIRST_OUT),
+            clip(second, FIRST_KEPT, SECOND_IN, SECOND_OUT),
         ],
         vec![FIRST_KEPT],
     )
@@ -231,7 +234,7 @@ fn one_trimmed_clip_builds_the_kept_frames() {
     let picture = write_clip(directory.path(), "only.mkv", SMALL_SIZE, FRAME_RATE);
     let timeline = write_timeline(
         directory.path(),
-        vec![clip(picture, FIRST_IN, FIRST_OUT)],
+        vec![clip(picture, 0, FIRST_IN, FIRST_OUT)],
         Vec::new(),
     );
     let output = directory.path().join("dcp");
@@ -316,8 +319,8 @@ fn a_clip_at_another_rate_is_refused() {
     let timeline = write_timeline(
         directory.path(),
         vec![
-            clip(first, FIRST_IN, FIRST_OUT),
-            clip(other, SECOND_IN, SECOND_OUT),
+            clip(first, 0, FIRST_IN, FIRST_OUT),
+            clip(other, FIRST_KEPT, SECOND_IN, SECOND_OUT),
         ],
         Vec::new(),
     );
@@ -330,12 +333,8 @@ fn a_clip_at_another_rate_is_refused() {
     );
 }
 
-#[test]
-fn a_clip_with_alpha_is_refused_by_name() {
-    let directory = TempDir::new().unwrap();
-    let config_home = TempDir::new().unwrap();
-    let first = write_clip(directory.path(), "first.mkv", SMALL_SIZE, FRAME_RATE);
-    let alpha = directory.path().join("alpha.mov");
+fn write_movie_with_alpha(directory: &Path) -> PathBuf {
+    let alpha = directory.join("alpha.mov");
     run(
         ffmpeg()
             .args(["-f", "lavfi", "-i"])
@@ -346,13 +345,22 @@ fn a_clip_with_alpha_is_refused_by_name() {
             .arg(&alpha),
         "ffmpeg has to write the clip with alpha",
     );
+    alpha
+}
+
+#[test]
+fn a_clip_with_alpha_is_refused_by_name() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let first = write_clip(directory.path(), "first.mkv", SMALL_SIZE, FRAME_RATE);
+    let alpha = write_movie_with_alpha(directory.path());
     let timeline = write_timeline(
         directory.path(),
         vec![
-            clip(first, FIRST_IN, FIRST_OUT),
+            clip(first, 0, FIRST_IN, FIRST_OUT),
             Clip {
                 sound: ClipSound::None,
-                ..clip(alpha, SECOND_IN, SECOND_OUT)
+                ..clip(alpha, FIRST_KEPT, SECOND_IN, SECOND_OUT)
             },
         ],
         Vec::new(),
@@ -364,4 +372,249 @@ fn a_clip_with_alpha_is_refused_by_name() {
         &output,
         &["clip 2", "alpha.mov", "Input video has alpha"],
     );
+}
+
+#[test]
+fn a_clip_with_alpha_above_layer_0_passes_the_check() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let first = write_clip(directory.path(), "first.mkv", SMALL_SIZE, FRAME_RATE);
+    let alpha = write_movie_with_alpha(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            clip(first, 0, FIRST_IN, FIRST_OUT),
+            Clip {
+                layer: 1,
+                sound: ClipSound::None,
+                ..clip(alpha, 0, SECOND_IN, SECOND_OUT)
+            },
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .arg("--check")
+        .output()
+        .unwrap();
+
+    assert!(run.status.success(), "{}", printed(&run));
+    assert!(printed(&run).contains("Pre-build check passed"));
+}
+
+const LAYERED_SIZE: (u32, u32) = (320, 180);
+// a reel runs at least a second
+const GAP_FRAMES: u64 = 24;
+const BASE_SECONDS: u64 = 2;
+const BASE_FRAMES: u64 = BASE_SECONDS * FRAME_RATE as u64;
+const OVERLAY_START: u64 = GAP_FRAMES + 4;
+const OVERLAY_FRAMES: u64 = 8;
+const CODESTREAM_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+// rgb all the way, with a tone under it
+fn write_blue_clip(directory: &Path) -> PathBuf {
+    let path = directory.join("blue.mkv");
+    let (width, height) = LAYERED_SIZE;
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=blue:s={width}x{height}:rate={FRAME_RATE}:duration={BASE_SECONDS}"
+            ))
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "sine=frequency=440:sample_rate={SAMPLE_RATE}:duration={BASE_SECONDS}"
+            ))
+            .args(["-pix_fmt", "gbrp", "-c:v", "ffv1", "-c:a", "pcm_s24le"])
+            .arg(&path),
+        "ffmpeg has to write the blue clip",
+    );
+    path
+}
+
+// red over the left half, transparent over the right
+fn write_half_red_stills(directory: &Path) -> PathBuf {
+    let stills = directory.join("half_red");
+    std::fs::create_dir_all(&stills).unwrap();
+    let (width, height) = LAYERED_SIZE;
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=red:s={}x{height}:rate={FRAME_RATE}",
+                width / 2
+            ))
+            .arg("-vf")
+            .arg(format!(
+                "format=rgba,pad={width}:{height}:0:0:color=black@0"
+            ))
+            .args(["-frames:v", &OVERLAY_FRAMES.to_string(), "-pix_fmt", "rgba"])
+            .arg(stills.join("frame_%04d.png")),
+        "ffmpeg has to write the stills with alpha",
+    );
+    stills
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Seen {
+    Black,
+    Red,
+    Blue,
+}
+
+// X'Y'Z' codes: red carries far more X than Z, blue far more Z than X
+fn seen(xyz: [i32; 3]) -> Option<Seen> {
+    const BLACK_CEILING: i32 = 200;
+    const MARGIN: i32 = 1000;
+    let [x, _, z] = xyz;
+    if xyz.iter().all(|&code| code < BLACK_CEILING) {
+        return Some(Seen::Black);
+    }
+    if x - z > MARGIN {
+        return Some(Seen::Red);
+    }
+    if z - x > MARGIN {
+        return Some(Seen::Blue);
+    }
+    None
+}
+
+// every frame of a picture MXF, sampled inside the left half and inside the right half
+fn left_and_right_of_every_frame(picture_mxf: &Path) -> Vec<[Option<Seen>; 2]> {
+    let mut reader = asdcplib::jp2k::MxfReader::new();
+    reader
+        .open_read(&picture_mxf.to_string_lossy())
+        .expect("the picture MXF has to open");
+    let frames = reader
+        .picture_descriptor()
+        .expect("picture descriptor")
+        .container_duration;
+    let mut buffer = vec![0u8; CODESTREAM_BUFFER_BYTES];
+    (0..frames)
+        .map(|index| {
+            let read = reader
+                .read_frame(index, &mut buffer, None, None)
+                .unwrap_or_else(|e| panic!("frame {index} has to read: {e}"));
+            let frame = postkit::grok_decoder::decode(buffer[..read].to_vec(), 0)
+                .unwrap_or_else(|e| panic!("frame {index} has to decode: {e}"));
+            let row = (frame.height / 2 * frame.width) as usize;
+            [frame.width / 8, frame.width * 7 / 8].map(|x| {
+                let at = row + x as usize;
+                seen([0, 1, 2].map(|component| frame.components[component][at]))
+            })
+        })
+        .collect()
+}
+
+fn picture_frames_by_length(package: &Path) -> Vec<Vec<[Option<Seen>; 2]>> {
+    let mut reels: Vec<Vec<[Option<Seen>; 2]>> = files_starting_with(package, "picture_")
+        .iter()
+        .map(|picture| left_and_right_of_every_frame(picture))
+        .collect();
+    reels.sort_by_key(Vec::len);
+    reels
+}
+
+#[test]
+fn a_layer_with_alpha_composites_over_the_base_and_a_gap_is_black() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
+    let half_red = write_half_red_stills(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            clip(blue, GAP_FRAMES, 0, BASE_FRAMES),
+            Clip {
+                layer: 1,
+                sound: ClipSound::None,
+                ..clip(half_red, OVERLAY_START, 0, OVERLAY_FRAMES)
+            },
+        ],
+        vec![GAP_FRAMES],
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let package = output.join(TITLE);
+
+    assert_eq!(
+        reel_picture_durations(&package),
+        vec![GAP_FRAMES, BASE_FRAMES],
+        "the gap is a reel of its own and the base clip fills the second"
+    );
+    let reels = picture_frames_by_length(&package);
+    assert_eq!(reels.len(), 2);
+    for (frame, samples) in reels[0].iter().enumerate() {
+        assert_eq!(
+            samples,
+            &[Some(Seen::Black); 2],
+            "gap frame {frame} is black"
+        );
+    }
+    let overlaid = (OVERLAY_START - GAP_FRAMES)..(OVERLAY_START - GAP_FRAMES + OVERLAY_FRAMES);
+    for (frame, samples) in reels[1].iter().enumerate() {
+        let want = if overlaid.contains(&(frame as u64)) {
+            [Some(Seen::Red), Some(Seen::Blue)]
+        } else {
+            [Some(Seen::Blue); 2]
+        };
+        assert_eq!(samples, &want, "reel 2 frame {frame}");
+    }
+
+    let mut sounds: Vec<Vec<i32>> = files_starting_with(&package, "sound_")
+        .iter()
+        .map(|sound| sound_samples(sound))
+        .collect();
+    sounds.sort_by_key(Vec::len);
+    assert_eq!(
+        sounds.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![
+            (GAP_FRAMES * SAMPLES_PER_FRAME) as usize,
+            (BASE_FRAMES * SAMPLES_PER_FRAME) as usize
+        ]
+    );
+    assert!(
+        sounds[0].iter().all(|&sample| sample == 0),
+        "the gap is silent"
+    );
+    assert!(
+        sounds[1].iter().any(|&sample| sample != 0),
+        "the base clip's tone plays"
+    );
+    let verified = dcpwizard_core::verify::verify_dcp(&package);
+    assert!(verified.valid, "verify errors: {:?}", verified.errors);
+}
+
+#[test]
+fn an_image_sequence_clip_is_checked_as_a_picture_to_encode() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
+    let half_red = write_half_red_stills(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            clip(blue, 0, 0, BASE_FRAMES),
+            Clip {
+                layer: 1,
+                sound: ClipSound::None,
+                ..clip(half_red, 0, 0, OVERLAY_FRAMES)
+            },
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .args(["--source-colourspace", "p3", "--check"])
+        .output()
+        .unwrap();
+
+    assert!(run.status.success(), "{}", printed(&run));
+    assert!(printed(&run).contains("Pre-build check passed"));
 }

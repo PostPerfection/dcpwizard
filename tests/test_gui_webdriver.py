@@ -62,7 +62,7 @@ FIXTURE_SPLIT_AT = "00:00:02"
 FIXTURE_CHANNELS = 6
 
 PROJECT_WIZARD = "dcpwizard"
-PROJECT_FILE_VERSION = 3
+PROJECT_FILE_VERSION = 4
 
 PROJECT_TITLE = "Film"
 SECOND_PROJECT_TITLE = "Second"
@@ -1628,6 +1628,139 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
     )
     assert session.execute(SEGMENT_LABELS, "#timeline-picture") == [f"R1 {first.name}, {second.name}"]
 
+
+
+TIMELINE_START_FIELD = '#timeline-editor input[data-field="start"]'
+LAYER_ROW = '#timeline-editor .timeline-editor-track[data-layer="{}"] .timeline-editor-track-content'
+BASE_CLIP_SECONDS = 4
+OVERLAY_SECONDS = 2
+OVERLAY_START = "00:00:03:00"
+OVERLAY_START_FRAME = 3 * FIXTURE_FPS
+# the overlay runs a second past the base clip, so layer 0 ends in a black gap
+LAYERED_FRAMES = OVERLAY_START_FRAME + OVERLAY_SECONDS * FIXTURE_FPS
+LAYERED_SECONDS = LAYERED_FRAMES // FIXTURE_FPS
+# how far into the empty row the clip is dropped, a quarter of the way along
+DROP_FRACTION = 0.25
+
+# the editor draws the top layer's row first
+CLIP_LAYERS = """
+return [...document.querySelectorAll("#timeline-editor .timeline-editor-clip")]
+  .map((clip) => [clip.title, Number(clip.closest("[data-layer]").dataset.layer)]);
+"""
+
+CLIP_AND_ROW_POINTS = """
+const clip = document.querySelector(arguments[0]);
+clip.scrollIntoView({ block: "center" });
+const clipBox = clip.getBoundingClientRect();
+const rowBox = document.querySelector(arguments[1]).getBoundingClientRect();
+return [
+  [clipBox.left + clipBox.width / 2, clipBox.top + clipBox.height / 2],
+  [rowBox.left + rowBox.width * arguments[2], rowBox.top + rowBox.height / 2],
+];
+"""
+
+
+# red over the left half and transparent over the right, in a png-coded mov
+def write_picture_with_alpha(path, seconds):
+    width, height = (int(side) for side in FIXTURE_SIZE.split("x"))
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"color=c=red:s={width // 2}x{height}:rate={FIXTURE_FPS}:duration={seconds}",
+        "-vf", f"format=rgba,pad={width}:{height}:0:0:color=black@0",
+        "-c:v", "png", "-pix_fmt", "rgba",
+        str(path),
+    )
+    return path
+
+
+# a real pointer drag, which the editor reads as pointer events
+def drag_clip_onto_row(window, clip_css, row_css):
+    (clip_x, clip_y), (row_x, row_y) = window.session.execute(
+        CLIP_AND_ROW_POINTS, clip_css, row_css, DROP_FRACTION
+    )
+    origin_x, origin_y = window.origin
+    xdotool(
+        "mousemove", str(origin_x + round(clip_x)), str(origin_y + round(clip_y)),
+        "mousedown", "1",
+        "sleep", str(INPUT_SETTLE_SECONDS),
+        "mousemove", str(origin_x + round((clip_x + row_x) / 2)), str(origin_y + round((clip_y + row_y) / 2)),
+        "sleep", str(INPUT_SETTLE_SECONDS),
+        "mousemove", str(origin_x + round(row_x)), str(origin_y + round(row_y)),
+        "sleep", str(INPUT_SETTLE_SECONDS),
+        "mouseup", "1",
+    )
+    time.sleep(INPUT_SETTLE_SECONDS)
+
+
+def test_a_clip_with_alpha_dragged_onto_a_layer_builds_over_the_clip_under_it(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    base = write_picture(media / "base.mov", FIXTURE_SIZE, BASE_CLIP_SECONDS)
+    overlay = write_picture_with_alpha(media / "title.mov", OVERLAY_SECONDS)
+    sound = write_sound(media / "timeline.wav", LAYERED_SECONDS)
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    package = tmp_path / PROJECT_TITLE
+    base_title = clip_title(base.name, "00:00:00:00", f"00:00:{BASE_CLIP_SECONDS:02d}:00")
+    overlay_title = clip_title(overlay.name, "00:00:00:00", f"00:00:{OVERLAY_SECONDS:02d}:00")
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    choose_in_dialog(window, "#import-video", base)
+    choose_in_dialog(window, "#import-video", overlay)
+    choose_in_dialog(window, "#import-audio", sound)
+    wait_until(
+        "the two clips never took their sources' lengths",
+        lambda: session.execute(CLIP_LAYERS) == [[base_title, 0], [overlay_title, 0]],
+        OPEN_TIMEOUT_SECONDS,
+    )
+
+    drag_clip_onto_row(window, TIMELINE_CLIP.format(1), LAYER_ROW.format(1))
+    wait_until(
+        "the dragged clip never moved onto layer 1",
+        lambda: session.execute(CLIP_LAYERS) == [[overlay_title, 1], [base_title, 0]],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    replace_field_text(window, TIMELINE_START_FIELD, OVERLAY_START)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "the clip on layer 1 never took its start",
+        lambda: session.property(TIMELINE_START_FIELD, "value") == OVERLAY_START,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    wait_until(
+        "the Build button stayed disabled",
+        lambda: session.property("#btn-build", "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#btn-build")
+    wait_until(
+        "the hints dialog never opened",
+        lambda: session.property("#hints-dialog", "hidden") is False,
+        STATUS_TIMEOUT_SECONDS,
+    )
+    window.click("#hints-build")
+    wait_until(
+        "the build never finished",
+        lambda: session.property("#progress-stage", "textContent") in FINISHED_BUILD_STAGES,
+        CREATE_TIMEOUT_SECONDS,
+    )
+    assert status_text(session) == BUILD_COMPLETE_STATUS
+
+    cpls = list(package.glob("CPL_*.xml"))
+    assert len(cpls) == 1, sorted(package.iterdir())
+    assert reel_durations(cpls[0]) == [LAYERED_FRAMES]
+    clips = saved_project(project_path)["form"]["project"]["compositions"][0]["timeline"]["clips"]
+    assert [(clip["start"], clip["layer"], clip["sound"]["kind"]) for clip in clips] == [
+        (0, 0, "embedded"),
+        (OVERLAY_START_FRAME, 1, "none"),
+    ]
 
 
 SCROLLED_PREVIEW_SIZE = [640, 360]

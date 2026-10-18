@@ -5,7 +5,7 @@ import { isChannelSet } from "./channel-set.js";
 const VALUE = "value";
 const CHECKED = "checked";
 
-export const PROJECT_FILE_VERSION = 3;
+export const PROJECT_FILE_VERSION = 4;
 
 function withoutChannelDirectory(form, upgradeNotes) {
   const { audioChannelDir, ...rest } = form;
@@ -66,8 +66,26 @@ function reelsIntoTimeline(form, upgradeNotes) {
   return { ...form, project: { ...form.project, compositions } };
 }
 
+// an unprobed clip is 0 frames long until withProbedFrames moves the clips after it along
+function clipsEndToEnd(timeline) {
+  let start = 0;
+  const clips = timeline.clips.map((clip) => {
+    const placed = { ...clip, start, layer: 0, opacity: 1 };
+    start += clip.outFrame - clip.inFrame;
+    return placed;
+  });
+  return { ...timeline, clips };
+}
+
+// version 3 clips play one after another, so each starts where the one before it ends
+function clipsPlaced(form) {
+  if (!form.project) return form;
+  const compositions = form.project.compositions.map((composition) => ({ ...composition, timeline: clipsEndToEnd(composition.timeline) }));
+  return { ...form, project: { ...form.project, compositions } };
+}
+
 // a rename or a meaning change gets a step and a version bump, a new field with a default does not
-export const PROJECT_FILE_MIGRATIONS = { 2: withoutChannelDirectory, 3: reelsIntoTimeline };
+export const PROJECT_FILE_MIGRATIONS = { 2: withoutChannelDirectory, 3: reelsIntoTimeline, 4: clipsPlaced };
 
 // [form key, control id, control property], keyed like the submit_job payload
 export const FORM_CONTROLS = [

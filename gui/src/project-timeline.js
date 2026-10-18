@@ -1,10 +1,11 @@
 import { reelSpans } from "../../extern/guikit/src/composition-timeline.js";
-import { clipStarts, totalFrames } from "../../extern/guikit/src/timeline-editor.js";
+import { baseClipsInOrder, clipEnd, totalFrames } from "../../extern/guikit/src/timeline-editor.js";
 import { soundSource } from "./channel-set.js";
 
 const FULL_TRACK_PERCENT = 100;
 const CLIP_NAME_SEPARATOR = ", ";
 const EMBEDDED_SOUND_LABEL = "embedded";
+const GAP_PICTURE_LABEL = "black";
 
 // a channel set shows its first file
 function soundFilePath(sound) {
@@ -12,17 +13,16 @@ function soundFilePath(sound) {
   return audioPath ?? audioChannelFiles?.[0] ?? "";
 }
 
-// a clip is in every reel from the one holding its first frame to the one holding its last
+// a layer 0 clip is in every reel from the one holding its first frame to the one holding its last
 export function reelClipIndices(timeline) {
   const total = totalFrames(timeline);
   const reelStartFrames = [0, ...timeline.reelStarts.filter((frame) => frame < total)];
   const reelAt = (frame) => reelStartFrames.findLastIndex((start) => start <= frame);
-  const starts = clipStarts(timeline);
   const reels = reelStartFrames.map(() => []);
-  starts.forEach((clipStart, clipIndex) => {
-    const lastFrame = Math.max(clipStart, (starts[clipIndex + 1] ?? total) - 1);
-    for (let reel = reelAt(clipStart); reel <= reelAt(lastFrame); reel++) reels[reel].push(clipIndex);
-  });
+  for (const { index, clip } of baseClipsInOrder(timeline)) {
+    const lastFrame = Math.max(clip.start, clipEnd(clip) - 1);
+    for (let reel = reelAt(clip.start); reel <= reelAt(lastFrame); reel++) reels[reel].push(index);
+  }
   return reels;
 }
 
@@ -36,6 +36,12 @@ function reelSoundLabel(timeline, clips, assetById) {
   if (timeline.sound !== null) return assetById(timeline.sound).name;
   const labels = clips.map((clip) => clipSoundLabel(clip, assetById)).filter((label) => label !== null);
   return [...new Set(labels)].join(CLIP_NAME_SEPARATOR);
+}
+
+function reelPictureNames(span, clips, assetById) {
+  const clipNames = clips.map((clip) => assetById(clip.picture).name);
+  const names = span.picture === null ? [GAP_PICTURE_LABEL, ...clipNames] : clipNames;
+  return names.join(CLIP_NAME_SEPARATOR);
 }
 
 // shaped like get_timeline's entries, one per reel span of the composition's timeline, plus the names the reel covers
@@ -52,10 +58,10 @@ export function projectTimelineEntries(timeline, assetById, editRate) {
       picture_asset_id: "",
       sound_asset_id: "",
       subtitle_asset_id: "",
-      picture_file: span.picture.path,
+      picture_file: span.picture?.path ?? "",
       sound_file: soundFilePath(span.sound),
       subtitle_file: span.subtitle?.path ?? "",
-      picture_names: clips.map((clip) => assetById(clip.picture).name).join(CLIP_NAME_SEPARATOR),
+      picture_names: reelPictureNames(span, clips, assetById),
       sound_names: reelSoundLabel(timeline, clips, assetById),
     };
   });

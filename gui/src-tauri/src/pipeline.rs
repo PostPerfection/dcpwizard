@@ -998,10 +998,13 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         .as_ref()
         .map(|timeline| (timeline.fps.numerator, timeline.fps.denominator));
     let multi_clip_timeline = timeline.filter(|_| single_clip.is_none());
-    // the probe, placement and naming read the first clip
+    // the probe, placement and naming read the first layer 0 clip
     let video = match (&single_clip, &multi_clip_timeline) {
         (Some(build), _) => build.picture.clone(),
-        (None, Some(timeline)) => timeline.clips[0].picture.clone(),
+        (None, Some(timeline)) => dcpwizard_core::timeline_build::first_base_clip(timeline)?
+            .1
+            .picture
+            .clone(),
         (None, None) => PathBuf::from(&video_path),
     };
     let still_input = multi_clip_timeline.is_none() && postkit::still::is_still_image(&video);
@@ -3024,7 +3027,7 @@ fn encode_job_timeline(
         sound,
         &job.output_dir,
         options,
-        |clip| composition.clip_processing(clip),
+        &composition,
         cancel,
         pause,
         on_progress,
@@ -4647,9 +4650,17 @@ mod tests {
         assert_eq!(chosen.framerate, "24", "a chosen rate is kept");
     }
 
-    fn timeline_clip(picture: &Path, in_frame: u64, out_frame: u64) -> postkit::timeline::Clip {
+    fn timeline_clip(
+        picture: &Path,
+        start: u64,
+        in_frame: u64,
+        out_frame: u64,
+    ) -> postkit::timeline::Clip {
         postkit::timeline::Clip {
             picture: picture.to_path_buf(),
+            start,
+            layer: 0,
+            opacity: 1.0,
             in_frame,
             out_frame,
             sound: postkit::timeline::ClipSound::Embedded,
@@ -4678,7 +4689,7 @@ mod tests {
         std::fs::write(&subtitle, "1\n00:00:00,000 --> 00:00:00,100\nHello\n").unwrap();
         let mut timeline = timeline_of(vec![postkit::timeline::Clip {
             subtitle: Some(subtitle.clone()),
-            ..timeline_clip(&picture, 1, 5)
+            ..timeline_clip(&picture, 0, 1, 5)
         }]);
         timeline.reel_starts = vec![2];
 
@@ -4731,8 +4742,8 @@ mod tests {
             1,
             SubmitRequest {
                 timeline: Some(timeline_of(vec![
-                    timeline_clip(&picture, 0, 6),
-                    timeline_clip(&picture, 0, 6),
+                    timeline_clip(&picture, 0, 0, 6),
+                    timeline_clip(&picture, 6, 0, 6),
                 ])),
                 audio_channel_files: Some(left_and_right_channel_files(dir.path())),
                 ..SubmitRequest::default()
@@ -4766,7 +4777,7 @@ mod tests {
         let from_timeline = job_config_of(
             1,
             SubmitRequest {
-                timeline: Some(timeline_of(vec![timeline_clip(&picture, 1, 5)])),
+                timeline: Some(timeline_of(vec![timeline_clip(&picture, 0, 1, 5)])),
                 audio_channel_files: Some(channel_files.clone()),
                 ..SubmitRequest::default()
             },
@@ -4807,8 +4818,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let picture = clip_at_rate(dir.path(), "24");
         let mut timeline = timeline_of(vec![
-            timeline_clip(&picture, 0, 6),
-            timeline_clip(&picture, 0, 6),
+            timeline_clip(&picture, 0, 0, 6),
+            timeline_clip(&picture, 6, 0, 6),
         ]);
         timeline.sound = postkit::timeline::SoundTrack::Override(dir.path().join("mix.wav"));
 
@@ -4845,12 +4856,12 @@ mod tests {
             .unwrap()
         };
 
-        let first = placement_of(vec![timeline_clip(&four_by_three, 0, 6)], 0);
-        let alone = placement_of(vec![timeline_clip(&scope_shaped, 0, 6)], 0);
+        let first = placement_of(vec![timeline_clip(&four_by_three, 0, 0, 6)], 0);
+        let alone = placement_of(vec![timeline_clip(&scope_shaped, 0, 0, 6)], 0);
         let second = placement_of(
             vec![
-                timeline_clip(&four_by_three, 0, 6),
-                timeline_clip(&scope_shaped, 0, 6),
+                timeline_clip(&four_by_three, 0, 0, 6),
+                timeline_clip(&scope_shaped, 6, 0, 6),
             ],
             1,
         );
@@ -4864,6 +4875,22 @@ mod tests {
         );
         assert_eq!(raster(&second), raster(&first));
         assert_eq!(second.picture_width, raster(&first).0);
+        let listed_first_on_layer_1 = placement_of(
+            vec![
+                postkit::timeline::Clip {
+                    layer: 1,
+                    sound: postkit::timeline::ClipSound::None,
+                    ..timeline_clip(&scope_shaped, 0, 0, 6)
+                },
+                timeline_clip(&four_by_three, 0, 0, 6),
+            ],
+            0,
+        );
+        assert_eq!(
+            raster(&listed_first_on_layer_1),
+            raster(&first),
+            "the raster comes from the first layer 0 clip"
+        );
     }
 
     #[test]
@@ -4872,8 +4899,8 @@ mod tests {
         let picture = clip_at_rate(dir.path(), "24");
         let request = SubmitRequest {
             timeline: Some(timeline_of(vec![
-                timeline_clip(&picture, 0, 6),
-                timeline_clip(&picture, 0, 6),
+                timeline_clip(&picture, 0, 0, 6),
+                timeline_clip(&picture, 6, 0, 6),
             ])),
             video_fade_in_seconds: Some(1.0),
             ..SubmitRequest::default()
@@ -4897,8 +4924,8 @@ mod tests {
             1,
             SubmitRequest {
                 timeline: Some(timeline_of(vec![
-                    timeline_clip(&at_24, 0, 6),
-                    timeline_clip(&at_25, 0, 6),
+                    timeline_clip(&at_24, 0, 0, 6),
+                    timeline_clip(&at_25, 6, 0, 6),
                 ])),
                 ..SubmitRequest::default()
             },
@@ -4928,11 +4955,11 @@ mod tests {
             timeline: Some(timeline_of(vec![
                 postkit::timeline::Clip {
                     sound: postkit::timeline::ClipSound::File(quiet),
-                    ..timeline_clip(&picture, 0, 24)
+                    ..timeline_clip(&picture, 0, 0, 24)
                 },
                 postkit::timeline::Clip {
                     sound: postkit::timeline::ClipSound::File(loud),
-                    ..timeline_clip(&picture, 0, 24)
+                    ..timeline_clip(&picture, 24, 0, 24)
                 },
             ])),
             ..SubmitRequest::default()

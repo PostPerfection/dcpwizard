@@ -15,7 +15,7 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
-import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, clipAtFrame, followTimelinePosition, frameAtSeconds } from "../../extern/guikit/src/timeline-editor.js";
+import { initTimelineEditor, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, baseClipsInOrder, clipAtFrame, followTimelinePosition, frameAtSeconds } from "../../extern/guikit/src/timeline-editor.js";
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
@@ -747,8 +747,13 @@ const TRIM_END_FIELD_ID = "prop-trim-end";
 const CLIP_LENGTH_FIELD_IDS = [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID, "prop-still-length"];
 const splitAtField = document.getElementById("prop-split-at");
 
+// the build probes, places and names the package from this clip, as { index, clip }
+function firstBaseClip(timeline) {
+  return baseClipsInOrder(timeline)[0] ?? null;
+}
+
 function timelineEditRate() {
-  const firstClip = activeTimeline().clips[0];
+  const firstClip = firstBaseClip(activeTimeline())?.clip;
   const sourceRate = firstClip ? assetById(firstClip.picture).fps : null;
   return editRateOf(document.getElementById("prop-framerate")?.value, sourceRate, DEFAULT_FRAMERATE);
 }
@@ -858,8 +863,9 @@ function clipIndexShowing(path, likelyIndex) {
 
 // crop detection, placement and the container view follow the clip on screen
 function previewedOrFirstClip() {
-  const { clips } = activeTimeline();
-  return clips[previewedClipIndex ?? 0] ?? null;
+  const timeline = activeTimeline();
+  if (previewedClipIndex === null) return firstBaseClip(timeline)?.clip ?? null;
+  return timeline.clips[previewedClipIndex] ?? null;
 }
 
 function picturePlacementOf(clipIndex) {
@@ -871,14 +877,14 @@ function picturePlacementOf(clipIndex) {
 
 async function refreshPicturePlacement() {
   const plan = document.getElementById("prop-crop-plan");
-  const firstClip = activeTimeline().clips[0];
-  if (!plan || !firstClip) return;
+  const first = firstBaseClip(activeTimeline());
+  if (!plan || !first) return;
   const requestNumber = ++picturePlacementRequest;
   const resolvesAuto = resolutionSelect.value === "auto";
   const previewedClip = previewedOrFirstClip();
-  const placesPreviewedClip = containerViewToggle.checked && previewedClip.picture !== firstClip.picture;
+  const placesPreviewedClip = containerViewToggle.checked && previewedClip.picture !== first.clip.picture;
   const [placement, previewedPlacement] = await Promise.allSettled([
-    picturePlacementOf(0),
+    picturePlacementOf(first.index),
     placesPreviewedClip ? picturePlacementOf(previewedClipIndex) : null,
   ]);
   if (requestNumber !== picturePlacementRequest) return;
@@ -1567,7 +1573,8 @@ function compositionMetadata() {
 // Everything the built name reads, so the preview and the build agree.
 function isdcfNameRequest() {
   const timeline = activeTimeline();
-  const firstPicture = timeline.clips.length ? assetById(timeline.clips[0].picture) : null;
+  const firstClip = firstBaseClip(timeline)?.clip;
+  const firstPicture = firstClip ? assetById(firstClip.picture) : null;
   return {
     title: document.getElementById("prop-title")?.value?.trim() || "",
     standard: document.getElementById("prop-standard")?.value || "smpte",
@@ -2012,9 +2019,10 @@ function applyPreviewSelection() {
 }
 
 function previewTargetInput() {
+  const firstClip = firstBaseClip(activeTimeline())?.clip;
   return {
     selectedPreview,
-    firstPicturePath: activeTimeline().clips.length ? assetPath(activeTimeline().clips[0].picture) : null,
+    firstPicturePath: firstClip ? assetPath(firstClip.picture) : null,
     openedPackage,
     outputPath: submittedPackage,
   };

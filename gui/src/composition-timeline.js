@@ -45,6 +45,7 @@ export function clipTrimSpecs(clip) {
 
 // one clip goes as the single-picture request while that request says the same thing
 function takesSinglePictureRequest(timeline, clip) {
+  if (clip.start !== 0 || clip.layer !== 0) return false;
   if (clip.sound.kind === "none" && timeline.sound === null) return false;
   if (timeline.subtitle !== null && clip.subtitle !== null) return false;
   // the single-picture request times its subtitle against the source

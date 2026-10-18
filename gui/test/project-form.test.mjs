@@ -62,8 +62,8 @@ function editedPanel() {
         timeline: {
           fps: [24, 1],
           clips: [
-            { picture: picture.id, frames: 240, inFrame: 24, outFrame: 216, sound: { kind: 'file', asset: sound.id }, subtitle: subtitle.id },
-            { picture: trailerPicture.id, frames: 96, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null },
+            { picture: picture.id, frames: 240, start: 0, layer: 0, opacity: 1, inFrame: 24, outFrame: 216, sound: { kind: 'file', asset: sound.id }, subtitle: subtitle.id },
+            { picture: trailerPicture.id, frames: 96, start: 192, layer: 0, opacity: 1, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null },
           ],
           sound: null,
           subtitle: null,
@@ -76,7 +76,7 @@ function editedPanel() {
         contentKind: 'teaser',
         timeline: {
           fps: [24, 1],
-          clips: [{ picture: trailerPicture.id, frames: 96, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null }],
+          clips: [{ picture: trailerPicture.id, frames: 96, start: 0, layer: 0, opacity: 1, inFrame: 0, outFrame: 96, sound: { kind: 'embedded', asset: null }, subtitle: null }],
           sound: sound.id,
           subtitle: null,
           reelStarts: [],
@@ -157,7 +157,7 @@ test('a version 1 project file opens and restores its saved fields', () => {
   assert.equal(picture.path, '/media/film.mov');
   assert.deepEqual(reopened.project.compositions[0].timeline, {
     fps: [24, 1],
-    clips: [{ picture: picture.id, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: sound.id }, subtitle: null }],
+    clips: [{ picture: picture.id, frames: 0, start: 0, layer: 0, opacity: 1, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: sound.id }, subtitle: null }],
     sound: null,
     subtitle: null,
     reelStarts: [],
@@ -308,12 +308,11 @@ test('a version 2 project opens with reel 1 as the first clip and the later reel
   const reopened = emptyPanel(() => '');
   const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
 
-  assert.equal(PROJECT_FILE_VERSION, 3);
   assert.deepEqual(reopened.project.compositions[0].timeline, {
     fps: [24000, 1001],
     clips: [
-      { picture: 1, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: 2 }, subtitle: 3 },
-      { picture: 4, frames: 0, inFrame: 0, outFrame: 0, sound: { kind: 'embedded', asset: null }, subtitle: null },
+      { picture: 1, frames: 0, start: 0, layer: 0, opacity: 1, inFrame: 0, outFrame: 0, sound: { kind: 'file', asset: 2 }, subtitle: 3 },
+      { picture: 4, frames: 0, start: 0, layer: 0, opacity: 1, inFrame: 0, outFrame: 0, sound: { kind: 'embedded', asset: null }, subtitle: null },
     ],
     sound: null,
     subtitle: null,
@@ -397,6 +396,48 @@ test('a version 2 channel set on reel 1 becomes the timeline sound, and a projec
   assert.deepEqual(timeline.fps, [25, 1]);
   const titleOnly = readProjectFile(versionTwoProject(undefined), 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
   assert.equal(titleOnly.form.project, undefined);
+});
+
+function versionThreeProject(clips) {
+  const project = {
+    title: 'Film',
+    assets: [
+      { id: 1, type: 'video', path: '/media/feature.mov', name: 'feature.mov', meta: '', fps: '24/1', frames: 240 },
+      { id: 2, type: 'video', path: '/media/trailer.mov', name: 'trailer.mov', meta: '', fps: '24/1' },
+    ],
+    compositions: [
+      { id: 1, name: 'Main', contentKind: 'feature', timeline: { fps: [24, 1], clips, sound: null, subtitle: null, reelStarts: [] } },
+    ],
+    activeComposition: 0,
+  };
+  return JSON.stringify({ wizard: 'dcpwizard', version: 3, saved: '2026-10-10T09:00:00.000Z', form: { title: 'Film', project } });
+}
+
+test('a version 3 project places each clip on layer 0 where the clip before it ends, and an unprobed clip moves the later ones along once probed', () => {
+  const embedded = { kind: 'embedded', asset: null };
+  const text = versionThreeProject([
+    { picture: 1, frames: 240, inFrame: 24, outFrame: 216, sound: embedded, subtitle: null },
+    { picture: 2, frames: 0, inFrame: 0, outFrame: 0, sound: embedded, subtitle: null },
+    { picture: 1, frames: 240, inFrame: 0, outFrame: 48, sound: embedded, subtitle: null },
+  ]);
+
+  const { form, upgradeNotes } = readProjectFile(text, 'dcpwizard', PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const reopened = emptyPanel(() => '');
+  const { notRestored } = restoreFormState(form, serialized(emptyPanel(() => ''), null), reopened);
+
+  const { timeline } = reopened.project.compositions[0];
+  assert.deepEqual(
+    timeline.clips.map(({ start, layer, opacity }) => ({ start, layer, opacity })),
+    [
+      { start: 0, layer: 0, opacity: 1 },
+      { start: 192, layer: 0, opacity: 1 },
+      { start: 192, layer: 0, opacity: 1 },
+    ],
+  );
+  assert.deepEqual(upgradeNotes, [], 'every clip plays where it played before');
+  assert.deepEqual(notRestored, []);
+  const probed = withProbedFrames(timeline, 2, 96);
+  assert.deepEqual(probed.clips.map((clip) => clip.start), [0, 192, 288]);
 });
 
 test('every build panel control is saved, and every saved control is on the panel', () => {

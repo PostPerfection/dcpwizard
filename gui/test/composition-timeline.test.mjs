@@ -38,8 +38,8 @@ function requestFor(timeline, panel = PANEL_REQUEST) {
   return { ...panel, ...timelineRequestFields(timeline, assetById, panel) };
 }
 
-function clip(picture, frames, inFrame, outFrame, sound = { kind: 'embedded', asset: null }, subtitle = null) {
-  return { picture, frames, inFrame, outFrame, sound, subtitle };
+function clip(picture, frames, inFrame, outFrame, { start = 0, layer = 0, sound = { kind: 'embedded', asset: null }, subtitle = null } = {}) {
+  return { picture, frames, start, layer, opacity: 1, inFrame, outFrame, sound, subtitle };
 }
 
 test('a one-clip timeline trimmed by its in and out points sends the single-picture request', () => {
@@ -74,8 +74,8 @@ test('a multi-clip timeline sends postkit\'s timeline with paths and none of the
     fps: [24, 1],
     clips: [
       clip(1, 240, 0, 48),
-      clip(2, 96, 10, 58, { kind: 'file', asset: 4 }, 5),
-      clip(3, 24, 0, 24, { kind: 'none', asset: null }),
+      clip(2, 96, 10, 58, { start: 48, sound: { kind: 'file', asset: 4 }, subtitle: 5 }),
+      clip(3, 24, 0, 24, { start: 96, sound: { kind: 'none', asset: null } }),
     ],
     sound: null,
     subtitle: null,
@@ -94,12 +94,12 @@ test('a multi-clip timeline sends postkit\'s timeline with paths and none of the
   assert.deepEqual(requestFor(timeline, filledPanel), {
     ...PANEL_REQUEST,
     timeline: {
-      version: 1,
+      version: 2,
       fps: { numerator: 24, denominator: 1 },
       clips: [
-        { picture: '/media/a.mov', in_frame: 0, out_frame: 48, sound: 'Embedded', subtitle: null },
-        { picture: '/media/b.mov', in_frame: 10, out_frame: 58, sound: { File: '/media/b.wav' }, subtitle: '/media/b.srt' },
-        { picture: '/media/c', in_frame: 0, out_frame: 24, sound: 'None', subtitle: null },
+        { picture: '/media/a.mov', start: 0, layer: 0, opacity: 1, in_frame: 0, out_frame: 48, sound: 'Embedded', subtitle: null },
+        { picture: '/media/b.mov', start: 48, layer: 0, opacity: 1, in_frame: 10, out_frame: 58, sound: { File: '/media/b.wav' }, subtitle: '/media/b.srt' },
+        { picture: '/media/c', start: 96, layer: 0, opacity: 1, in_frame: 0, out_frame: 24, sound: 'None', subtitle: null },
       ],
       sound: 'PerClip',
       subtitle: null,
@@ -110,14 +110,14 @@ test('a multi-clip timeline sends postkit\'s timeline with paths and none of the
 });
 
 test('a channel set over a multi-clip timeline goes as the channel files beside a per-clip wire timeline', () => {
-  const request = requestFor({ ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 48), clip(2, 96, 0, 96)], sound: 7 });
+  const request = requestFor({ ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { start: 48 })], sound: 7 });
 
   assert.deepEqual(request.audioChannelFiles, ['/media/mix_L.wav', '/media/mix_R.wav']);
   assert.equal(request.timeline.sound, 'PerClip');
 });
 
 test('a one-clip timeline the single-picture request cannot say goes as a timeline, the side its clip trims in the wire and a whole side\'s panel trim for submit_job to refuse', () => {
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 48, 240, { kind: 'none', asset: null })], reelStarts: [96] };
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 48, 240, { sound: { kind: 'none', asset: null } })], reelStarts: [96] };
 
   const request = requestFor(timeline, { ...PANEL_REQUEST, trimStart: '48f', trimEnd: '1s', splitAt: '00:00:04' });
 
@@ -128,6 +128,16 @@ test('a one-clip timeline the single-picture request cannot say goes as a timeli
   assert.equal(request.splitAt, null);
   assert.deepEqual(request.timeline.reel_starts, [96]);
   assert.equal(request.timeline.clips[0].sound, 'None');
+});
+
+test('a one-clip timeline with black before its clip, or with its clip above layer 0, goes as a timeline', () => {
+  const afterBlack = requestFor({ ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { start: 24 })] });
+  const overBlack = requestFor({ ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { layer: 1, sound: { kind: 'none', asset: null } })] });
+
+  assert.equal(afterBlack.videoPath, '');
+  assert.equal(afterBlack.timeline.clips[0].start, 24);
+  assert.equal(overBlack.videoPath, '');
+  assert.equal(overBlack.timeline.clips[0].layer, 1);
 });
 
 test('the Trim fields set a one-clip timeline\'s in and out points, which the build and the preview both read', () => {
@@ -147,24 +157,27 @@ test('the Trim fields set a one-clip timeline\'s in and out points, which the bu
   assert.throws(() => withClipTrims(timeline, 200, 40), RangeError);
   const unprobed = { ...timeline, clips: [clip(1, 0, 0, 0)] };
   assert.equal(withClipTrims(unprobed, 48, 24), unprobed, 'an unprobed clip has no end to trim from');
-  const twoClips = { ...timeline, clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96)] };
+  const twoClips = { ...timeline, clips: [clip(1, 240, 0, 240), clip(2, 96, 0, 96, { start: 240 })] };
   assert.equal(withClipTrims(twoClips, 48, 24), twoClips);
 });
 
 test('a clip sound absorbed into a channel set moves to the timeline, which is the only place a set can go', () => {
   const set = assetById(7);
-  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 6 })] };
+  const timeline = { ...emptyTimeline([24, 1]), clips: [clip(1, 240, 0, 240, { sound: { kind: 'file', asset: 6 } })] };
 
   const grouped = withChannelSets(timeline, new Map([[6, set]]));
 
   assert.deepEqual(grouped.clips[0].sound, { kind: 'embedded', asset: null });
   assert.equal(grouped.sound, 7);
   assert.equal(clipSoundIsChannelSet(grouped, assetById), false);
-  assert.equal(clipSoundIsChannelSet({ ...timeline, clips: [clip(1, 240, 0, 240, { kind: 'file', asset: 7 })] }, assetById), true);
+  assert.equal(clipSoundIsChannelSet({ ...timeline, clips: [clip(1, 240, 0, 240, { sound: { kind: 'file', asset: 7 } })] }, assetById), true);
+  const overlay = clip(2, 96, 0, 96, { layer: 1, sound: { kind: 'none', asset: null } });
+  const layered = withChannelSets({ ...timeline, clips: [...timeline.clips, overlay] }, new Map([[6, set]]));
+  assert.deepEqual(layered.clips[1].sound, { kind: 'none', asset: null }, 'a clip above layer 0 stays soundless');
 });
 
 test('the preview plays a timeline a channel set sounds without sound, and any other with its own', () => {
-  const clips = [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { kind: 'file', asset: 4 })];
+  const clips = [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { start: 48, sound: { kind: 'file', asset: 4 } })];
 
   const underChannelSet = previewTimelineWire({ ...emptyTimeline([24, 1]), clips, sound: 7 }, assetById);
   assert.equal(underChannelSet.sound, 'PerClip');

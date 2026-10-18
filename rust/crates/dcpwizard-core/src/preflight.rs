@@ -192,6 +192,8 @@ type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
 enum CheckReads {
     // a timeline runs these once a clip
     Picture,
+    // a timeline runs these once a layer 0 clip, since a higher layer composites over it
+    BasePicture,
     Job,
 }
 
@@ -201,7 +203,7 @@ const PLAN_CHECKS: [(PlanCheck, CheckReads); 26] = [
     (check_precompressed_colourspace, CheckReads::Picture),
     (check_precompressed_picture, CheckReads::Picture),
     (check_video_decodable, CheckReads::Picture),
-    (check_opaque_source, CheckReads::Picture),
+    (check_opaque_source, CheckReads::BasePicture),
     (check_hdr_to_dci_lut, CheckReads::Job),
     (check_hdr_source_path, CheckReads::Picture),
     (check_fps_resolution, CheckReads::Job),
@@ -267,8 +269,12 @@ fn check_timeline(plan: &CreatePlan, timeline: &postkit::timeline::Timeline) -> 
         Ok(()) => {
             for (index, clip) in timeline.clips.iter().enumerate() {
                 let name = format!("clip {} ({})", index + 1, clip.picture.display());
+                let on_base = clip.layer == 0;
+                let reads_clip = |reads| {
+                    reads == CheckReads::Picture || (on_base && reads == CheckReads::BasePicture)
+                };
                 refusals.extend(
-                    run_checks(&clip_plan(plan, clip), |reads| reads == CheckReads::Picture)
+                    run_checks(&clip_plan(plan, clip), reads_clip)
                         .into_iter()
                         .map(|refusal| format!("{name}: {refusal}")),
                 );
@@ -283,10 +289,10 @@ fn check_timeline(plan: &CreatePlan, timeline: &postkit::timeline::Timeline) -> 
 fn clip_plan(plan: &CreatePlan, clip: &postkit::timeline::Clip) -> CreatePlan {
     let picture_kind = if postkit::still::is_still_image(&clip.picture) {
         PictureKind::Still
-    } else if postkit::encode::detect_input_type(&clip.picture) == InputType::Video {
-        PictureKind::Video
-    } else {
+    } else if is_precompressed(postkit::encode::detect_input_type(&clip.picture)) {
         PictureKind::Codestreams
+    } else {
+        PictureKind::Video
     };
     let probed = picture_kind != PictureKind::Codestreams
         || postkit::encode::detect_input_type(&clip.picture) == InputType::PictureMxf;

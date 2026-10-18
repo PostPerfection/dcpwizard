@@ -208,9 +208,13 @@ pub fn timeline_from_reel_plan(plan: &ReelPlan) -> Result<postkit::timeline::Tim
         if next_start > 0 {
             reel_starts.push(next_start);
         }
+        let start = next_start;
         next_start += out_frame - in_frame;
         clips.push(postkit::timeline::Clip {
             picture: group.picture,
+            start,
+            layer: 0,
+            opacity: 1.0,
             in_frame,
             out_frame,
             sound: if info.has_audio {
