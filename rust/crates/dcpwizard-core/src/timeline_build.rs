@@ -207,6 +207,38 @@ pub struct MaterialisedTimeline {
     pub picture_findings: postkit::picture_findings::PictureFindings,
 }
 
+pub struct FittedTimeline {
+    pub timeline: Timeline,
+    pub options: EncodeRunOptions,
+}
+
+pub fn fit_timeline(
+    timeline: &Timeline,
+    options: &EncodeRunOptions,
+    composition: &CompositionPicture,
+) -> Result<FittedTimeline, String> {
+    let mut fitted = timeline.clone();
+    for (index, clip) in fitted.clips.iter_mut().enumerate() {
+        if clip.picture_processing.is_identity() {
+            clip.picture_processing = composition
+                .clip_processing(clip)
+                .map_err(|e| format!("{}: {e}", clip_name(index, clip)))?;
+        }
+    }
+    let options = if timeline.base_gaps().is_empty() {
+        options.clone()
+    } else {
+        EncodeRunOptions {
+            picture: composition.gap_processing(),
+            ..options.clone()
+        }
+    };
+    Ok(FittedTimeline {
+        timeline: fitted,
+        options,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineSound {
     FromSoundTrack,
@@ -228,26 +260,12 @@ pub fn materialise(
 ) -> Result<MaterialisedTimeline, String> {
     timeline.check()?;
     postkit::timeline::refuse_two_subtitle_sources(timeline)?;
-    let mut fitted = timeline.clone();
-    for (index, clip) in fitted.clips.iter_mut().enumerate() {
-        if clip.picture_processing.is_identity() {
-            clip.picture_processing = composition
-                .clip_processing(clip)
-                .map_err(|e| format!("{}: {e}", clip_name(index, clip)))?;
-        }
-    }
-    let options = if timeline.base_gaps().is_empty() {
-        options.clone()
-    } else {
-        EncodeRunOptions {
-            picture: composition.gap_processing(),
-            ..options.clone()
-        }
-    };
+    let fitted = fit_timeline(timeline, options, composition)?;
+    let options = fitted.options;
     std::fs::create_dir_all(work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
     let encoded = postkit::pipeline::run_encode_timeline(
-        &fitted,
+        &fitted.timeline,
         work_dir,
         &options,
         cancel,
@@ -322,6 +340,117 @@ mod tests {
         );
     }
 
+    const STILL_CLIP_FRAMES: u64 = 48;
+
+    fn still_clip(picture: PathBuf, start: u64) -> Clip {
+        Clip {
+            picture,
+            start,
+            layer: 0,
+            opacity: 1.0,
+            in_frame: 0,
+            out_frame: STILL_CLIP_FRAMES,
+            sound: postkit::timeline::ClipSound::None,
+            subtitle: None,
+            source_colour: Default::default(),
+            picture_processing: Default::default(),
+        }
+    }
+
+    fn still_timeline(clips: Vec<Clip>) -> Timeline {
+        Timeline {
+            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
+            fps: postkit::encode::FrameRate::whole(24),
+            clips,
+            sound: postkit::timeline::SoundTrack::PerClip,
+            subtitle: None,
+            reel_starts: Vec::new(),
+        }
+    }
+
+    fn cropped_and_placed() -> SourcePictureOptions {
+        SourcePictureOptions {
+            crop: postkit::picture_processing::Crop {
+                left: 8,
+                right: 8,
+                top: 4,
+                bottom: 4,
+            },
+            placement: Placement {
+                scale_percent: 80.0,
+                offset_x: 12,
+                offset_y: -6,
+            },
+            ..SourcePictureOptions::default()
+        }
+    }
+
+    #[test]
+    fn fitting_gives_each_clip_the_crop_and_placement_and_keeps_the_options_without_a_gap() {
+        let directory = tempfile::tempdir().unwrap();
+        let picture = directory.path().join("card.png");
+        write_image(&picture, "null");
+        let mut upper = still_clip(picture.clone(), 0);
+        upper.layer = 1;
+        let timeline = still_timeline(vec![still_clip(picture, 0), upper]);
+        let picture_options = cropped_and_placed();
+        let composition =
+            CompositionPicture::resolve(&timeline, &picture_options, &EncodeGeometry::default())
+                .unwrap();
+        let options = EncodeRunOptions {
+            compression_ratio: 12.0,
+            ..EncodeRunOptions::default()
+        };
+
+        let fitted = fit_timeline(&timeline, &options, &composition).unwrap();
+
+        for clip in &fitted.timeline.clips {
+            let processing = &clip.picture_processing;
+            assert_eq!(processing.crop, picture_options.crop);
+            let fit = processing
+                .fit
+                .expect("every clip is fitted onto the raster");
+            assert_eq!(fit.placement, picture_options.placement);
+            assert_eq!((fit.raster_width, fit.raster_height), composition.raster);
+        }
+        assert_eq!(fitted.options.picture, PictureProcessing::default());
+        assert_eq!(fitted.options.compression_ratio, options.compression_ratio);
+    }
+
+    #[test]
+    fn fitting_a_timeline_with_a_gap_sizes_the_black_to_the_raster() {
+        let directory = tempfile::tempdir().unwrap();
+        let picture = directory.path().join("card.png");
+        write_image(&picture, "null");
+        let after_the_gap = still_clip(picture.clone(), STILL_CLIP_FRAMES + 24);
+        let timeline = still_timeline(vec![still_clip(picture, 0), after_the_gap]);
+        let picture_options = cropped_and_placed();
+        let composition =
+            CompositionPicture::resolve(&timeline, &picture_options, &EncodeGeometry::default())
+                .unwrap();
+
+        let fitted = fit_timeline(&timeline, &EncodeRunOptions::default(), &composition).unwrap();
+
+        let (width, height) = composition.raster;
+        assert_eq!(
+            fitted.options.picture.fit,
+            Some(Fit {
+                box_width: width,
+                box_height: height,
+                raster_width: width,
+                raster_height: height,
+                placement: Placement::default(),
+            })
+        );
+        let crops: Vec<_> = fitted
+            .timeline
+            .clips
+            .iter()
+            .map(|clip| clip.picture_processing.crop)
+            .collect();
+        assert_eq!(crops, vec![picture_options.crop; 2]);
+    }
+
     #[test]
     fn a_still_clip_is_auto_cropped_from_its_own_picture_not_its_folder() {
         let directory = tempfile::tempdir().unwrap();
@@ -335,25 +464,7 @@ mod tests {
             ),
         );
         write_image(&directory.path().join("no_borders.png"), "null");
-        let timeline = Timeline {
-            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
-            fps: postkit::encode::FrameRate::whole(24),
-            clips: vec![Clip {
-                picture: card,
-                start: 0,
-                layer: 0,
-                opacity: 1.0,
-                in_frame: 0,
-                out_frame: 48,
-                sound: postkit::timeline::ClipSound::None,
-                subtitle: None,
-                source_colour: Default::default(),
-                picture_processing: Default::default(),
-            }],
-            sound: postkit::timeline::SoundTrack::PerClip,
-            subtitle: None,
-            reel_starts: Vec::new(),
-        };
+        let timeline = still_timeline(vec![still_clip(card, 0)]);
 
         let composition = CompositionPicture::resolve(
             &timeline,
