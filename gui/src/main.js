@@ -36,7 +36,9 @@ import {
   withSplitAtFrames,
   withUnplacedAssetsFilled,
 } from "../../extern/guikit/src/composition-timeline.js";
-import { builtTimelineWire, clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, sourceLengthFields, stillLengthSpec, timelineRequestFields, withChannelSets, withClipTrims, withProbedLength, withStillLength } from "./composition-timeline.js";
+import { acceptTimelineEdit } from "./timeline-edit.js";
+import { containerViewRefusal } from "./container-view.js";
+import { builtTimelineWire, clipTrimSpecs, previewTimelineWire, sourceLengthFields, stillLengthSpec, timelineRequestFields, withChannelSets, withClipTrims, withProbedLength, withStillLength } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -733,14 +735,14 @@ function storeActiveTimeline(timeline) {
 }
 
 function timelineEdited(timeline) {
-  if (clipSoundIsChannelSet(timeline, assetById)) {
+  const accepted = acceptTimelineEdit(timeline, assetById);
+  if (accepted === null) {
     showTimelineInEditor(activeTimeline());
     setStatus(CHANNEL_SET_ON_CLIP_STATUS);
     return;
   }
-  const rated = withFirstClipRate(timeline, assetById);
-  storeActiveTimeline(rated);
-  if (rated !== timeline) showTimelineInEditor(rated);
+  storeActiveTimeline(accepted);
+  if (accepted !== timeline) showTimelineInEditor(accepted);
   afterTimelineChange();
 }
 
@@ -772,7 +774,7 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   sourceLength,
   onChange: timelineEdited,
   onSeek: seekTimelineFrame,
-  playTimeline: (timeline) => previewTimeline(previewTimelineWire(timeline, assetById)),
+  playTimeline: (timeline) => previewTimeline(previewTimelineWire(timeline, assetById), unpackagedJobRequest()),
   seekTimeline: previewSeekAbsolute,
 });
 
@@ -908,6 +910,7 @@ let previewedClipIndex = null;
 let previewedPicturePlacement = null;
 // the picture path the container view was last checked against
 let containerViewCheckedPath;
+let previewedClipTakesFilters = true;
 
 function clipIndexShowing(path, likelyIndex) {
   return clipIndexShowingInTimeline(activeTimeline(), path, likelyIndex, assetById);
@@ -1017,12 +1020,16 @@ containerViewToggle.addEventListener("change", () => {
 async function refreshContainerViewAvailability() {
   const clip = previewedOrFirstClip();
   const path = clip ? assetPath(clip.picture) : null;
-  if (path === containerViewCheckedPath) return;
-  containerViewCheckedPath = path;
-  const takesFilters = path === null || (await previewTakesPictureFilters(path));
-  if (path !== containerViewCheckedPath) return;
-  containerViewToggle.disabled = !takesFilters;
-  containerViewHint.hidden = takesFilters;
+  if (path !== containerViewCheckedPath) {
+    containerViewCheckedPath = path;
+    const takesFilters = path === null || (await previewTakesPictureFilters(path));
+    if (path !== containerViewCheckedPath) return;
+    previewedClipTakesFilters = takesFilters;
+  }
+  const refusal = containerViewRefusal(activeTimeline(), previewedClipTakesFilters);
+  containerViewToggle.disabled = refusal !== null;
+  containerViewHint.textContent = refusal ?? "";
+  containerViewHint.hidden = refusal === null;
   sendContainerViewFilters();
 }
 

@@ -1938,6 +1938,48 @@ pub async fn check_timeline(timeline: postkit::timeline::Timeline) -> Result<(),
         .map_err(|e| format!("the timeline check stopped: {e}"))?
 }
 
+#[tauri::command(async)]
+pub fn preview_load_timeline(
+    app: AppHandle,
+    timeline: postkit::timeline::Timeline,
+    request: SubmitRequest,
+    state: tauri::State<'_, guikit::preview::PreviewPlayer>,
+) -> Result<guikit::preview::TimelinePreview, String> {
+    let preferences = dcpwizard_core::preferences::load_preferences()
+        .map_err(|e| format!("Cannot load the preferences: {e}"))?;
+    let (timeline, options) = timeline_preview_input(timeline, request, &preferences)?;
+    guikit::preview::load_timeline_preview(&app, &state, timeline, options)
+}
+
+// the options are None unless a stretch is rendered, and then fit and encode the way the build does
+fn timeline_preview_input(
+    timeline: postkit::timeline::Timeline,
+    request: SubmitRequest,
+    preferences: &dcpwizard_core::preferences::Preferences,
+) -> Result<
+    (
+        postkit::timeline::Timeline,
+        Option<postkit::pipeline::EncodeRunOptions>,
+    ),
+    String,
+> {
+    if !postkit::timeline::preview_renders_any_stretch(&timeline) {
+        return Ok((timeline, None));
+    }
+    let job = job_config_of(0, request)?;
+    let composition = dcpwizard_core::timeline_build::CompositionPicture::resolve(
+        &timeline,
+        &job.picture,
+        &job_geometry(&job),
+    )?;
+    let fitted = dcpwizard_core::timeline_build::fit_timeline(
+        &timeline,
+        &timeline_encode_options(&job, preferences),
+        &composition,
+    )?;
+    Ok((fitted.timeline, Some(fitted.options)))
+}
+
 // resolved over the whole timeline, the way encode_job_timeline fits each clip
 fn timeline_clip_picture(
     job: &JobConfig,
@@ -3450,6 +3492,51 @@ fn build_dcp_config(
     }
 }
 
+struct JobCodestreamBytes {
+    target: Option<u64>,
+    cap: u64,
+}
+
+fn job_codestream_bytes(job: &JobConfig) -> JobCodestreamBytes {
+    let (fps_num, _) = frame_rate_of(&job.framerate);
+    let stereoscopic = job.right_eye.is_some();
+    let bandwidth_bytes =
+        dcpwizard_core::encode::video_codestream_byte_cap(fps_num, job.bandwidth, stereoscopic);
+    let dci_cap =
+        dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(fps_num, job.hdr_dci, stereoscopic);
+    JobCodestreamBytes {
+        // only video input carries a bandwidth, an image or J2K sequence has none
+        target: job.source.as_ref().map(|_| bandwidth_bytes),
+        // under a PSNR target the bandwidth is a ceiling per frame rather than what
+        // the allocation aims at
+        cap: match job.quality_psnr {
+            Some(_) => dci_cap.min(bandwidth_bytes),
+            None => dci_cap,
+        },
+    }
+}
+
+fn timeline_encode_options(
+    job: &JobConfig,
+    preferences: &dcpwizard_core::preferences::Preferences,
+) -> postkit::pipeline::EncodeRunOptions {
+    let (fps_num, fps_den) = frame_rate_of(&job.framerate);
+    let codestream_bytes = job_codestream_bytes(job);
+    postkit::pipeline::EncodeRunOptions {
+        compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
+        target_codestream_bytes: codestream_bytes.target,
+        quality_psnr: job.quality_psnr,
+        fps: postkit::encode::FrameRate::new(fps_num, fps_den),
+        read_source_at: job_conform(job).read_source_at,
+        source_colour: job.source_colour.clone(),
+        codestream_byte_cap: Some(codestream_bytes.cap),
+        rsiz: postkit::encode::default_rsiz(),
+        encode_threads: preferences.encode_threads,
+        detect_picture_findings: preferences.detect_picture_findings,
+        ..Default::default()
+    }
+}
+
 fn run_job(app: &AppHandle, job: &JobConfig) -> Result<String, String> {
     let queue = app.state::<JobQueue>();
     run_with_job_log(
@@ -3578,30 +3665,10 @@ fn run_logged_job(
         );
     }
 
-    // only video input carries a bandwidth, an image or J2K sequence has none
-    let target_codestream_bytes = job.source.as_ref().map(|_| {
-        dcpwizard_core::encode::video_codestream_byte_cap(
-            fps_num,
-            job.bandwidth,
-            job.right_eye.is_some(),
-        )
-    });
-
-    let dci_codestream_byte_cap = dcpwizard_core::encode::dci_codestream_byte_cap_per_eye(
-        fps_num,
-        job.hdr_dci,
-        job.right_eye.is_some(),
-    );
-    // under a PSNR target the bandwidth is a ceiling per frame rather than what
-    // the allocation aims at
-    let codestream_byte_cap = match job.quality_psnr {
-        Some(_) => dci_codestream_byte_cap.min(dcpwizard_core::encode::video_codestream_byte_cap(
-            fps_num,
-            job.bandwidth,
-            job.right_eye.is_some(),
-        )),
-        None => dci_codestream_byte_cap,
-    };
+    let JobCodestreamBytes {
+        target: target_codestream_bytes,
+        cap: codestream_byte_cap,
+    } = job_codestream_bytes(job);
     match (job.quality_psnr, target_codestream_bytes) {
         (Some(db), _) => log_to(
             &log_file,
@@ -3668,19 +3735,7 @@ fn run_logged_job(
                 &log_file,
                 &format_stage_timing("preflight", preflight_started.elapsed()),
             );
-            let encode_options = postkit::pipeline::EncodeRunOptions {
-                compression_ratio: dcpwizard_core::encode::DEFAULT_COMPRESSION_RATIO,
-                target_codestream_bytes,
-                quality_psnr: job.quality_psnr,
-                fps: encode_fps,
-                read_source_at: conform.read_source_at,
-                source_colour: job.source_colour.clone(),
-                codestream_byte_cap: Some(codestream_byte_cap),
-                rsiz: postkit::encode::default_rsiz(),
-                encode_threads,
-                detect_picture_findings,
-                ..Default::default()
-            };
+            let encode_options = timeline_encode_options(job, &preferences);
             encode_started = Instant::now();
             let device_frames_before = postkit::grok_encoder::accelerated_frames();
             let built = encode_job_timeline(
@@ -5108,6 +5163,105 @@ mod tests {
             serde_json::to_value(&from_timeline).unwrap(),
             serde_json::to_value(&from_still).unwrap()
         );
+    }
+
+    #[test]
+    fn a_layer_0_video_timeline_previews_without_build_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = clip_at_rate(dir.path(), "24");
+        let timeline = timeline_of(vec![
+            timeline_clip(&video, 0, 0, 6),
+            timeline_clip(&video, 6, 0, 6),
+        ]);
+
+        let (previewed, options) = timeline_preview_input(
+            timeline.clone(),
+            SubmitRequest {
+                timeline: Some(timeline.clone()),
+                ..SubmitRequest::default()
+            },
+            &dcpwizard_core::preferences::Preferences::default(),
+        )
+        .unwrap();
+
+        assert!(options.is_none());
+        assert_eq!(previewed, timeline);
+    }
+
+    #[test]
+    fn a_clip_above_layer_0_previews_fitted_and_encoded_the_way_the_build_does() {
+        const BANDWIDTH_MBPS: u32 = 100;
+        let dir = tempfile::tempdir().unwrap();
+        let video = clip_at_rate(dir.path(), "24");
+        let card = still_image(dir.path());
+        let timeline = timeline_of(vec![
+            timeline_clip(&video, 0, 0, 6),
+            postkit::timeline::Clip {
+                layer: 1,
+                sound: postkit::timeline::ClipSound::None,
+                ..timeline_clip(&card, 2, 0, 3)
+            },
+        ]);
+        let request = || SubmitRequest {
+            timeline: Some(timeline.clone()),
+            resolution: Some("2k-flat".into()),
+            bandwidth: Some(BANDWIDTH_MBPS),
+            picture_scale_percent: Some(50.0),
+            picture_offset_x: Some(100),
+            ..SubmitRequest::default()
+        };
+        let job = job_config_of(0, request()).unwrap();
+
+        let (previewed, options) = timeline_preview_input(
+            timeline.clone(),
+            request(),
+            &dcpwizard_core::preferences::Preferences::default(),
+        )
+        .unwrap();
+
+        let options = options.expect("a clip above layer 0 is rendered with build options");
+        assert_eq!(
+            options.target_codestream_bytes,
+            Some(dcpwizard_core::encode::video_codestream_byte_cap(
+                24,
+                BANDWIDTH_MBPS,
+                false
+            ))
+        );
+        for (index, clip) in previewed.clips.iter().enumerate() {
+            let placed = timeline_clip_picture(&job, &timeline, index).unwrap();
+            assert_eq!(clip.picture_processing, placed.processing, "clip {index}");
+        }
+        let fit = previewed.clips[1].picture_processing.fit.unwrap();
+        assert_eq!((fit.raster_width, fit.raster_height), (1998, 1080));
+        assert_eq!(
+            (fit.placement.scale_percent, fit.placement.offset_x),
+            (50.0, 100)
+        );
+    }
+
+    #[test]
+    fn a_still_on_layer_0_previews_with_build_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = still_image(dir.path());
+        let timeline = timeline_of(vec![postkit::timeline::Clip {
+            sound: postkit::timeline::ClipSound::None,
+            ..timeline_clip(&card, 0, 0, 48)
+        }]);
+
+        let (previewed, options) = timeline_preview_input(
+            timeline.clone(),
+            SubmitRequest {
+                video_path: card.to_string_lossy().into_owned(),
+                still_length: Some("48f".into()),
+                ..SubmitRequest::default()
+            },
+            &dcpwizard_core::preferences::Preferences::default(),
+        )
+        .unwrap();
+
+        assert!(options.is_some());
+        assert!(previewed.clips[0].picture_processing.fit.is_some());
     }
 
     #[test]
