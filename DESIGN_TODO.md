@@ -101,10 +101,8 @@ EUR 164.22/month, so the README's "EUR 2,998" line is stale). Most of what those
 pages advertise is already here. These two are not.
 
 - HD-SDI monitoring output. easyDCP Player+ and IMF Player both drive Blackmagic
-  hardware. This is a port rather than new work: imfwizard already has `sdi-preview`,
-  which runs a GStreamer decklink pipeline and probes for the plugin first
-  (imfwizard-core `tools.rs`, `has_gst_decklink`). The open question is whether the
-  embedded preview should feed it or it stays a separate command.
+  hardware. It is the DeckLink output entry in postkit's DESIGN_TODO, on glass2glass
+  DeckLink elements fed by the embedded preview.
 - Atmos KDM. easyDCP's KDM Generator+ advertises "SMPTE (incl. Dolby Atmos)". Not a
   new item: it is the tail of the encrypted timed text and Atmos bullet above, since
   a KDM can only carry an Atmos key once `wrap_atmos` encrypts the essence.
@@ -161,9 +159,9 @@ Nothing public on their side covers validation, Photon, QC reports, loudness,
 subtitle conversion or KDMs, and they say key distribution is still to come. Gaps on
 our side:
 
-- SDI capture from a card, and SDI or HDMI output on third-party adaptors. Output is
-  the DeckLink entry in postkit's DESIGN_TODO, unblocked now that the device decode
-  exists. Capture has no entry anywhere and no card to prove it on.
+- SDI capture from a card, and SDI or HDMI output on third-party adaptors. Both are
+  the DeckLink entries in postkit's DESIGN_TODO, on glass2glass DeckLink elements,
+  with no card to prove them on yet.
 - 8K picture. Every raster here stops at 4K, which is where DCI stops too, so this
   is an IMF item if it is one at all.
 - Atmos playback and QC: nothing here decodes or monitors an IAB track, so an Atmos
