@@ -333,14 +333,19 @@ fn a_clip_at_another_rate_is_refused() {
     );
 }
 
+// opaque red over the left half, transparent white over the right
+const RED_AND_TRANSPARENT_WHITE: &str = "format=rgba,geq=r=255:g='if(lt(X,W/2),0,255)':\
+    b='if(lt(X,W/2),0,255)':a='if(lt(X,W/2),255,0)'";
+
 fn write_movie_with_alpha(directory: &Path) -> PathBuf {
     let alpha = directory.join("alpha.mov");
     run(
         ffmpeg()
             .args(["-f", "lavfi", "-i"])
             .arg(format!(
-                "testsrc=size={SMALL_SIZE}:rate={FRAME_RATE}:duration={CLIP_SECONDS}"
+                "color=c=white:size={SMALL_SIZE}:rate={FRAME_RATE}:duration={CLIP_SECONDS}"
             ))
+            .args(["-vf", RED_AND_TRANSPARENT_WHITE])
             .args(["-c:v", "png", "-pix_fmt", "rgba"])
             .arg(&alpha),
         "ffmpeg has to write the clip with alpha",
@@ -348,30 +353,195 @@ fn write_movie_with_alpha(directory: &Path) -> PathBuf {
     alpha
 }
 
+fn write_card_with_alpha(directory: &Path) -> PathBuf {
+    let card = directory.join("alpha_card.png");
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!("color=c=white:size={SMALL_SIZE}"))
+            .args(["-vf", RED_AND_TRANSPARENT_WHITE])
+            .args(["-frames:v", "1", "-pix_fmt", "rgba"])
+            .arg(&card),
+        "ffmpeg has to write the card with alpha",
+    );
+    card
+}
+
+fn create_from_video(config_home: &Path, video: &Path, output: &Path) -> Command {
+    let mut command = Command::cargo_bin("dcpwizard").unwrap();
+    command
+        .env("XDG_CONFIG_HOME", config_home)
+        .args(["create", "--title", TITLE, "--video"])
+        .arg(video)
+        .arg("-o")
+        .arg(output);
+    command
+}
+
+const RED_OVER_BLACK: [Option<Seen>; 2] = [Some(Seen::Red), Some(Seen::Black)];
+
+fn assert_every_frame_is_red_over_black(package: &Path) {
+    let reels = picture_frames_by_length(package);
+    assert_eq!(reels.len(), 1);
+    for (frame, samples) in reels[0].iter().enumerate() {
+        assert_eq!(samples, &RED_OVER_BLACK, "frame {frame}");
+    }
+}
+
 #[test]
-fn a_clip_with_alpha_is_refused_by_name() {
+fn a_video_with_alpha_builds_black_where_it_is_transparent() {
     let directory = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();
-    let first = write_clip(directory.path(), "first.mkv", SMALL_SIZE, FRAME_RATE);
+    let alpha = write_movie_with_alpha(directory.path());
+    let output = directory.path().join("dcp");
+
+    let run = create_from_video(config_home.path(), &alpha, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    assert_every_frame_is_red_over_black(&output.join(TITLE));
+}
+
+#[test]
+fn a_card_with_alpha_held_by_the_still_length_flag_is_black_where_it_is_transparent() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let card = write_card_with_alpha(directory.path());
+    let output = directory.path().join("dcp");
+
+    let run = create_from_video(config_home.path(), &card, &output)
+        .args(["--still-length", &format!("{HELD_FRAMES}f")])
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let package = output.join(TITLE);
+    assert_eq!(reel_picture_durations(&package), vec![HELD_FRAMES]);
+    assert_every_frame_is_red_over_black(&package);
+}
+
+#[test]
+fn a_video_with_alpha_at_a_forced_input_range_builds_black_where_it_is_transparent() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let alpha = write_movie_with_alpha(directory.path());
+    let output = directory.path().join("dcp");
+
+    let run = create_from_video(config_home.path(), &alpha, &output)
+        .args(["--input-range", "full"])
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    assert_every_frame_is_red_over_black(&output.join(TITLE));
+}
+
+const PQ_TAGS: [&str; 8] = [
+    "-color_primaries",
+    "bt2020",
+    "-color_trc",
+    "smpte2084",
+    "-colorspace",
+    "bt2020nc",
+    "-color_range",
+    "tv",
+];
+
+fn write_pq_movie_with_alpha(directory: &Path) -> PathBuf {
+    let alpha = directory.join("pq_alpha.mkv");
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=white:size={SMALL_SIZE}:rate={FRAME_RATE}:duration={CLIP_SECONDS}"
+            ))
+            .args(["-vf", RED_AND_TRANSPARENT_WHITE])
+            .args(["-c:v", "ffv1", "-pix_fmt", "yuva444p10le"])
+            .args(PQ_TAGS)
+            .arg(&alpha),
+        "ffmpeg has to write the PQ clip with alpha",
+    );
+    alpha
+}
+
+const IDENTITY_CUBE: &str =
+    "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+
+// the tone map and the LUT turn red into whatever they turn it into, black stays black
+fn assert_every_frame_is_black_where_transparent(package: &Path) {
+    let reels = picture_frames_by_length(package);
+    assert_eq!(reels.len(), 1);
+    for (frame, [opaque, transparent]) in reels[0].iter().enumerate() {
+        assert_ne!(opaque, &Some(Seen::Black), "frame {frame} lost its red");
+        assert_eq!(transparent, &Some(Seen::Black), "frame {frame}");
+    }
+}
+
+#[test]
+fn an_hdr_video_with_alpha_through_the_generic_tone_map_builds_black_where_it_is_transparent() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let alpha = write_pq_movie_with_alpha(directory.path());
+    let output = directory.path().join("dcp");
+
+    let run = create_from_video(config_home.path(), &alpha, &output)
+        .arg("--allow-generic-hdr-tonemap")
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    assert_every_frame_is_black_where_transparent(&output.join(TITLE));
+}
+
+#[test]
+fn an_hdr_video_with_alpha_through_the_hdr_to_dci_lut_builds_black_where_it_is_transparent() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let alpha = write_pq_movie_with_alpha(directory.path());
+    let lut = directory.path().join("identity.cube");
+    std::fs::write(&lut, IDENTITY_CUBE).unwrap();
+    let output = directory.path().join("dcp");
+
+    let run = create_from_video(config_home.path(), &alpha, &output)
+        .arg("--hdr-to-dci-lut")
+        .arg(&lut)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    assert_every_frame_is_black_where_transparent(&output.join(TITLE));
+}
+
+#[test]
+fn a_clip_with_alpha_on_layer_0_builds_black_where_it_is_transparent() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
     let alpha = write_movie_with_alpha(directory.path());
     let timeline = write_timeline(
         directory.path(),
         vec![
-            clip(first, 0, FIRST_IN, FIRST_OUT),
+            clip(blue, 0, 0, LEAD_FRAMES),
             Clip {
                 sound: ClipSound::None,
-                ..clip(alpha, FIRST_KEPT, SECOND_IN, SECOND_OUT)
+                ..clip(alpha, LEAD_FRAMES, 0, LEAD_FRAMES)
             },
         ],
         Vec::new(),
     );
     let output = directory.path().join("dcp");
 
-    is_refused(
-        create(config_home.path(), &timeline, &output).arg("--check"),
-        &output,
-        &["clip 2", "alpha.mov", "Input video has alpha"],
-    );
+    let run = create(config_home.path(), &timeline, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let reels = picture_frames_by_length(&output.join(TITLE));
+    assert_eq!(reels.len(), 1);
+    assert_eq!(reels[0].len() as u64, 2 * LEAD_FRAMES);
+    for (frame, samples) in reels[0].iter().enumerate() {
+        let want = if (frame as u64) < LEAD_FRAMES {
+            [Some(Seen::Blue); 2]
+        } else {
+            RED_OVER_BLACK
+        };
+        assert_eq!(samples, &want, "frame {frame}");
+    }
 }
 
 #[test]

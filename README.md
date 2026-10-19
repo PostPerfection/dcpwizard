@@ -1008,10 +1008,11 @@ and `opacity`, 0 to 1, is 1. Clips on one layer cannot overlap. Layer 0 is the
 picture and its sound, and a stretch of it with no clip is black and silent, as
 the 24 frames before the trailer above are. Higher layers composite over it
 bottom to top, through each picture's alpha at the clip's `opacity`, so a PNG
-sequence or a video with alpha keys over the clips under it. A clip above layer 0
-carries no sound, and one that is already JPEG 2000 or lies over a JPEG 2000 clip
-is refused by name, as is a clip whose source colour differs from the clip under
-it. The timeline runs to the furthest clip end on any layer. Every
+sequence or a video with alpha keys over the clips under it. A layer 0 clip with
+alpha composites over black. A clip above layer 0 carries no sound, and one that
+is already JPEG 2000 or lies over a JPEG 2000 clip is refused by name, as is a
+clip whose source colour differs from the clip under it. The timeline runs to the
+furthest clip end on any layer. Every
 clip has to run at `fps`, and a clip at another rate is refused by name. A clip's
 `sound` is `"Embedded"` (the audio in its picture file), `{ "File": "<wav>" }` (a
 48 kHz WAV cut at the clip's frames) or `"None"` (silence for its length), and the
@@ -1035,7 +1036,7 @@ carries a subtitle. A timeline of more than one clip also refuses
 `--burn-subtitle`, `--resume`, `--right-eye`, `--hdr-dci`,
 `--allow-generic-hdr-tonemap`, `--input-range`, `--watermark`, `--video-fade-in`
 and `--video-fade-out`. `--check` runs the picture checks a `--video` gets on every
-clip, except that a clip above layer 0 may have alpha.
+clip.
 
 A timeline of one clip at frame 0 of layer 0 at full opacity builds as `--video` does, with `--trim-start` and
 `--trim-end` taken from its in and out points, `--audio` from its WAV and

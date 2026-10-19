@@ -95,27 +95,3 @@ fn ffmpeg_lists(flag: &str, name: &str) -> bool {
         _ => false,
     }
 }
-
-pub fn pixel_format_has_alpha(pixel_format: &str) -> bool {
-    pixel_format.starts_with("yuva")
-        || pixel_format.starts_with("gbrap")
-        || matches!(
-            pixel_format,
-            "rgba" | "bgra" | "argb" | "abgr" | "ya8" | "ya16le" | "ya16be" | "pal8"
-        )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pixel_format_has_alpha;
-
-    #[test]
-    fn detects_alpha_pixel_formats() {
-        assert!(pixel_format_has_alpha("yuva444p12le"));
-        assert!(pixel_format_has_alpha("gbrap12le"));
-        assert!(pixel_format_has_alpha("rgba"));
-        assert!(pixel_format_has_alpha("pal8"));
-        assert!(!pixel_format_has_alpha("yuv444p12le"));
-        assert!(!pixel_format_has_alpha("gbrp12le"));
-    }
-}

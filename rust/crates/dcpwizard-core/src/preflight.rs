@@ -192,18 +192,15 @@ type PlanCheck = fn(&CreatePlan) -> Result<(), String>;
 enum CheckReads {
     // a timeline runs these once a clip
     Picture,
-    // a timeline runs these once a layer 0 clip, since a higher layer composites over it
-    BasePicture,
     Job,
 }
 
 // cheapest and most specific first: the first refusal printed is the one to fix
-const PLAN_CHECKS: [(PlanCheck, CheckReads); 26] = [
+const PLAN_CHECKS: [(PlanCheck, CheckReads); 25] = [
     (check_picture_mxf, CheckReads::Picture),
     (check_precompressed_colourspace, CheckReads::Picture),
     (check_precompressed_picture, CheckReads::Picture),
     (check_video_decodable, CheckReads::Picture),
-    (check_opaque_source, CheckReads::BasePicture),
     (check_hdr_to_dci_lut, CheckReads::Job),
     (check_hdr_source_path, CheckReads::Picture),
     (check_fps_resolution, CheckReads::Job),
@@ -269,12 +266,8 @@ fn check_timeline(plan: &CreatePlan, timeline: &postkit::timeline::Timeline) -> 
         Ok(()) => {
             for (index, clip) in timeline.clips.iter().enumerate() {
                 let name = format!("clip {} ({})", index + 1, clip.picture.display());
-                let on_base = clip.layer == 0;
-                let reads_clip = |reads| {
-                    reads == CheckReads::Picture || (on_base && reads == CheckReads::BasePicture)
-                };
                 refusals.extend(
-                    run_checks(&clip_plan(plan, clip), reads_clip)
+                    run_checks(&clip_plan(plan, clip), |reads| reads == CheckReads::Picture)
                         .into_iter()
                         .map(|refusal| format!("{name}: {refusal}")),
                 );
@@ -363,23 +356,6 @@ fn check_video_decodable(plan: &CreatePlan) -> Result<(), String> {
         return Ok(());
     };
     crate::probe::ensure_video_decodable(video)
-}
-
-fn check_opaque_source(plan: &CreatePlan) -> Result<(), String> {
-    let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
-        return Ok(());
-    };
-    check_opaque_picture(&source.pix_fmt)
-}
-
-pub fn check_opaque_picture(pixel_format: &str) -> Result<(), String> {
-    if !crate::probe::pixel_format_has_alpha(pixel_format) {
-        return Ok(());
-    }
-    Err(
-        "Input video has alpha. Composite it over an opaque background before creating a DCP."
-            .into(),
-    )
 }
 
 fn check_hdr_to_dci_lut(plan: &CreatePlan) -> Result<(), String> {

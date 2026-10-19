@@ -460,24 +460,6 @@ fn a_video_ffmpeg_cannot_read_is_refused_by_the_check() {
 }
 
 #[test]
-fn a_video_with_alpha_is_refused_by_the_check() {
-    let directory = TempDir::new().unwrap();
-    let config_home = TempDir::new().unwrap();
-    let source = write_tagged_source(
-        directory.path(),
-        "alpha.mov",
-        &["-c:v", "png", "-pix_fmt", "rgba"],
-    );
-    let out = directory.path().join("dcp");
-
-    create_is_refused(
-        &mut checked_create(config_home.path(), &source, &out),
-        &out,
-        &["Input video has alpha", REFUSED_CHECK],
-    );
-}
-
-#[test]
 fn an_hdr_source_with_no_path_to_dci_is_refused_by_the_check() {
     let directory = TempDir::new().unwrap();
     let config_home = TempDir::new().unwrap();

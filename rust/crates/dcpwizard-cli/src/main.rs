@@ -2892,12 +2892,20 @@ fn normalize_input_range(video: &Path, range: &str, out_dir: &Path) -> Result<Pa
     // ffmpeg's scale in_range names: full<->pc, legal<->tv/mpeg
     let in_range = if range == "full" { "full" } else { "tv" };
     let out = out_dir.join("range_corrected.mkv");
+    let mut filter = format!("scale=in_range={in_range}:out_range=full");
+    // the gbrp16le intermediate carries no alpha
+    if postkit::probe::probe_pixel_format(video).has_alpha() {
+        filter = format!(
+            "{filter},{}",
+            postkit::encode::SIXTEEN_BIT_OVER_BLACK_FILTER
+        );
+    }
     let status = std::process::Command::new("ffmpeg")
         .arg("-y")
         .arg("-i")
         .arg(video)
         .arg("-vf")
-        .arg(format!("scale=in_range={in_range}:out_range=full"))
+        .arg(filter)
         .args(["-c:v", "ffv1", "-level", "3", "-pix_fmt", "gbrp16le", "-an"])
         .arg(&out)
         .status()
@@ -5238,7 +5246,7 @@ fn run() {
                             target_space: postkit::colour::ColourSpace::Xyz,
                             lut_path: Some(lut),
                         };
-                        if let Err(e) = postkit::colour::convert_colour(&opts) {
+                        if let Err(e) = postkit::colour::convert_colour_over_black(&opts) {
                             exit_failed(format!("HDR-to-DCI LUT conversion failed: {e}"));
                         }
                         content_already_xyz = true;
@@ -5269,17 +5277,11 @@ fn run() {
                 } else {
                     dcpwizard_core::probe::probe_video(&encode_video_path)
                 };
-                let Some(source_pixel_format) = video_info.as_ref().map(|info| info.pixel_format())
-                else {
+                if video_info.is_none() {
                     exit_failed(format!(
                         "ffprobe cannot read the input video: {}",
                         encode_video_path.display()
                     ));
-                };
-                if let Err(e) =
-                    dcpwizard_core::preflight::check_opaque_picture(&source_pixel_format.pix_fmt)
-                {
-                    exit_failed(e);
                 }
                 let source_fps = video_info
                     .as_ref()
