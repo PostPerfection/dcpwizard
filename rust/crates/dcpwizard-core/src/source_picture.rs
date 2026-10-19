@@ -130,6 +130,12 @@ pub fn check_scale_percent(scale_percent: f64) -> Result<(), String> {
     ))
 }
 
+// detect_input_type calls a lone image file an image sequence too
+pub fn is_image_sequence_directory(picture: &Path) -> bool {
+    picture.is_dir()
+        && postkit::encode::detect_input_type(picture) == postkit::encode::InputType::ImageSequence
+}
+
 /// Resolve the picture flags against a source of `source_width`x`source_height`.
 ///
 /// The fit box is the container's active area when one was given, else the

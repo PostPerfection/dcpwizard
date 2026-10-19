@@ -182,7 +182,7 @@ fn resolve_clip(
         width,
         height,
         geometry,
-        postkit::encode::detect_input_type(&clip.picture) == InputType::ImageSequence,
+        crate::source_picture::is_image_sequence_directory(&clip.picture),
     )
 }
 
@@ -301,5 +301,74 @@ mod tests {
         assert_eq!(refusals.len(), 2, "{refusals:?}");
         assert!(refusals.iter().any(|r| r.starts_with("--video-fade-in")));
         assert!(refusals.iter().any(|r| r.starts_with("--resume")));
+    }
+
+    const CARD_WIDTH: u32 = 320;
+    const CARD_HEIGHT: u32 = 240;
+    const CARD_BAR_HEIGHT: u32 = 32;
+
+    fn write_image(path: &Path, filter: &str) {
+        let written = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("color=c=red:s={CARD_WIDTH}x{CARD_HEIGHT}"))
+            .args(["-vf", filter, "-frames:v", "1"])
+            .arg(path)
+            .output()
+            .expect("ffmpeg has to run");
+        assert!(
+            written.status.success(),
+            "{}",
+            String::from_utf8_lossy(&written.stderr)
+        );
+    }
+
+    #[test]
+    fn a_still_clip_is_auto_cropped_from_its_own_picture_not_its_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let card = directory.path().join("card.png");
+        let picture_height = CARD_HEIGHT - 2 * CARD_BAR_HEIGHT;
+        write_image(
+            &card,
+            &format!(
+                "crop={CARD_WIDTH}:{picture_height},pad={CARD_WIDTH}:{CARD_HEIGHT}:0:\
+                 {CARD_BAR_HEIGHT}:black"
+            ),
+        );
+        write_image(&directory.path().join("no_borders.png"), "null");
+        let timeline = Timeline {
+            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
+            fps: postkit::encode::FrameRate::whole(24),
+            clips: vec![Clip {
+                picture: card,
+                start: 0,
+                layer: 0,
+                opacity: 1.0,
+                in_frame: 0,
+                out_frame: 48,
+                sound: postkit::timeline::ClipSound::None,
+                subtitle: None,
+                source_colour: Default::default(),
+                picture_processing: Default::default(),
+            }],
+            sound: postkit::timeline::SoundTrack::PerClip,
+            subtitle: None,
+            reel_starts: Vec::new(),
+        };
+
+        let composition = CompositionPicture::resolve(
+            &timeline,
+            &SourcePictureOptions {
+                auto_crop: true,
+                ..SourcePictureOptions::default()
+            },
+            &EncodeGeometry::default(),
+        )
+        .unwrap();
+        let crop = composition
+            .clip_processing(&timeline.clips[0])
+            .unwrap()
+            .crop;
+
+        assert_eq!((crop.top, crop.bottom), (CARD_BAR_HEIGHT, CARD_BAR_HEIGHT));
     }
 }

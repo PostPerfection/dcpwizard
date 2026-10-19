@@ -32,12 +32,11 @@ import {
   withFirstClipRate,
   withImportedAsset,
   withoutAsset,
-  withProbedFrames,
   withReelStartingClipsPlaced,
   withSplitAtFrames,
   withUnplacedAssetsFilled,
 } from "../../extern/guikit/src/composition-timeline.js";
-import { clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, timelineRequestFields, withChannelSets, withClipTrims } from "./composition-timeline.js";
+import { builtTimelineWire, clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, sourceLengthFields, stillLengthSpec, timelineRequestFields, withChannelSets, withClipTrims, withProbedLength, withStillLength } from "./composition-timeline.js";
 import { initShortcuts } from "../../extern/guikit/src/shortcuts.js";
 import { rememberFinishedBuild, finishedBuildRequest, forgetFinishedBuild } from "../../extern/guikit/src/finished-builds.js";
 import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShortcuts } from "../../extern/guikit/src/shared-shortcuts.js";
@@ -130,6 +129,7 @@ const PROJECT_BUTTON_SHORTCUTS = [
   { id: "build", label: "Build DCP", binding: SHARED_BINDINGS.build, buttonId: "btn-build" },
   { id: "preview", label: "Preview", binding: SHARED_BINDINGS.preview, buttonId: "btn-preview" },
   { id: "import-video", label: "Import video", binding: SHARED_BINDINGS.importVideo, buttonId: "import-video" },
+  { id: "import-image-sequence", label: "Import image sequence", binding: null, buttonId: "import-image-sequence" },
 ].map((shortcut) => ({ ...shortcut, category: "Project" }));
 
 initShortcuts({
@@ -515,6 +515,11 @@ document.getElementById("import-video")?.addEventListener("click", async () => {
   if (paths) importAssetsFromPaths(paths.map((path) => [path, guessType(path)]));
 });
 
+document.getElementById("import-image-sequence")?.addEventListener("click", async () => {
+  const directory = await open({ directory: true });
+  if (directory) importAssetFromPath(directory, 'video');
+});
+
 document.getElementById("import-audio")?.addEventListener("click", async () => {
   const paths = await open({
     directory: false, multiple: true,
@@ -575,18 +580,20 @@ function importAssetFromPath(path, type) {
 
   // Auto-detect video properties
   if (type === 'video') {
-    probeVideo(path).then(info => {
-      if (!info) {
-        setStatus(`Could not read the frame count of ${name}`);
-        return;
+    Promise.all([probeVideo(path), probeSourceLength(asset)]).then(async ([info, length]) => {
+      // a still has no rate of its own
+      const probed = info && asset.still ? { ...info, fps: null } : info;
+      if (probed) {
+        asset.meta = probed.fps ? `${probed.width}×${probed.height} ${probed.fps}` : `${probed.width}×${probed.height}`;
+        asset.width = probed.width;
+        asset.height = probed.height;
+        asset.fps = probed.fps;
+      } else if (length?.kind === "counted") {
+        const raster = await probeSourceRaster(asset);
+        asset.meta = raster ? `${raster.width}×${raster.height} ${length.frames} frames` : `${length.frames} frames`;
       }
-      asset.meta = `${info.width}×${info.height} ${info.fps}`;
-      asset.width = info.width;
-      asset.height = info.height;
-      asset.fps = info.fps;
-      asset.frames = info.frames;
-      takeProbedFrames(asset);
-      if (project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(info);
+      if (length) takeProbedLength(asset);
+      if (probed && project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(probed);
       refreshPackageNamePreview();
       renderAssets();
     });
@@ -599,18 +606,17 @@ async function probeUnprobedClips() {
   const pictures = new Set(clips.filter((clip) => clip.frames === 0).map((clip) => clip.picture));
   for (const assetId of pictures) {
     const asset = assetById(assetId);
-    asset.frames = await sourceFrames(assetId);
-    takeProbedFrames(asset);
+    if (await probeSourceLength(asset)) takeProbedLength(asset);
   }
   project.compositions = project.compositions.map(withReelStartingClipsPlaced);
   showActiveTimeline();
 }
 
 // clips placed before their source was probed get its length and rate
-function takeProbedFrames(asset) {
+function takeProbedLength(asset) {
   project.compositions = project.compositions.map((composition) => ({
     ...composition,
-    timeline: withFirstClipRate(withProbedFrames(composition.timeline, asset.id, asset.frames), assetById),
+    timeline: withFirstClipRate(withProbedLength(composition.timeline, asset), assetById),
   }));
   takeTrimFields();
   showActiveTimeline();
@@ -686,12 +692,40 @@ function assetName(assetId) {
   return asset.type === 'audio' ? soundTrackLabel(asset) : asset.name;
 }
 
-async function sourceFrames(assetId) {
+// the build's own count: an image file is a still, a folder counts its images, null when it cannot be read
+async function probeSourceLength(asset) {
+  let length;
+  try {
+    length = await invoke("picture_source_length", { picture: asset.path });
+  } catch (error) {
+    setStatus(`Could not read the length of ${asset.name}: ${error}`);
+    return null;
+  }
+  Object.assign(asset, sourceLengthFields(length));
+  return length;
+}
+
+// ffprobe cannot open a folder, so an image sequence is measured from its first image
+async function probeSourceRaster(asset) {
+  let raster;
+  try {
+    raster = await invoke("picture_source_raster", { picture: asset.path });
+  } catch (error) {
+    setStatus(`Could not read the size of ${asset.name}: ${error}`);
+    return null;
+  }
+  asset.width = raster.width;
+  asset.height = raster.height;
+  return raster;
+}
+
+const UNPROBED_LENGTH = { kind: "counted", frames: 0 };
+
+async function sourceLength(assetId) {
   const asset = assetById(assetId);
-  if (asset.frames) return asset.frames;
-  const info = await probeVideo(asset.path);
-  if (!info) setStatus(`Could not read the frame count of ${asset.name}`);
-  return info?.frames ?? 0;
+  if (asset.still) return { kind: "still" };
+  if (asset.frames) return { kind: "counted", frames: asset.frames };
+  return (await probeSourceLength(asset)) ?? UNPROBED_LENGTH;
 }
 
 function storeActiveTimeline(timeline) {
@@ -735,7 +769,7 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   reelWord: "reel",
   assetName,
   assetKind: (assetId) => TIMELINE_KIND_BY_ASSET_TYPE[assetById(assetId).type],
-  sourceFrames,
+  sourceLength,
   onChange: timelineEdited,
   onSeek: seekTimelineFrame,
   playTimeline: (timeline) => previewTimeline(previewTimelineWire(timeline, assetById)),
@@ -747,7 +781,8 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
 const REEL_SPLIT_FIELD_IDS = ["prop-reel-length", "prop-split-at", "prop-split-chapters"];
 const TRIM_START_FIELD_ID = "prop-trim-start";
 const TRIM_END_FIELD_ID = "prop-trim-end";
-const CLIP_LENGTH_FIELD_IDS = [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID, "prop-still-length"];
+const STILL_LENGTH_FIELD_ID = "prop-still-length";
+const CLIP_LENGTH_FIELD_IDS = [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID, STILL_LENGTH_FIELD_ID];
 const splitAtField = document.getElementById("prop-split-at");
 
 // the build probes, places and names the package from this clip, as { index, clip }
@@ -768,6 +803,8 @@ function sameFrames(first, second) {
 function refreshReelSplitFields() {
   const multiClip = activeTimeline().clips.length > 1;
   for (const id of [...REEL_SPLIT_FIELD_IDS, ...CLIP_LENGTH_FIELD_IDS]) document.getElementById(id).disabled = multiClip;
+  const oneStill = !multiClip && activeTimeline().clips[0]?.still === true;
+  for (const id of [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID]) document.getElementById(id).disabled ||= oneStill;
   document.getElementById("prop-reel-split-hint").hidden = !multiClip;
   document.getElementById("prop-clip-length-hint").hidden = !multiClip;
   if (multiClip) return;
@@ -793,6 +830,7 @@ function refreshTrimFields() {
   const { trimStart, trimEnd } = clipTrimSpecs(clips[0]);
   document.getElementById(TRIM_START_FIELD_ID).value = trimStart;
   document.getElementById(TRIM_END_FIELD_ID).value = trimEnd;
+  if (clips[0].still) document.getElementById(STILL_LENGTH_FIELD_ID).value = stillLengthSpec(clips[0]);
 }
 
 // false when the clip cannot take the typed trims, which the status names
@@ -814,6 +852,17 @@ for (const id of [TRIM_START_FIELD_ID, TRIM_END_FIELD_ID]) {
     if (takeTrimFields()) showActiveTimeline();
   });
 }
+
+document.getElementById(STILL_LENGTH_FIELD_ID).addEventListener("change", () => {
+  try {
+    const holdFrames = fieldFrames(STILL_LENGTH_FIELD_ID, "Still length", timelineEditRate());
+    storeActiveTimeline(withStillLength(activeTimeline(), holdFrames));
+  } catch (error) {
+    setStatus(error.message);
+    return;
+  }
+  showActiveTimeline();
+});
 
 // === Source picture ===
 
@@ -1521,6 +1570,7 @@ function fieldFrames(id, label, editRate) {
 
 // the trim fields only reach a timeline of one clip, and only where the clip keeps its whole source
 function clipTrimFrames(timeline, clip, editRate) {
+  if (clip.still) return { trimStartFrames: 0, trimEndFrames: 0 };
   const tailFrames = clip.frames - clip.outFrame;
   const oneClip = timeline.clips.length === 1;
   return {
@@ -1710,6 +1760,7 @@ function isdcfNameRequest() {
     cropTop: parseInt(document.getElementById("prop-crop-top")?.value) || 0,
     cropBottom: parseInt(document.getElementById("prop-crop-bottom")?.value) || 0,
     rotate: document.getElementById("prop-rotate")?.value || "none",
+    timeline: builtTimelineWire(timeline, assetById),
   };
 }
 

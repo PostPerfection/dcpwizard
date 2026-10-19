@@ -868,8 +868,7 @@ pub fn plan_picture(plan: &CreatePlan) -> Result<Option<PlannedPicture>, String>
         info.width,
         info.height,
         &plan.geometry,
-        postkit::encode::detect_input_type(&plan.picture)
-            == postkit::encode::InputType::ImageSequence,
+        crate::source_picture::is_image_sequence_directory(&plan.picture),
     )?;
     Ok(Some(PlannedPicture {
         raster: (resolved.encode_width, resolved.encode_height),

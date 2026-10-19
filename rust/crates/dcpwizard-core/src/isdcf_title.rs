@@ -83,11 +83,35 @@ pub struct SoundtrackSource<'a> {
     pub audio: Option<&'a Path>,
     // mono WAVs routed by their channel suffix, in place of audio
     pub channel_files: Option<&'a [PathBuf]>,
-    pub picture: Option<&'a Path>,
+    // the sound the build takes when it names neither of those
+    pub picture_sound: Option<PictureSound<'a>>,
     pub audio_map: Option<&'a str>,
     pub upmix: bool,
     pub hi_channel: Option<u32>,
     pub vi_channel: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PictureSound<'a> {
+    // its own sound is demuxed
+    Video(&'a Path),
+    // its clips' sound is joined
+    Timeline(&'a postkit::timeline::Timeline),
+}
+
+pub fn timeline_sound_channels(timeline: &postkit::timeline::Timeline) -> Result<usize, String> {
+    if let postkit::timeline::SoundTrack::Override(path) = &timeline.sound {
+        return Ok(usize::from(crate::mxf_wrap::wav_channels(path)?));
+    }
+    Ok(postkit::timeline::shared_channel_count(timeline)?.map_or(0, usize::from))
+}
+
+fn picture_sound_channels(picture_sound: Option<PictureSound>) -> Result<usize, String> {
+    match picture_sound {
+        None => Ok(0),
+        Some(PictureSound::Video(picture)) => embedded_channel_count(picture),
+        Some(PictureSound::Timeline(timeline)) => timeline_sound_channels(timeline),
+    }
 }
 
 // the named sound, else the picture's own, through the map and the upmix the
@@ -110,7 +134,7 @@ fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
         (Some(routed), _) => crate::audio_route::routed_channel_count_of(routed),
         (None, Some(dir)) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
         (None, Some(wav)) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
-        (None, None) => embedded_channel_count(source.picture)?,
+        (None, None) => picture_sound_channels(source.picture_sound)?,
     };
     if read_count == 0 {
         return Ok(0);
@@ -136,10 +160,10 @@ fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
 const FFPROBE_DEFAULT_DISPOSITION: &str = "1";
 
 // the stream ffmpeg extracts with no map: a default one first, then the widest
-fn embedded_channel_count(picture: Option<&Path>) -> Result<usize, String> {
-    let Some(picture) = picture.filter(|picture| picture.is_file()) else {
+fn embedded_channel_count(picture: &Path) -> Result<usize, String> {
+    if !picture.is_file() {
         return Ok(0);
-    };
+    }
     let output = std::process::Command::new("ffprobe")
         .args([
             "-v",
@@ -627,7 +651,7 @@ mod tests {
         SoundtrackSource {
             audio,
             channel_files: None,
-            picture: Some(picture),
+            picture_sound: Some(PictureSound::Video(picture)),
             audio_map: None,
             upmix: false,
             hi_channel: None,
@@ -657,6 +681,54 @@ mod tests {
     }
 
     #[test]
+    fn a_timeline_opening_on_a_still_names_the_sound_its_clips_carry() {
+        let dir = tempfile::tempdir().unwrap();
+        let surround = source_with_sound(dir.path(), &["5.1"]);
+        let card = dir.path().join("card.png");
+        let clip = |picture: &Path, start, sound| postkit::timeline::Clip {
+            picture: picture.to_path_buf(),
+            start,
+            layer: 0,
+            opacity: 1.0,
+            in_frame: 0,
+            out_frame: 24,
+            sound,
+            subtitle: None,
+            source_colour: Default::default(),
+            picture_processing: Default::default(),
+        };
+        let timeline = postkit::timeline::Timeline {
+            version: postkit::timeline::TIMELINE_FORMAT_VERSION,
+            fps: postkit::encode::FrameRate::whole(24),
+            clips: vec![
+                clip(&card, 0, postkit::timeline::ClipSound::None),
+                clip(&surround, 24, postkit::timeline::ClipSound::Embedded),
+            ],
+            sound: postkit::timeline::SoundTrack::PerClip,
+            subtitle: None,
+            reel_starts: Vec::new(),
+        };
+
+        let name = name_of(SoundtrackSource {
+            picture_sound: Some(PictureSound::Timeline(&timeline)),
+            ..sound_from(None, &card)
+        });
+
+        assert!(name.contains("_EN-XX_51_"), "{name}");
+        let silent = postkit::timeline::Timeline {
+            clips: vec![clip(&card, 0, postkit::timeline::ClipSound::None)],
+            ..timeline.clone()
+        };
+        assert!(
+            name_of(SoundtrackSource {
+                picture_sound: Some(PictureSound::Timeline(&silent)),
+                ..sound_from(None, &card)
+            })
+            .contains("_MOS_")
+        );
+    }
+
+    #[test]
     fn a_picked_wav_names_the_channels_over_the_picture_sound() {
         let dir = tempfile::tempdir().unwrap();
         let source = source_with_sound(dir.path(), &["5.1"]);
@@ -683,7 +755,7 @@ mod tests {
             .expect("the source has sound");
         let extracted_channels = crate::mxf_wrap::wav_channels(&extracted).unwrap();
         assert_eq!(
-            embedded_channel_count(Some(&source)).unwrap(),
+            embedded_channel_count(&source).unwrap(),
             usize::from(extracted_channels)
         );
     }

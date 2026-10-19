@@ -24,6 +24,8 @@ MIN_WINDOW_SIDE = 200
 WINDOW_TIMEOUT_SECONDS = 60
 TYPE_DELAY_MILLISECONDS = 20
 INPUT_SETTLE_SECONDS = 0.3
+# well inside GTK's 400 ms double-click time
+DOUBLE_CLICK_GAP_MILLISECONDS = 100
 
 FILE_DIALOG_TIMEOUT_SECONDS = 60
 # the picker opens on its recent list, where confirming a typed path does nothing
@@ -245,6 +247,14 @@ class Window:
 
     # WebKitWebDriver refuses element click, value and actions in a wry webview
     def click(self, css):
+        self._click_centre(css, "1")
+
+    def double_click(self, css):
+        self._click_centre(
+            css, "--repeat", "2", "--delay", str(DOUBLE_CLICK_GAP_MILLISECONDS), "1"
+        )
+
+    def _click_centre(self, css, *click_arguments):
         spot = self.session.execute(CENTRE_OF_ELEMENT, css)
         if spot is None:
             raise AssertionError(f"{css} has no box on the page to click")
@@ -254,7 +264,7 @@ class Window:
             str(self.origin[0] + round(spot[0])),
             str(self.origin[1] + round(spot[1])),
             "click",
-            "1",
+            *click_arguments,
         )
         time.sleep(INPUT_SETTLE_SECONDS)
 

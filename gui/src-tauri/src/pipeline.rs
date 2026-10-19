@@ -100,6 +100,8 @@ pub struct IsdcfNameRequest {
     pub crop_top: Option<u32>,
     pub crop_bottom: Option<u32>,
     pub rotate: Option<String>,
+    // the sound of a job that builds as a timeline is its clips' sound
+    pub timeline: Option<postkit::timeline::Timeline>,
     #[serde(skip)]
     pub picture_raster: Option<(u32, u32)>,
 }
@@ -222,7 +224,14 @@ fn isdcf_naming<'a>(
         sound: dcpwizard_core::isdcf_title::SoundtrackSource {
             audio: filled(&request.audio_path).map(Path::new),
             channel_files: request.audio_channel_files.as_deref(),
-            picture: filled(&request.video_path).map(Path::new),
+            picture_sound: match &request.timeline {
+                Some(timeline) => Some(dcpwizard_core::isdcf_title::PictureSound::Timeline(
+                    timeline,
+                )),
+                None => filled(&request.video_path).map(|video| {
+                    dcpwizard_core::isdcf_title::PictureSound::Video(Path::new(video))
+                }),
+            },
             audio_map: filled(&request.audio_map),
             upmix,
             hi_channel: None,
@@ -544,6 +553,7 @@ fn apply_package_name_to_job(
         atmos: job.atmos.clone(),
         facility: job.facility.clone(),
         naming: job.naming.clone(),
+        timeline: job.timeline.clone(),
         picture_raster,
         ..Default::default()
     };
@@ -1068,7 +1078,10 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
             duration_frames(trim_end.as_deref(), "Trim end")?,
         ),
     };
-    let still_length_frames = duration_frames(still_length.as_deref(), "Still length")?;
+    let still_length_frames = match &single_clip {
+        Some(build) => build.still_hold_frames.unwrap_or(0),
+        None => duration_frames(still_length.as_deref(), "Still length")?,
+    };
 
     if still_input && still_length_frames == 0 {
         return Err("The video is a single image and has no length: set a still length".into());
@@ -1666,7 +1679,8 @@ fn job_plan(job: &JobConfig) -> dcpwizard_core::preflight::CreatePlan {
     );
     dcpwizard_core::preflight::CreatePlan {
         picture: job.video_path.clone(),
-        picture_kind: match (job.still_length_frames > 0, codestreams) {
+        // the first layer 0 clip of a timeline can be a still with no length of the job's own
+        picture_kind: match (postkit::still::is_still_image(&job.video_path), codestreams) {
             (true, _) => dcpwizard_core::preflight::PictureKind::Still,
             (_, true) => dcpwizard_core::preflight::PictureKind::Codestreams,
             _ => dcpwizard_core::preflight::PictureKind::Video,
@@ -1818,7 +1832,7 @@ pub async fn detect_source_crop(
         info.width,
         info.height,
         &geometry_for_resolution(resolution.as_deref().unwrap_or(DEFAULT_RESOLUTION)),
-        postkit::encode::detect_input_type(&source) == postkit::encode::InputType::ImageSequence,
+        dcpwizard_core::source_picture::is_image_sequence_directory(&source),
     )?;
     Ok(DetectedCrop {
         left: resolved.processing.crop.left,
@@ -2679,7 +2693,7 @@ fn resolve_job_picture(
         info.width,
         info.height,
         &job_geometry(job),
-        postkit::encode::detect_input_type(source) == postkit::encode::InputType::ImageSequence,
+        dcpwizard_core::source_picture::is_image_sequence_directory(source),
     )
 }
 
@@ -5034,6 +5048,130 @@ mod tests {
             serde_json::to_value(&from_timeline).unwrap(),
             serde_json::to_value(&from_video).unwrap()
         );
+    }
+
+    fn still_image(dir: &Path) -> PathBuf {
+        let path = dir.join("card.png");
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=320x240",
+            ])
+            .args(["-frames:v", "1"])
+            .arg(&path)
+            .output()
+            .expect("ffmpeg has to run");
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+        path
+    }
+
+    #[test]
+    fn a_one_clip_still_timeline_builds_the_job_the_held_still_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = still_image(dir.path());
+        let subtitle = dir.path().join("card.srt");
+        std::fs::write(&subtitle, "1\n00:00:00,000 --> 00:00:00,100\nHello\n").unwrap();
+
+        let from_timeline = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline_of(vec![postkit::timeline::Clip {
+                    subtitle: Some(subtitle.clone()),
+                    ..timeline_clip(&card, 0, 0, 48)
+                }])),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        let from_still = job_config_of(
+            1,
+            SubmitRequest {
+                video_path: card.to_string_lossy().into_owned(),
+                still_length: Some("48f".into()),
+                subtitle: Some(subtitle.to_string_lossy().into_owned()),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(from_timeline.still_length_frames, 48);
+        assert_eq!(
+            serde_json::to_value(&from_timeline).unwrap(),
+            serde_json::to_value(&from_still).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_timeline_opening_on_a_still_takes_no_frame_rate_from_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = still_image(dir.path());
+        let video = clip_at_rate(dir.path(), "30");
+        let mut timeline = timeline_of(vec![
+            postkit::timeline::Clip {
+                sound: postkit::timeline::ClipSound::None,
+                ..timeline_clip(&card, 0, 0, 30)
+            },
+            timeline_clip(&video, 30, 0, 6),
+        ]);
+        timeline.fps = postkit::encode::FrameRate::whole(30);
+        let job = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline),
+                framerate: Some(AUTO_FRAME_RATE.into()),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        let hints = dcpwizard_core::hints::gather_hints(&job_plan(&job));
+        assert_eq!(job.framerate, "30");
+        assert!(
+            hints
+                .iter()
+                .all(|hint| !hint.text.starts_with("The source runs at")),
+            "{hints:?}"
+        );
+    }
+
+    #[test]
+    fn a_timeline_opening_on_a_still_is_named_for_the_sound_its_clips_carry() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = still_image(dir.path());
+        let surround = source_with_five_one_sound(dir.path());
+        let mut job = job_config_of(
+            1,
+            SubmitRequest {
+                title: "MyFilm".into(),
+                output_dir: dir.path().to_string_lossy().into_owned(),
+                timeline: Some(timeline_of(vec![
+                    postkit::timeline::Clip {
+                        sound: postkit::timeline::ClipSound::None,
+                        ..timeline_clip(&card, 0, 0, 24)
+                    },
+                    timeline_clip(&surround, 24, 0, 24),
+                ])),
+                naming: Some(NamingMetadata {
+                    isdcf_naming: true,
+                    ..Default::default()
+                }),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+
+        apply_package_name_to_job(&mut job, Some((1998, 1080))).unwrap();
+
+        assert!(job.title.contains("_51_"), "{}", job.title);
     }
 
     const CHANNEL_SET_SECONDS: usize = 1;

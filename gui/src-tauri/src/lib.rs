@@ -73,6 +73,8 @@ pub fn run() {
         .manage(rebuild::RebuildState::default())
         .manage(guikit::launch_project::LaunchProject::default())
         .invoke_handler(tauri::generate_handler![
+            guikit::source_length::picture_source_length,
+            guikit::source_raster::picture_source_raster,
             guikit::preview::preview_load,
             guikit::preview::preview_load_timeline,
             guikit::preview::preview_play_pause,

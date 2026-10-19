@@ -1878,6 +1878,97 @@ def test_enter_on_the_properties_handle_hides_and_shows_the_panel(window):
     )
 
 
+SPACE_KEY = "space"
+PROPERTIES_HANDLE = "#properties-resize-handle"
+
+
+def test_space_and_a_double_click_on_the_properties_handle_hide_and_show_the_panel(window):
+    session = window.session
+    wait_for_view(session, PROJECT_VIEW)
+    assert session.execute(PROPERTIES_LAYOUT) == EXPANDED_PROPERTIES
+
+    session.execute(FOCUS_PROPERTIES_HANDLE)
+    window.press(SPACE_KEY)
+    wait_until(
+        "Space on the handle never hid the properties",
+        lambda: session.execute(PROPERTIES_LAYOUT) == COLLAPSED_PROPERTIES,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.press(SPACE_KEY)
+    wait_until(
+        "Space on the handle never showed the properties again",
+        lambda: session.execute(PROPERTIES_LAYOUT) == EXPANDED_PROPERTIES,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.double_click(PROPERTIES_HANDLE)
+    wait_until(
+        "a double-click on the open handle never hid the properties",
+        lambda: session.execute(PROPERTIES_LAYOUT) == COLLAPSED_PROPERTIES,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.double_click(PROPERTIES_HANDLE)
+    assert session.execute(PROPERTIES_LAYOUT) == EXPANDED_PROPERTIES, (
+        "a double-click that starts on the collapsed strip leaves the properties shown"
+    )
+
+
+STILL_HOLD_OUT = "00:00:05:00"
+SEQUENCE_IMAGES = 36
+SEQUENCE_OUT = "00:00:01:12"
+CLIP_START = "00:00:00:00"
+
+
+def test_a_still_and_an_image_sequence_import_as_a_held_still_and_a_counted_clip(window, tmp_path):
+    session = window.session
+    card = tmp_path / "card.png"
+    run_ffmpeg("-f", "lavfi", "-i", "color=c=red:s=640x360", "-frames:v", "1", str(card))
+    sequence = tmp_path / "sequence"
+    sequence.mkdir()
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"testsrc2=size=640x360:rate={FIXTURE_FPS}",
+        "-frames:v", str(SEQUENCE_IMAGES),
+        str(sequence / "frame_%04d.png"),
+    )
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", card)
+    choose_in_dialog(window, "#import-image-sequence", sequence)
+    wait_until(
+        "the still never became a 5 second hold and the sequence never took its image count",
+        lambda: session.execute(CLIP_TITLES)
+        == [
+            clip_title(card.name, CLIP_START, STILL_HOLD_OUT),
+            clip_title(sequence.name, CLIP_START, SEQUENCE_OUT),
+        ],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    wait_until(
+        "the sequence asset never showed its size beside its image count",
+        lambda: session.execute(ASSET_METAS)
+        == ["640\u00d7360", f"640\u00d7360 {SEQUENCE_IMAGES} frames"],
+        OPEN_TIMEOUT_SECONDS,
+    )
+
+    window.click(TIMELINE_CLIP.format(0))
+    wait_until(
+        "the still's In field never showed as disabled",
+        lambda: session.property(TIMELINE_IN_FIELD, "disabled") is True,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(TIMELINE_CLIP.format(1))
+    wait_until(
+        "the sequence clip's In field never showed as enabled",
+        lambda: session.property(TIMELINE_IN_FIELD, "disabled") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
 def counted_video_frames(movie):
     probed = subprocess.run(
         (

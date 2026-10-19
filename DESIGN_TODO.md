@@ -161,8 +161,8 @@ Nothing public on their side covers validation, Photon, QC reports, loudness,
 subtitle conversion or KDMs, and they say key distribution is still to come. Gaps on
 our side:
 
-- Timeline follow-ups: PNG sequence clips in the GUI, a held still as a clip, a
-  composited preview. The list is under postkit's DESIGN_TODO.
+- Timeline follow-ups: a composited preview. The list is under postkit's
+  DESIGN_TODO.
 - SDI capture from a card, and SDI or HDMI output on third-party adaptors. Output is
   the DeckLink entry in postkit's DESIGN_TODO, unblocked now that the device decode
   exists. Capture has no entry anywhere and no card to prove it on.

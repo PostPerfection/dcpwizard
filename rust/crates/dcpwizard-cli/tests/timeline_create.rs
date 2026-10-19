@@ -711,3 +711,216 @@ fn codestreams_on_layer_0_after_a_gap_build_with_the_gap_black() {
     let verified = dcpwizard_core::verify::verify_dcp(&package);
     assert!(verified.valid, "verify errors: {:?}", verified.errors);
 }
+
+const LEAD_FRAMES: u64 = 24;
+const HELD_FRAMES: u64 = 48;
+
+// one red picture at the blue clip's size
+fn write_red_still(directory: &Path) -> PathBuf {
+    let path = directory.join("card.png");
+    let (width, height) = LAYERED_SIZE;
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!("color=c=red:s={width}x{height}"))
+            .args(["-frames:v", "1"])
+            .arg(&path),
+        "ffmpeg has to write the still",
+    );
+    path
+}
+
+fn held_still(picture: PathBuf, start: u64, out_frame: u64) -> Clip {
+    Clip {
+        sound: ClipSound::None,
+        ..clip(picture, start, 0, out_frame)
+    }
+}
+
+#[test]
+fn a_still_between_two_video_clips_is_held_for_its_out_point() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
+    let card = write_red_still(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            clip(blue.clone(), 0, 0, LEAD_FRAMES),
+            held_still(card, LEAD_FRAMES, HELD_FRAMES),
+            clip(blue, LEAD_FRAMES + HELD_FRAMES, 0, LEAD_FRAMES),
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let package = output.join(TITLE);
+
+    assert_eq!(
+        reel_picture_durations(&package),
+        vec![LEAD_FRAMES + HELD_FRAMES + LEAD_FRAMES]
+    );
+    let reels = picture_frames_by_length(&package);
+    let hold = LEAD_FRAMES..LEAD_FRAMES + HELD_FRAMES;
+    for (frame, samples) in reels[0].iter().enumerate() {
+        let want = if hold.contains(&(frame as u64)) {
+            Seen::Red
+        } else {
+            Seen::Blue
+        };
+        assert_eq!(samples, &[Some(want); 2], "frame {frame}");
+    }
+    let verified = dcpwizard_core::verify::verify_dcp(&package);
+    assert!(verified.valid, "verify errors: {:?}", verified.errors);
+}
+
+#[test]
+fn one_held_still_builds_the_length_the_still_length_flag_builds() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let card = write_red_still(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![held_still(card.clone(), 0, HELD_FRAMES)],
+        Vec::new(),
+    );
+    let from_timeline = directory.path().join("from_timeline");
+    let from_flag = directory.path().join("from_flag");
+
+    create(config_home.path(), &timeline, &from_timeline)
+        .assert()
+        .success();
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .args(["create", "--title", TITLE, "--video"])
+        .arg(&card)
+        .args(["--still-length", &format!("{HELD_FRAMES}f"), "-o"])
+        .arg(&from_flag)
+        .assert()
+        .success();
+
+    let durations = reel_picture_durations(&from_timeline.join(TITLE));
+    assert_eq!(durations, vec![HELD_FRAMES]);
+    assert_eq!(durations, reel_picture_durations(&from_flag.join(TITLE)));
+}
+
+#[test]
+fn a_still_with_an_in_point_is_refused_by_name() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
+    let card = write_red_still(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            clip(blue, 0, 0, LEAD_FRAMES),
+            Clip {
+                in_frame: 3,
+                ..held_still(card, LEAD_FRAMES, HELD_FRAMES)
+            },
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    is_refused(
+        &mut create(config_home.path(), &timeline, &output),
+        &output,
+        &[
+            "clip 2",
+            "card.png",
+            "the in point is 3, and a still is held from its first frame",
+        ],
+    );
+}
+
+#[test]
+fn a_timeline_opening_on_a_still_builds_the_still_then_the_video() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let blue = write_blue_clip(directory.path());
+    let card = write_red_still(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            held_still(card, 0, LEAD_FRAMES),
+            clip(blue, LEAD_FRAMES, 0, LEAD_FRAMES),
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+    let package = output.join(TITLE);
+
+    assert_eq!(reel_picture_durations(&package), vec![2 * LEAD_FRAMES]);
+    let reels = picture_frames_by_length(&package);
+    for (frame, samples) in reels[0].iter().enumerate() {
+        let want = if (frame as u64) < LEAD_FRAMES {
+            Seen::Red
+        } else {
+            Seen::Blue
+        };
+        assert_eq!(samples, &[Some(want); 2], "frame {frame}");
+    }
+}
+
+fn write_surround_clip(directory: &Path) -> PathBuf {
+    let path = directory.join("surround.mkv");
+    let (width, height) = LAYERED_SIZE;
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "color=c=blue:s={width}x{height}:rate={FRAME_RATE}:duration={BASE_SECONDS}"
+            ))
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!(
+                "anullsrc=channel_layout=5.1:sample_rate={SAMPLE_RATE}:duration={BASE_SECONDS}"
+            ))
+            .args(["-c:v", "ffv1", "-c:a", "pcm_s24le"])
+            .arg(&path),
+        "ffmpeg has to write the surround clip",
+    );
+    path
+}
+
+#[test]
+fn a_timeline_opening_on_a_still_is_named_for_the_sound_its_clips_carry() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let card = write_red_still(directory.path());
+    let surround = write_surround_clip(directory.path());
+    let timeline = write_timeline(
+        directory.path(),
+        vec![
+            held_still(card, 0, LEAD_FRAMES),
+            clip(surround, LEAD_FRAMES, 0, LEAD_FRAMES),
+        ],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let run = create(config_home.path(), &timeline, &output)
+        .arg("--isdcf-name")
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", printed(&run));
+
+    let packages: Vec<String> = std::fs::read_dir(&output)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(packages.len(), 1, "{packages:?}");
+    assert!(packages[0].contains("_51_"), "{}", packages[0]);
+}

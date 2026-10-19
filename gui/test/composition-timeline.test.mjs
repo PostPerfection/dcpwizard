@@ -2,7 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { emptyTimeline } from '../../extern/guikit/src/composition-timeline.js';
-import { clipSoundIsChannelSet, clipTrimSpecs, previewTimelineWire, timelineRequestFields, withChannelSets, withClipTrims } from '../src/composition-timeline.js';
+import {
+  clipSoundIsChannelSet,
+  clipTrimSpecs,
+  previewTimelineWire,
+  sourceLengthFields,
+  stillLengthSpec,
+  timelineRequestFields,
+  withChannelSets,
+  withClipTrims,
+  withProbedLength,
+  withStillLength,
+} from '../src/composition-timeline.js';
 
 const ASSETS = [
   { id: 1, type: 'video', path: '/media/a.mov', name: 'a.mov', fps: '24/1', frames: 240 },
@@ -13,6 +24,7 @@ const ASSETS = [
   { id: 6, type: 'audio', path: '/media/mix.wav', name: 'mix.wav' },
   { id: 7, type: 'audio', path: null, name: 'mix', channelFiles: [{ path: '/media/mix_L.wav', lane: 'L' }, { path: '/media/mix_R.wav', lane: 'R' }] },
   { id: 8, type: 'subtitle', path: '/media/feature.srt', name: 'feature.srt' },
+  { id: 9, type: 'video', path: '/media/card.png', name: 'card.png', still: true },
 ];
 
 function assetById(assetId) {
@@ -186,4 +198,66 @@ test('the preview plays a timeline a channel set sounds without sound, and any o
   const underWav = previewTimelineWire({ ...emptyTimeline([24, 1]), clips, sound: 6 }, assetById);
   assert.deepEqual(underWav.sound, { Override: '/media/mix.wav' });
   assert.deepEqual(underWav.clips.map((wired) => wired.sound), ['Embedded', { File: '/media/b.wav' }]);
+});
+
+function stillClip(picture, outFrame, fields = {}) {
+  return { ...clip(picture, null, 0, outFrame, fields), still: true };
+}
+
+test('the Still length field sets a one-clip still\'s out point, and a still has no trims', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [stillClip(9, 120)] };
+
+  const held = withStillLength(timeline, 48);
+
+  assert.deepEqual(held.clips[0], stillClip(9, 48));
+  assert.equal(stillLengthSpec(held.clips[0]), '48f');
+  assert.deepEqual(clipTrimSpecs(held.clips[0]), { trimStart: '', trimEnd: '' });
+  assert.equal(withClipTrims(held, 12, 12), held);
+  assert.equal(withStillLength(held, 0), held, 'an empty field leaves the hold');
+  const video = { ...timeline, clips: [clip(1, 240, 0, 240)] };
+  assert.equal(withStillLength(video, 48), video);
+  const twoClips = { ...timeline, clips: [stillClip(9, 120), clip(1, 240, 0, 240, { start: 120 })] };
+  assert.equal(withStillLength(twoClips, 48), twoClips);
+});
+
+test('a one-clip still goes as the single-picture request held for its out point, with no trims and no NaN', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [stillClip(9, 120)] };
+
+  const request = requestFor(timeline, { ...PANEL_REQUEST, trimStart: '2s', trimEnd: '1s', stillLength: '10s' });
+
+  assert.deepEqual(
+    [request.videoPath, request.stillLength, request.trimStart, request.trimEnd],
+    ['/media/card.png', '120f', null, null],
+  );
+  assert.equal('timeline' in request, false);
+});
+
+test('a one-clip still that goes as a timeline leaves the still length to the wire timeline\'s out point', () => {
+  const timeline = { ...emptyTimeline([24, 1]), clips: [stillClip(9, 120, { start: 24 })] };
+
+  const request = requestFor(timeline, { ...PANEL_REQUEST, trimStart: '2s', stillLength: '120f' });
+
+  assert.deepEqual([request.videoPath, request.stillLength, request.trimStart, request.trimEnd], ['', null, null, null]);
+  assert.deepEqual([request.timeline.clips[0].in_frame, request.timeline.clips[0].out_frame], [0, 120]);
+});
+
+test('an old project\'s unprobed clip of a still is marked a still and held for 5 seconds when it is probed on open', () => {
+  const asset = { id: 9, type: 'video', path: '/media/card.png', name: 'card.png', fps: '25/1' };
+  const opened = {
+    ...emptyTimeline([24, 1]),
+    clips: [clip(9, 0, 0, 0), clip(1, 240, 0, 240)],
+  };
+
+  Object.assign(asset, sourceLengthFields({ kind: 'still' }));
+  const probed = withProbedLength(opened, asset);
+
+  assert.equal(asset.still, true);
+  assert.equal(asset.fps, null, 'a still has no rate for the timeline to take');
+  assert.deepEqual(probed.clips, [
+    stillClip(9, 120, { sound: { kind: 'none', asset: null } }),
+    clip(1, 240, 0, 240, { start: 120 }),
+  ]);
+  const sequence = { id: 3, path: '/media/c' };
+  Object.assign(sequence, sourceLengthFields({ kind: 'counted', frames: 24 }));
+  assert.deepEqual(withProbedLength({ ...opened, clips: [clip(3, 0, 0, 0)] }, sequence).clips, [clip(3, 24, 0, 24)]);
 });

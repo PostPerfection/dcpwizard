@@ -2750,7 +2750,10 @@ fn isdcf_package(
     // the video branch fits the resolution to the encode raster unless a flag fixed it
     let resolution_fixed = request.twok || parsed.fourk || parsed.container != NO_CONTAINER;
     let resolution = match planned_raster {
-        Some((width, height)) if request.is_video_file && !resolution_fixed => {
+        // a timeline build sizes the package from its composition raster
+        Some((width, height))
+            if (request.is_video_file || plan.timeline.is_some()) && !resolution_fixed =>
+        {
             dcpwizard_core::Resolution::for_raster(width, height)
         }
         _ => parsed.package_resolution,
@@ -2792,8 +2795,15 @@ fn isdcf_package(
         sound: dcpwizard_core::isdcf_title::SoundtrackSource {
             audio: plan.audio.as_deref(),
             channel_files: None,
-            // only a video file's own sound is demuxed when --audio names none
-            picture: request.is_video_file.then_some(plan.picture.as_path()),
+            picture_sound: match &plan.timeline {
+                Some(timeline) => Some(dcpwizard_core::isdcf_title::PictureSound::Timeline(
+                    timeline,
+                )),
+                // only a video file's own sound is demuxed when --audio names none
+                None => request.is_video_file.then_some(
+                    dcpwizard_core::isdcf_title::PictureSound::Video(plan.picture.as_path()),
+                ),
+            },
             audio_map: plan.audio_map.as_deref(),
             upmix: plan.upmix,
             hi_channel: request.hi_channel,
@@ -4372,6 +4382,10 @@ fn run() {
                 ),
                 None => (trim_start, trim_end),
             };
+            let still_length = match &single_clip {
+                Some(build) => build.still_hold_frames.map(|frames| format!("{frames}f")),
+                None => still_length,
+            };
             let path_text = |path: &PathBuf| path.to_string_lossy().into_owned();
             let audio = match (&single_clip, &multi_clip_timeline) {
                 (Some(build), _) => build.audio.as_ref().map(path_text),
@@ -4681,7 +4695,7 @@ fn run() {
             let sequence_input = video_path.is_dir()
                 && postkit::encode::detect_input_type(&video_path)
                     == postkit::encode::InputType::ImageSequence;
-            if still_input && still_length.is_none() {
+            if still_input && still_length.is_none() && multi_clip_timeline.is_none() {
                 refusals.messages.push(format!(
                     "--video {} is a single image and has no length: pass --still-length",
                     video_path.display()
