@@ -1832,6 +1832,119 @@ def test_a_clip_with_alpha_dragged_onto_a_layer_builds_over_the_clip_under_it(wi
     ]
 
 
+RENDER_STATUS_PREFIX = "Rendering layers:"
+PREVIEW_FAILED_PREFIX = "Preview failed:"
+OVERLAY_SEQUENCE_IMAGES = FIXTURE_FPS
+OVERLAY_SEQUENCE_OUT = "00:00:01:00"
+RENDERED_STRETCH_START = "00:00:01:00"
+RENDERED_STRETCH_END_SECONDS = 2
+# under the app's cache folder, where guikit keeps the stretches it renders for mpv
+RENDERED_STRETCHES = "cache/com.dcpwizard.desktop/timeline-stretches-mpv"
+HELD_STILL_SECONDS = 5
+# how far a held still plays before the test calls it playing
+STILL_PLAYED_SECONDS = 1
+
+
+# red over the left half and transparent over the right, one png per frame
+def write_png_sequence_with_alpha(directory, images):
+    directory.mkdir()
+    width, height = (int(side) for side in FIXTURE_SIZE.split("x"))
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"color=c=red:s={width // 2}x{height}:rate={FIXTURE_FPS}",
+        "-vf", f"format=rgba,pad={width}:{height}:0:0:color=black@0",
+        "-frames:v", str(images),
+        str(directory / "frame_%04d.png"),
+    )
+    return directory
+
+
+def wait_for_rendered_timeline(session):
+    wait_until(
+        "the timeline never loaded after its render",
+        lambda: reported_duration(session) > 0 or status_text(session).startswith(PREVIEW_FAILED_PREFIX),
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert reported_duration(session) > 0, status_text(session)
+    assert not status_text(session).startswith(RENDER_STATUS_PREFIX)
+
+
+def timeline_position(session):
+    return session.execute(PREVIEW_METADATA).get("timeline_position") or 0
+
+
+def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_under_it(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    base = write_picture(media / "base.mov", FIXTURE_SIZE, BASE_CLIP_SECONDS)
+    overlay = write_png_sequence_with_alpha(media / "title", OVERLAY_SEQUENCE_IMAGES)
+    base_title = clip_title(base.name, CLIP_START, f"00:00:{BASE_CLIP_SECONDS:02d}:00")
+    overlay_title = clip_title(overlay.name, CLIP_START, OVERLAY_SEQUENCE_OUT)
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", base)
+    choose_in_dialog(window, "#import-image-sequence", overlay)
+    wait_until(
+        "the clip and the sequence never took their lengths",
+        lambda: session.execute(CLIP_LAYERS) == [[base_title, 0], [overlay_title, 0]],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    drag_clip_onto_row(window, TIMELINE_CLIP.format(1), LAYER_ROW.format(1))
+    wait_until(
+        "the dragged sequence never moved onto layer 1",
+        lambda: session.execute(CLIP_LAYERS) == [[overlay_title, 1], [base_title, 0]],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    replace_field_text(window, TIMELINE_START_FIELD, RENDERED_STRETCH_START)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "the sequence on layer 1 never took its start",
+        lambda: session.property(TIMELINE_START_FIELD, "value") == RENDERED_STRETCH_START,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.click(PLAY_TIMELINE_BUTTON)
+    wait_for_rendered_timeline(session)
+    assert reported_duration(session) == pytest.approx(BASE_CLIP_SECONDS)
+    assert len(list((tmp_path / RENDERED_STRETCHES).glob("*.mkv"))) == 1
+    wait_until(
+        "the timeline never played through the rendered stretch",
+        lambda: timeline_position(session) > RENDERED_STRETCH_END_SECONDS + FRAME_SECONDS,
+        PLAYHEAD_TIMEOUT_SECONDS,
+    )
+
+
+def test_play_timeline_plays_a_held_still_on_layer_0(window, tmp_path):
+    session = window.session
+    card = tmp_path / "card.png"
+    run_ffmpeg("-f", "lavfi", "-i", "color=c=red:s=640x360", "-frames:v", "1", str(card))
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", card)
+    wait_until(
+        "the still never became a 5 second hold",
+        lambda: session.execute(CLIP_TITLES) == [clip_title(card.name, CLIP_START, STILL_HOLD_OUT)],
+        OPEN_TIMEOUT_SECONDS,
+    )
+
+    window.click(PLAY_TIMELINE_BUTTON)
+    wait_for_rendered_timeline(session)
+    assert reported_duration(session) == pytest.approx(HELD_STILL_SECONDS)
+    wait_until(
+        "the held still never played",
+        lambda: timeline_position(session) > STILL_PLAYED_SECONDS,
+        PLAYHEAD_TIMEOUT_SECONDS,
+    )
+
 SCROLLED_PREVIEW_SIZE = [640, 360]
 SCROLLED_PREVIEW_SECONDS = 10
 # at the test window size the docked preview scrolls with the project view's left column
