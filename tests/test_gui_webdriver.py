@@ -1839,7 +1839,7 @@ OVERLAY_SEQUENCE_OUT = "00:00:01:00"
 RENDERED_STRETCH_START = "00:00:01:00"
 RENDERED_STRETCH_END_SECONDS = 2
 # under the app's cache folder, where guikit keeps the stretches it renders for mpv
-RENDERED_STRETCHES = "cache/com.dcpwizard.desktop/timeline-stretches-mpv"
+RENDERED_STRETCHES = "cache/com.dcpwizard.desktop/preview-timeline/timeline-stretches-mpv"
 HELD_STILL_SECONDS = 5
 # how far a held still plays before the test calls it playing
 STILL_PLAYED_SECONDS = 1
@@ -1879,6 +1879,7 @@ def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_un
     media.mkdir()
     base = write_picture(media / "base.mov", FIXTURE_SIZE, BASE_CLIP_SECONDS)
     overlay = write_png_sequence_with_alpha(media / "title", OVERLAY_SEQUENCE_IMAGES)
+    sound = write_sound(media / "timeline.wav", BASE_CLIP_SECONDS)
     base_title = clip_title(base.name, CLIP_START, f"00:00:{BASE_CLIP_SECONDS:02d}:00")
     overlay_title = clip_title(overlay.name, CLIP_START, OVERLAY_SEQUENCE_OUT)
 
@@ -1889,6 +1890,7 @@ def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_un
     )
     choose_in_dialog(window, "#import-video", base)
     choose_in_dialog(window, "#import-image-sequence", overlay)
+    choose_in_dialog(window, "#import-audio", sound)
     wait_until(
         "the clip and the sequence never took their lengths",
         lambda: session.execute(CLIP_LAYERS) == [[base_title, 0], [overlay_title, 0]],
