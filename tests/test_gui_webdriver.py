@@ -15,10 +15,12 @@ from pathlib import Path
 import pytest
 
 from tauri_webdriver import (
+    CENTRE_OF_ELEMENT,
     INPUT_SETTLE_SECONDS,
     POLL_SECONDS,
     SELECT_ALL_CHORD,
     Window,
+    save_screenshot,
     visible_windows,
     wait_until,
     xdotool,
@@ -536,11 +538,78 @@ def wait_for_view(session, view):
     )
 
 
+DIALOG_DIAGNOSTICS_DIRECTORY = REPOSITORY_ROOT / "gui-test-diagnostics"
+
+CLICK_TARGET_STATE = """
+const button = document.querySelector(arguments[0]);
+const box = button ? button.getBoundingClientRect().toJSON() : null;
+const centre = box ? [box.left + box.width / 2, box.top + box.height / 2] : null;
+const elementAtCentre = centre ? document.elementFromPoint(centre[0], centre[1]) : null;
+const active = document.activeElement;
+return {
+  box,
+  centre,
+  elementAtCentre: elementAtCentre && {
+    tag: elementAtCentre.tagName,
+    id: elementAtCentre.id,
+    className: String(elementAtCentre.className),
+    outerHTML: elementAtCentre.outerHTML.slice(0, 300),
+  },
+  active: active && { tag: active.tagName, id: active.id },
+};
+"""
+
+
+def window_name(window_id):
+    found = subprocess.run(
+        ("xdotool", "getwindowname", window_id), capture_output=True, text=True
+    )
+    return found.stdout.strip()
+
+
+def window_names(window_ids):
+    return "\n".join(
+        f"  {window_id} {window_name(window_id)}" for window_id in sorted(window_ids)
+    )
+
+
+def write_dialog_diagnostics(window, button, windows_before):
+    folder_name = re.sub(r"[^A-Za-z0-9_-]+", "_", button).strip("_")
+    directory = DIALOG_DIAGNOSTICS_DIRECTORY / folder_name
+    directory.mkdir(parents=True, exist_ok=True)
+    session = window.session
+    click_target = session.execute(CLICK_TARGET_STATE, button)
+    geometry = subprocess.run(
+        ("xdotool", "getwindowgeometry", window.window_id),
+        capture_output=True,
+        text=True,
+    )
+    report = [
+        f"button: {button}",
+        f"bounding box without scrolling: {json.dumps(click_target['box'])}",
+        f"centre without scrolling: {click_target['centre']}",
+        f"centre of element after scrolling: {session.execute(CENTRE_OF_ELEMENT, button)}",
+        f"element at centre: {json.dumps(click_target['elementAtCentre'], indent=2)}",
+        f"status text: {status_text(session)!r}",
+        f"active element: {json.dumps(click_target['active'])}",
+        f"window origin used by the click: {window.origin}",
+        f"app window {window.window_id} geometry:\n{geometry.stdout}{geometry.stderr}",
+        f"visible windows before the click:\n{window_names(windows_before)}",
+        f"visible windows at failure:\n{window_names(visible_windows())}",
+    ]
+    (directory / "state.txt").write_text("\n".join(report) + "\n")
+    save_screenshot(session, directory / "webview.png")
+
+
 # the real GTK file picker, driven through its location bar
 def choose_in_dialog(window, button, path):
     windows_before = visible_windows()
     window.click(button)
-    window.answer_file_dialog(path, windows_before)
+    try:
+        window.answer_file_dialog(path, windows_before)
+    except AssertionError:
+        write_dialog_diagnostics(window, button, windows_before)
+        raise
 
 
 def segment_is_active(session, track, reel_index):

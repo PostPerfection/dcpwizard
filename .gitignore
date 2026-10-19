@@ -40,3 +40,6 @@ GTAGS
 TAGS
 Testing/
 rust/target/
+
+# GUI end to end test failure diagnostics
+gui-test-diagnostics/

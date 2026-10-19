@@ -332,6 +332,13 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             uv run --no-project --with pytest --with python-xlib pytest tests/test_gui_webdriver.py -q
 
+      - name: Upload GUI test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-test-diagnostics
+          path: gui-test-diagnostics/
+
   deny:
     runs-on: ubuntu-24.04
     steps:

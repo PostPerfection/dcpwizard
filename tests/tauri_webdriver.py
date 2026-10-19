@@ -1,3 +1,4 @@
+import base64
 import http.client
 import json
 import os
@@ -129,6 +130,15 @@ def wait_until(describe, check, timeout_seconds):
             reason = f", last: {dropped}" if dropped else ""
             raise AssertionError(f"{describe} within {timeout_seconds}s{reason}")
         time.sleep(POLL_SECONDS)
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def save_screenshot(session, path):
+    png = base64.b64decode(session.call("GET", "/screenshot"))
+    assert png.startswith(PNG_SIGNATURE), "the driver returned no PNG"
+    path.write_bytes(png)
 
 
 class Session:

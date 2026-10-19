@@ -1,4 +1,3 @@
-import base64
 import os
 import subprocess
 import sys
@@ -11,6 +10,7 @@ from tauri_webdriver import (
     CENTRE_OF_ELEMENT,
     INPUT_SETTLE_SECONDS,
     Window,
+    save_screenshot,
     visible_windows,
     wait_until,
     xdotool,
@@ -53,7 +53,6 @@ DEVICE_SCALE = 2
 WINDOW_CSS_SIZE = (1200, 860)
 # both KDM panels and the hints above them fit without scrolling at this height
 KDM_WINDOW_CSS_SIZE = (1200, 1025)
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 PROJECT_TITLE = "My Film"
 MOVIE_SECONDS = 4
@@ -344,12 +343,6 @@ MANUAL_SHOTS = {
     "encrypt.png": (stage_encrypt_options, WINDOW_CSS_SIZE),
     "kdm.png": (stage_kdm_view, KDM_WINDOW_CSS_SIZE),
 }
-
-
-def save_screenshot(session, path):
-    png = base64.b64decode(session.call("GET", "/screenshot"))
-    assert png.startswith(PNG_SIGNATURE), "the driver returned no PNG"
-    path.write_bytes(png)
 
 
 def main():
