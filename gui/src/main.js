@@ -4,8 +4,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, setPreviewPlayStarter, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
-import { previewTarget, previewButtonEnabled, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
+import { initPreview, loadKeepingTransport, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
+import { previewTarget, previewButtonEnabled, sourcePreviewTarget, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
 import { compositionFrameAt, durationFrames, markerFromPlayerUnavailable, markerTimecode } from "./marker-from-player.js";
@@ -15,7 +15,7 @@ import { initPlayerControlsPanel } from "../../extern/guikit/src/player-controls
 import { initJobsPanel, refreshJobs, startJobsPolling, stopJobsPolling } from "../../extern/guikit/src/jobs.js";
 import * as buildsInFlight from "../../extern/guikit/src/builds-in-flight.js";
 import { initTimeline, loadTimelineFromCpl, loadTimelineFromProject, setProjectTimelinePlayhead, setProjectTimelineSeeker } from "./timeline.js";
-import { initTimelineEditor, playTimelineFromPlayhead, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, baseClipsInOrder, clipAtFrame, followTimelinePosition, frameAtSeconds } from "../../extern/guikit/src/timeline-editor.js";
+import { initTimelineEditor, playTimelineFromPlayhead, playsWholeTimeline, setTimeline as showTimelineInEditor, setPlayhead as setEditorPlayhead, setReelStarts as setEditorReelStarts, baseClipsInOrder, clipAtFrame, followTimelinePosition, frameAtSeconds } from "../../extern/guikit/src/timeline-editor.js";
 import {
   DEFAULT_TIMELINE_FPS,
   TIMELINE_KIND_BY_ASSET_TYPE,
@@ -746,6 +746,12 @@ function timelineEdited(timeline) {
   afterTimelineChange();
 }
 
+function playTimeline(timeline) {
+  previewedPackage = null;
+  const compositionName = project.compositions[project.activeComposition].name;
+  return previewTimeline(previewTimelineWire(timeline, assetById), unpackagedJobRequest(), compositionName);
+}
+
 function showActiveTimeline() {
   showTimelineInEditor(activeTimeline());
   afterTimelineChange();
@@ -773,9 +779,11 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   assetKind: (assetId) => TIMELINE_KIND_BY_ASSET_TYPE[assetById(assetId).type],
   sourceLength,
   onChange: timelineEdited,
-  onSeek: seekTimelineFrame,
-  playTimeline: (timeline) => previewTimeline(previewTimelineWire(timeline, assetById), unpackagedJobRequest()),
+  previewShowsClipSource: () => previewedClipIndex !== null,
+  previewClipSource: previewClipSourceAt,
+  playTimeline,
   seekTimeline: previewSeekAbsolute,
+  loadKeepingTransport,
 });
 
 // === Reels ===
@@ -2199,8 +2207,20 @@ function previewTargetInput() {
 function previewCurrentTarget() {
   const target = previewTarget(previewTargetInput());
   if (!target) return;
-  if (target.kind === PREVIEW_KIND_SOURCE) previewSourcePicture(target.path);
+  if (target.kind === PREVIEW_KIND_SOURCE) previewSource(target.path);
   else previewPackage(target.path);
+}
+
+function previewSource(path) {
+  const clipIndex = clipIndexShowing(path, null);
+  const clip = clipIndex === null ? null : activeTimeline().clips[clipIndex];
+  const target = sourcePreviewTarget(path, clip, playsWholeTimeline());
+  if (target.kind === PREVIEW_KIND_SOURCE) {
+    previewSourcePicture(path, clipIndex);
+    return;
+  }
+  setEditorPlayhead(target.startFrame);
+  playTimelineFromPlayhead();
 }
 
 document.getElementById("btn-preview")?.addEventListener("click", previewCurrentTarget);
@@ -2325,21 +2345,24 @@ function clipRate(clip) {
   return parseFrameRate(assetById(clip.picture).fps) ?? activeTimeline().fps;
 }
 
-// a seek in another clip loads that clip's picture first, and nothing happens while the preview plays no clip
-async function seekTimelineFrame(frame) {
-  if (previewedClipIndex === null) return;
+// a frame in another clip loads that clip's picture first
+async function previewClipSourceAt(frame) {
   const timeline = activeTimeline();
   const place = clipAtFrame(timeline, frame);
-  if (!place) return;
+  if (!place) return false;
   const clip = timeline.clips[place.index];
   const path = assetPath(clip.picture);
-  if (path !== previewShownPath && !(await previewSourcePicture(path, place.index))) return;
+  if (path !== previewShownPath && !(await previewSourcePicture(path, place.index))) return false;
   previewedClipIndex = place.index;
   const [numerator, denominator] = clipRate(clip);
   await invoke("preview_seek_absolute", { seconds: ((clip.inFrame + place.frameInClip) * denominator) / numerator });
+  return true;
 }
 
-setProjectTimelineSeeker(seekTimelineFrame);
+// nothing happens while the preview plays no clip
+setProjectTimelineSeeker((frame) => {
+  if (previewedClipIndex !== null) previewClipSourceAt(frame);
+});
 
 const TIMELINE_PLAYHEAD_POLL_MILLISECONDS = 250;
 
@@ -3610,7 +3633,7 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
     if (!asset) return;
     if (action === "preview") {
       const previewPath = channelSetPreviewPath(asset);
-      if (previewPath) previewSourcePicture(previewPath);
+      if (previewPath) previewSource(previewPath);
       else setStatus(CHANNEL_SET_PREVIEW_STATUS);
     } else if (action === "remove") {
       removeAsset(ctxAssetId);
@@ -3901,8 +3924,6 @@ function followPlayingTimeline(position) {
 }
 
 watchPreviewTimelinePosition(followPlayingTimeline);
-// play on a clip of the timeline plays the whole timeline from the playhead
-setPreviewPlayStarter(() => (previewedClipIndex === null ? null : playTimelineFromPlayhead()));
 initTimeline();
 initPlaylist(document.getElementById("playlist"), { loadPackage: previewPackage });
 setStatus("Ready");
