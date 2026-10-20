@@ -678,15 +678,16 @@ pub fn create_vf_with_keys(
             None => ov_timed_text(&entry.ccap_asset_id, &entry.ccap_language),
         };
 
-        let aux_data = (!entry.aux_data_asset_id.is_empty()).then(|| crate::cpl::AuxData {
-            id: entry.aux_data_asset_id.clone(),
-            edit_rate_num: edit_num,
-            edit_rate_den: edit_den,
-            duration: entry.duration_frames,
-            entry_point: 0,
-            key_id: ov_key_id(&entry.aux_data_asset_id),
-            data_type: entry.aux_data_type.clone(),
-        });
+        let aux_data =
+            (!entry.aux_data_asset_id.is_empty()).then(|| postkit::packaging::DcpAuxData {
+                id: entry.aux_data_asset_id.clone(),
+                edit_rate_num: edit_num,
+                edit_rate_den: edit_den,
+                duration: entry.duration_frames,
+                entry_point: 0,
+                key_id: ov_key_id(&entry.aux_data_asset_id),
+                data_type: entry.aux_data_type.clone(),
+            });
 
         cpl_reels.push(crate::cpl::CplReel {
             reel_id: uuid::Uuid::new_v4().to_string(),

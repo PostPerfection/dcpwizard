@@ -1,8 +1,7 @@
 use crate::dcp::DcpConfig;
 use crate::reel::ReelRange;
+use postkit::packaging::{ATMOS_DATA_TYPE_UL, DcpAuxData};
 use std::path::{Path, PathBuf};
-
-pub(crate) const ATMOS_DATA_TYPE_UL: &str = "urn:smpte:ul:060e2b34.04010105.0e090604.00000000";
 
 const ATMOS_HEADER_SIZE: u32 = 16384;
 
@@ -79,7 +78,7 @@ pub(crate) struct WrappedAtmosReel {
     pub(crate) uuid: String,
     pub(crate) file_name: String,
     pub(crate) path: PathBuf,
-    pub(crate) aux_data: crate::cpl::AuxData,
+    pub(crate) aux_data: DcpAuxData,
     pub(crate) key: Option<crate::encrypt::GeneratedKey>,
 }
 
@@ -121,7 +120,7 @@ pub(crate) fn wrap_atmos_reel(
             encryption,
         )?,
     }
-    let aux_data = crate::cpl::AuxData {
+    let aux_data = DcpAuxData {
         id: uuid.to_string(),
         edit_rate_num: fps,
         edit_rate_den: 1,

@@ -575,7 +575,7 @@ pub(crate) fn process_aux_data(
     data_type: &str,
     keys: Option<&ContentKeys>,
     out_dir: &Path,
-) -> Result<Option<(ShippedAsset, crate::cpl::AuxData)>, String> {
+) -> Result<Option<(ShippedAsset, postkit::packaging::DcpAuxData)>, String> {
     if src_file.is_empty() || asset_id.is_empty() {
         return Ok(None);
     }
@@ -595,7 +595,7 @@ pub(crate) fn process_aux_data(
         .atmos_descriptor()
         .map_err(|e| format!("read aux data descriptor: {e}"))?;
 
-    let aux = crate::cpl::AuxData {
+    let aux = postkit::packaging::DcpAuxData {
         id: asset_id.to_string(),
         edit_rate_num: desc.edit_rate.numerator.max(1) as u32,
         edit_rate_den: desc.edit_rate.denominator.max(1) as u32,

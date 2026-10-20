@@ -172,7 +172,7 @@ pub struct CplReel {
     pub stereoscopic: bool,
     /// Auxiliary data (ST 429-18) track, e.g. Dolby Atmos. When present, an
     /// AuxData element is added to the reel's AssetList.
-    pub aux_data: Option<AuxData>,
+    pub aux_data: Option<postkit::packaging::DcpAuxData>,
     /// ST 429-7 markers for this reel, emitted as its MainMarkers asset. Bv2.1
     /// expects one in reel 1 carrying at least FFOC/LFOC.
     #[serde(default)]
@@ -188,19 +188,6 @@ impl CplReel {
             (self.picture_width, self.picture_height)
         }
     }
-}
-
-/// Auxiliary-data (ST 429-18) track for a CPL reel.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AuxData {
-    pub id: String,
-    pub edit_rate_num: u32,
-    pub edit_rate_den: u32,
-    pub duration: u64,
-    pub entry_point: u64,
-    pub key_id: Option<String>,
-    /// SMPTE data-essence UL (e.g. Dolby Atmos IAB bitstream).
-    pub data_type: String,
 }
 
 /// The picture geometry a CPL declares for one composition.
@@ -446,6 +433,7 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
             sound_key_id: r.sound_key_id.clone(),
             picture_hash: r.picture_hash.clone(),
             sound_hash: r.sound_hash.clone(),
+            aux_data: r.aux_data.clone(),
         })
         .collect();
 
@@ -483,15 +471,14 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
         None
     };
 
-    // postkit's DcpCplReel only writes MainPicture/MainSound, so splice the extra
-    // per-reel assets (markers, subtitle, aux data, metadata) and rewrite the
+    // postkit's DcpCplReel only writes MainPicture, MainSound and AuxData, so splice
+    // the extra per-reel assets (markers, subtitle, metadata) and rewrite the
     // picture element for stereoscopic reels. Reel order is preserved.
     let mut xml = cpl.to_xml();
     let needs_splice = metadata_block.is_some()
         || config.reels.iter().any(|r| {
             r.subtitle_id.is_some()
                 || r.ccap_id.is_some()
-                || r.aux_data.is_some()
                 || r.stereoscopic
                 || !r.markers.is_empty()
         });
@@ -516,8 +503,6 @@ pub fn generate_cpl(config: &CplConfig, cpl_uuid: &str, output_file: &Path) -> i
 /// ST 429-10 (2008) stereoscopic picture namespace.
 const NS_STEREO_429_10: &str =
     "http://www.smpte-ra.org/schemas/429-10/2008/Main-Stereo-Picture-CPL";
-/// Dolby auxiliary-data (ST 429-18) namespace used by real Atmos DCPs.
-const NS_AUX_DATA: &str = "http://www.dolby.com/schemas/2012/AD";
 /// ST 429-12 (2008) timed-text namespace, which is where a SMPTE closed caption
 /// sits.
 const NS_TIMED_TEXT_429_12: &str = "http://www.smpte-ra.org/schemas/429-12/2008/TT";
@@ -526,8 +511,8 @@ const NS_HDR_METADATA: &str = "http://www.dcimovies.com/schemas/2018/HDR-Metadat
 const HDR_EOTF_ST2084: &str = "ST 2084";
 
 /// Rewrite each reel's picture element and add the extra AssetList entries
-/// (markers, subtitle, aux data, first-reel metadata) that postkit's writer does
-/// not emit. Walks the reel segments in order between `</AssetList>` markers.
+/// (markers, subtitle, first-reel metadata) that postkit's writer does not emit.
+/// Walks the reel segments in order between `</AssetList>` markers.
 fn splice_reel_extras(
     xml: &str,
     reels: &[CplReel],
@@ -535,6 +520,7 @@ fn splice_reel_extras(
     metadata_first_reel: Option<&str>,
 ) -> String {
     const MARKER: &str = "      </AssetList>\n";
+    const AUX_DATA_OPEN: &str = "        <axd:AuxData ";
     let mut out = String::with_capacity(xml.len() + 512);
     let mut idx = 0;
     for (i, reel) in reels.iter().enumerate() {
@@ -542,7 +528,11 @@ fn splice_reel_extras(
             break;
         };
         let end = idx + pos;
-        let mut segment = xml[idx..end].to_string();
+        // the subtitle and caption assets go ahead of the AuxData postkit writes last
+        let aux_data_start = xml[idx..end]
+            .find(AUX_DATA_OPEN)
+            .map_or(end, |aux_data_pos| idx + aux_data_pos);
+        let mut segment = xml[idx..aux_data_start].to_string();
         if reel.stereoscopic {
             segment = remove_main_picture(&segment);
         }
@@ -562,9 +552,7 @@ fn splice_reel_extras(
         if let Some(ref cid) = reel.ccap_id {
             out.push_str(&main_closed_caption_block(reel, cid));
         }
-        if let Some(ref aux) = reel.aux_data {
-            out.push_str(&aux_data_block(aux));
-        }
+        out.push_str(&xml[aux_data_start..end]);
         if i == 0
             && let Some(block) = metadata_first_reel
         {
@@ -875,39 +863,6 @@ fn interop_aspect(w: u32, h: u32) -> String {
         return "0".to_string();
     }
     format!("{:.2}", w as f64 / h as f64)
-}
-
-fn aux_data_block(aux: &AuxData) -> String {
-    let mut b = String::new();
-    b.push_str(&format!(
-        "        <axd:AuxData xmlns:axd=\"{NS_AUX_DATA}\">\n"
-    ));
-    b.push_str(&format!("          <Id>urn:uuid:{}</Id>\n", aux.id));
-    b.push_str(&format!(
-        "          <EditRate>{} {}</EditRate>\n",
-        aux.edit_rate_num, aux.edit_rate_den
-    ));
-    b.push_str(&format!(
-        "          <IntrinsicDuration>{}</IntrinsicDuration>\n",
-        aux.duration
-    ));
-    b.push_str(&format!(
-        "          <EntryPoint>{}</EntryPoint>\n",
-        aux.entry_point
-    ));
-    b.push_str(&format!(
-        "          <Duration>{}</Duration>\n",
-        aux.duration
-    ));
-    if let Some(ref key_id) = aux.key_id {
-        b.push_str(&format!("          <KeyId>urn:uuid:{key_id}</KeyId>\n"));
-    }
-    b.push_str(&format!(
-        "          <axd:DataType>{}</axd:DataType>\n",
-        aux.data_type
-    ));
-    b.push_str("        </axd:AuxData>\n");
-    b
 }
 
 /// Give a composition the Bv2.1 marker pair: FFOC at frame 1 of the first reel,
@@ -1543,45 +1498,60 @@ mod tests {
     }
 
     #[test]
-    fn aux_data_reel_emits_axd_auxdata() {
+    fn aux_data_follows_the_subtitle_and_precedes_the_metadata_asset() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("CPL.xml");
-        let mut reel = CplReel {
-            reel_id: "r1".into(),
-            picture_id: "pic1".into(),
-            picture_width: 2048,
-            picture_height: 858,
-            picture_edit_rate_num: 24,
-            picture_edit_rate_den: 1,
-            picture_duration: 240,
-            ..Default::default()
+        let reel = CplReel {
+            subtitle_id: Some("sub1".into()),
+            subtitle_edit_rate_num: 24,
+            subtitle_edit_rate_den: 1,
+            subtitle_duration: 240,
+            aux_data: Some(postkit::packaging::DcpAuxData {
+                id: "aux1".into(),
+                edit_rate_num: 24,
+                edit_rate_den: 1,
+                duration: 240,
+                entry_point: 0,
+                key_id: None,
+                data_type: postkit::packaging::ATMOS_DATA_TYPE_UL.into(),
+            }),
+            ..sound_reel()
         };
-        reel.aux_data = Some(AuxData {
-            id: "aux1".into(),
-            edit_rate_num: 24,
-            edit_rate_den: 1,
-            duration: 240,
-            entry_point: 0,
-            key_id: None,
-            data_type: "urn:smpte:ul:060e2b34.04010105.0e090604.00000000".into(),
-        });
         let config = CplConfig {
             title: "Atmos".into(),
             content_kind: "feature".into(),
             reels: vec![reel],
+            standard: crate::Standard::Smpte,
+            main_sound: Some(MainSound {
+                configuration: "51/L,R,C,LFE,Ls,Rs".into(),
+                sample_rate: 48000,
+            }),
             ..Default::default()
         };
         assert_eq!(generate_cpl(&config, "cpl1", &path), 0);
         let xml = std::fs::read_to_string(&path).unwrap();
         assert!(xml.contains("<axd:AuxData xmlns:axd=\"http://www.dolby.com/schemas/2012/AD\">"));
         assert!(xml.contains("<Id>urn:uuid:aux1</Id>"));
-        assert!(xml.contains(
-            "<axd:DataType>urn:smpte:ul:060e2b34.04010105.0e090604.00000000</axd:DataType>"
-        ));
-        // aux data sits after MainPicture/MainSound, before </AssetList>
-        let aux_pos = xml.find("<axd:AuxData").unwrap();
-        let close_pos = xml.find("</AssetList>").unwrap();
-        assert!(aux_pos < close_pos);
+        let position = |element: &str| {
+            xml.find(element)
+                .unwrap_or_else(|| panic!("no {element} in {xml}"))
+        };
+        let order = [
+            "</MainSound>",
+            "</MainSubtitle>",
+            "<axd:AuxData",
+            "</axd:AuxData>",
+            "<meta:CompositionMetadataAsset",
+            "</AssetList>",
+        ];
+        for pair in order.windows(2) {
+            assert!(
+                position(pair[0]) < position(pair[1]),
+                "{} must precede {}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 
     const ACCESSIBILITY_TRACK_CHANNELS: u32 = 8;

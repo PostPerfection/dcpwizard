@@ -793,7 +793,7 @@ fn aux_data_track(
     entry: &crate::multi_cpl::TimelineEntry,
     key_source: Option<&postkit::content_keys::ContentKeys>,
     out_dir: &Path,
-) -> Result<Option<(ShippedAsset, crate::cpl::AuxData)>, String> {
+) -> Result<Option<(ShippedAsset, postkit::packaging::DcpAuxData)>, String> {
     Ok(crate::decrypt::process_aux_data(
         &entry.aux_data_file,
         &entry.aux_data_asset_id,

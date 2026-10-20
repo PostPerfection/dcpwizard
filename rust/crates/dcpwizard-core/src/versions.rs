@@ -105,7 +105,7 @@ struct ReelEssence {
     base_sound_uuid: Option<String>,
     base_sound_key_id: Option<String>,
     base_sound_key_info: Option<ContentKey>,
-    atmos_aux_data: Option<crate::cpl::AuxData>,
+    atmos_aux_data: Option<postkit::packaging::DcpAuxData>,
     atmos_key_info: Option<ContentKey>,
 }
 
