@@ -1612,9 +1612,21 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
     replace_field_text(window, TRIM_START_FIELD, TRIM_START)
     window.press(NEXT_FIELD_KEY)
     wait_until(
-        "Trim off the head never moved the clip's in point, which Play timeline plays from",
+        "Trim off the head never moved the clip's in point, which the timeline preview plays from",
         lambda: session.execute(CLIP_TITLES)
         == [clip_title(picture.name, TRIM_START_TIMECODE, f"00:00:{TIMELINE_CLIP_SECONDS:02d}:00")],
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+PLAY_WHOLE_TIMELINE_BOX = '#timeline-editor [data-action="play-whole-timeline"]'
+
+
+def tick_play_whole_timeline(window):
+    window.click(PLAY_WHOLE_TIMELINE_BOX)
+    wait_until(
+        "the Play whole timeline box never ticked",
+        lambda: window.session.property(PLAY_WHOLE_TIMELINE_BOX, "checked") is True,
         REACTION_TIMEOUT_SECONDS,
     )
 
@@ -1670,6 +1682,7 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
     )
     playhead_before = session.execute(EDITOR_PLAYHEAD_LEFT)
 
+    tick_play_whole_timeline(window)
     window.click("#btn-preview")
     wait_until(
         "the preview never reported the timeline's duration",
@@ -1695,6 +1708,146 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
         REACTION_TIMEOUT_SECONDS,
     )
     assert session.execute(SEGMENT_LABELS, "#timeline-picture") == [f"R1 {first.name}, {second.name}"]
+
+
+SWAP_CLIP_SECONDS = 10
+SWAP_CLIP_FRAMES = SWAP_CLIP_SECONDS * FIXTURE_FPS
+SWAP_SECOND_CLIP_IN = "00:00:00:12"
+SWAP_SECOND_CLIP_IN_FRAME = 12
+SWAP_TIMELINE_FRAMES = 2 * SWAP_CLIP_FRAMES - SWAP_SECOND_CLIP_IN_FRAME
+SWAP_SOURCE_SECONDS = 1
+# the second clip starts where the first ends, at its source frame 12
+SWAP_PLAYHEAD_FRAME = SWAP_CLIP_FRAMES + SWAP_SOURCE_SECONDS * FIXTURE_FPS - SWAP_SECOND_CLIP_IN_FRAME
+TIMELINE_PREVIEW_TITLE = "Preview: Main timeline"
+# a swap that toggled play or pause shows it within a poll or two of the load
+TRANSPORT_HOLD_SECONDS = 1
+
+
+def editor_playhead_frame(session):
+    left = session.execute(EDITOR_PLAYHEAD_LEFT)
+    return round(float(left.rsplit("* ", 1)[1].rstrip(")")) * SWAP_TIMELINE_FRAMES)
+
+
+def preview_paused(session):
+    return session.execute(PREVIEW_METADATA)["paused"]
+
+
+def assert_transport_holds(session, paused):
+    deadline = time.monotonic() + TRANSPORT_HOLD_SECONDS
+    while time.monotonic() < deadline:
+        assert preview_paused(session) is paused
+        time.sleep(POLL_SECONDS)
+
+
+def shows_timeline_at(session, seconds):
+    metadata = session.execute(PREVIEW_METADATA)
+    position = metadata.get("timeline_position")
+    return preview_title(session) == TIMELINE_PREVIEW_TITLE and position is not None and abs(position - seconds) <= FRAME_SECONDS
+
+
+def shows_source_at(session, name, seconds):
+    position = session.execute(PREVIEW_METADATA).get("position")
+    return preview_title(session) == f"Preview: {name}" and position is not None and abs(position - seconds) <= FRAME_SECONDS
+
+
+def untick_play_whole_timeline(window):
+    window.click(PLAY_WHOLE_TIMELINE_BOX)
+    wait_until(
+        "the Play whole timeline box never unticked",
+        lambda: window.session.property(PLAY_WHOLE_TIMELINE_BOX, "checked") is False,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
+def test_ticking_and_unticking_play_whole_timeline_swaps_the_preview_at_the_playhead(window, tmp_path):
+    session = window.session
+    media = tmp_path / "media"
+    media.mkdir()
+    first = write_picture(media / "first.mov", PLAYED_CLIP_SIZE, SWAP_CLIP_SECONDS)
+    second = write_picture(media / "second.mov", PLAYED_CLIP_SIZE, SWAP_CLIP_SECONDS)
+    sound = write_sound(media / "timeline.wav", SWAP_TIMELINE_FRAMES / FIXTURE_FPS)
+    whole_clip = ("00:00:00:00", f"00:00:{SWAP_CLIP_SECONDS:02d}:00")
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", first)
+    choose_in_dialog(window, "#import-video", second)
+    choose_in_dialog(window, "#import-audio", sound)
+    wait_until(
+        "the two clips never took their sources' lengths",
+        lambda: session.execute(CLIP_TITLES)
+        == [clip_title(first.name, *whole_clip), clip_title(second.name, *whole_clip)],
+        OPEN_TIMEOUT_SECONDS,
+    )
+    window.click(TIMELINE_CLIP.format(1))
+    replace_field_text(window, TIMELINE_IN_FIELD, SWAP_SECOND_CLIP_IN)
+    window.press(NEXT_FIELD_KEY)
+    wait_until(
+        "the second clip never took its in point",
+        lambda: session.execute(CLIP_TITLES)[1] == clip_title(second.name, SWAP_SECOND_CLIP_IN, whole_clip[1]),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property(PLAY_WHOLE_TIMELINE_BOX, "checked") is False
+
+    window.click("#btn-preview")
+    wait_until(
+        "Preview never showed the first clip's source",
+        lambda: preview_title(session) == f"Preview: {first.name}" and reported_duration(session) > 0,
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    session.execute(PREVIEW_PLAY_PAUSE)
+    wait_until("the preview never paused", lambda: preview_paused(session) is True, REACTION_TIMEOUT_SECONDS)
+    click_first_frame_of_clip(window, TIMELINE_CLIP.format(1), SWAP_CLIP_FRAMES - SWAP_SECOND_CLIP_IN_FRAME)
+    wait_until(
+        "a click on the second clip never showed its source at the in point",
+        lambda: shows_source_at(session, second.name, SWAP_SECOND_CLIP_IN_FRAME / FIXTURE_FPS),
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    session.execute(PREVIEW_SEEK, SWAP_SOURCE_SECONDS)
+    wait_until(
+        "the editor playhead never followed the second clip's source",
+        lambda: editor_playhead_frame(session) == SWAP_PLAYHEAD_FRAME,
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    tick_play_whole_timeline(window)
+    wait_until(
+        "ticking the box never swapped the clip's source for the timeline at the playhead",
+        lambda: shows_timeline_at(session, SWAP_PLAYHEAD_FRAME / FIXTURE_FPS),
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert reported_duration(session) == pytest.approx(SWAP_TIMELINE_FRAMES / FIXTURE_FPS)
+    assert_transport_holds(session, paused=True)
+
+    untick_play_whole_timeline(window)
+    wait_until(
+        "unticking the box never swapped the timeline for the second clip's source under the playhead",
+        lambda: shows_source_at(session, second.name, SWAP_SOURCE_SECONDS),
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert editor_playhead_frame(session) == SWAP_PLAYHEAD_FRAME
+    assert_transport_holds(session, paused=True)
+
+    session.execute(PREVIEW_PLAY_PAUSE)
+    wait_until("the preview never played", lambda: preview_paused(session) is False, REACTION_TIMEOUT_SECONDS)
+    tick_play_whole_timeline(window)
+    wait_until(
+        "ticking the box never swapped the playing source for the timeline",
+        lambda: preview_title(session) == TIMELINE_PREVIEW_TITLE
+        and session.execute(PREVIEW_METADATA).get("timeline_position") is not None,
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert_transport_holds(session, paused=False)
+    untick_play_whole_timeline(window)
+    wait_until(
+        "unticking the box never swapped the playing timeline for the second clip's source",
+        lambda: preview_title(session) == f"Preview: {second.name}",
+        PREVIEW_TIMEOUT_SECONDS,
+    )
+    assert_transport_holds(session, paused=False)
 
 
 
@@ -1909,6 +2062,7 @@ def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_un
         REACTION_TIMEOUT_SECONDS,
     )
 
+    tick_play_whole_timeline(window)
     window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(BASE_CLIP_SECONDS)
@@ -1937,6 +2091,7 @@ def test_play_timeline_plays_a_held_still_on_layer_0(window, tmp_path):
         OPEN_TIMEOUT_SECONDS,
     )
 
+    tick_play_whole_timeline(window)
     window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(HELD_STILL_SECONDS)
