@@ -1619,7 +1619,6 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
     )
 
 
-PLAY_TIMELINE_BUTTON = '#timeline-editor [data-action="play-timeline"]'
 PLAYED_CLIP_SIZE = "640x360"
 FRAME_SECONDS = 1 / FIXTURE_FPS
 
@@ -1671,7 +1670,7 @@ def test_play_timeline_plays_the_trimmed_clips_back_to_back(window, tmp_path):
     )
     playhead_before = session.execute(EDITOR_PLAYHEAD_LEFT)
 
-    window.click(PLAY_TIMELINE_BUTTON)
+    window.click("#btn-preview")
     wait_until(
         "the preview never reported the timeline's duration",
         lambda: reported_duration(session) > 0,
@@ -1910,7 +1909,7 @@ def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_un
         REACTION_TIMEOUT_SECONDS,
     )
 
-    window.click(PLAY_TIMELINE_BUTTON)
+    window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(BASE_CLIP_SECONDS)
     assert len(list((tmp_path / RENDERED_STRETCHES).glob("*.mkv"))) == 1
@@ -1938,7 +1937,7 @@ def test_play_timeline_plays_a_held_still_on_layer_0(window, tmp_path):
         OPEN_TIMEOUT_SECONDS,
     )
 
-    window.click(PLAY_TIMELINE_BUTTON)
+    window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(HELD_STILL_SECONDS)
     wait_until(
