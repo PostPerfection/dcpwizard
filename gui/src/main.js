@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
-import { initPreview, loadKeepingTransport, previewDcp, previewFile, previewTimeline, previewSeekAbsolute, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
+import { initPreview, loadKeepingTransport, previewSeekOnceLoaded, previewDcp, previewFile, previewTimeline, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, sourcePreviewTarget, verifyTarget, PREVIEW_KIND_SOURCE } from "./preview-target.js";
 import { progressDisplay } from "./progress-format.js";
 import { markerSpecs } from "./marker-specs.js";
@@ -782,7 +782,7 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   previewShowsClipSource: () => previewedClipIndex !== null,
   previewClipSource: previewClipSourceAt,
   playTimeline,
-  seekTimeline: previewSeekAbsolute,
+  seekTimeline: previewSeekOnceLoaded,
   loadKeepingTransport,
 });
 
@@ -2355,7 +2355,7 @@ async function previewClipSourceAt(frame) {
   if (path !== previewShownPath && !(await previewSourcePicture(path, place.index))) return false;
   previewedClipIndex = place.index;
   const [numerator, denominator] = clipRate(clip);
-  await invoke("preview_seek_absolute", { seconds: ((clip.inFrame + place.frameInClip) * denominator) / numerator });
+  await previewSeekOnceLoaded(((clip.inFrame + place.frameInClip) * denominator) / numerator);
   return true;
 }
 
