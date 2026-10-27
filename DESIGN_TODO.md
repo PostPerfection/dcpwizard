@@ -164,8 +164,8 @@ our side:
   with no card to prove them on yet.
 - 8K picture. Every raster here stops at 4K, which is where DCI stops too, so this
   is an IMF item if it is one at all.
-- Atmos playback and QC: nothing here decodes or monitors an IAB track, so an Atmos
-  DCP previews with its main sound only.
+- Atmos on the timeline: a timeline clip cannot carry an Atmos track, so a package
+  built from a timeline has main sound only.
 - Dolby Vision cinema authoring (DV2, eCMU) is licensed from Dolby and is not
   attempted, as under the Transkoder entry.
 - AS-11 wrapping and tape I/O are broadcast deliverables and stay out of scope.
