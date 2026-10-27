@@ -8,6 +8,8 @@ use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 use postkit::certificate::{CertOptions, CertType, generate_certificate, generate_chain};
 use std::path::{Path, PathBuf};
 
+mod iab_frames;
+
 const FPS: u32 = 24;
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
@@ -59,8 +61,9 @@ fn make_wav(path: &Path) -> PathBuf {
 /// its frame-count check expect.
 fn make_atmos(dir: &Path) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
-    for i in 0..FRAMES {
-        std::fs::write(dir.join(format!("atmos_{i:05}.bin")), [i as u8; 64]).unwrap();
+    let frames = iab_frames::validation_stream_1_frames();
+    for (index, frame) in frames.iter().take(FRAMES).enumerate() {
+        std::fs::write(dir.join(format!("atmos_{index:05}.bin")), frame).unwrap();
     }
     dir.to_path_buf()
 }

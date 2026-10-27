@@ -922,6 +922,7 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+ "zip 9.0.4",
 ]
 
 [[package]]

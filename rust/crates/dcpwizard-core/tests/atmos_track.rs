@@ -2,12 +2,14 @@ use dcpwizard_core::dcp::{DcpConfig, create_dcp};
 use postkit::certificate::generate_chain;
 use std::path::{Path, PathBuf};
 
+mod iab_frames;
+
 const FPS: u32 = 24;
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
-const FRAMES: usize = 60;
-// reels of 24 and 36 frames, both at least the one second a reel needs
-const SPLIT_AT_FRAME: u64 = 24;
+const FRAMES: usize = 72;
+// reels of 25 and 47 frames, off a multiple of three so a reel restarted at frame 0 does not match
+const SPLIT_AT_FRAME: u64 = 25;
 const LARGEST_TEST_FRAME: usize = 64 * 1024;
 
 fn make_picture_frames(dir: &Path) -> PathBuf {
@@ -21,24 +23,28 @@ fn make_picture_frames(dir: &Path) -> PathBuf {
     dir.to_path_buf()
 }
 
-// every frame has its own length and bytes, so a dropped, repeated or reordered frame shows
-fn atmos_frame(index: usize) -> Vec<u8> {
-    (0..100 + index * 7)
-        .map(|byte| (index * 31 + byte) as u8)
+// three payloads in turn, no two neighbours equal, so a dropped, repeated or reordered frame shows
+fn source_atmos_frames() -> Vec<Vec<u8>> {
+    let stream_frames = iab_frames::validation_stream_1_frames();
+    (0..FRAMES)
+        .map(|index| stream_frames[index % stream_frames.len()].clone())
         .collect()
 }
 
 fn make_atmos_track_file(
     root: &Path,
     fps: u32,
+    frames: &[Vec<u8>],
     encryption: Option<postkit::mxf_wrap::MxfEncryption>,
 ) -> PathBuf {
     let frames_dir = root.join("atmos_frames");
     std::fs::create_dir_all(&frames_dir).unwrap();
-    let files: Vec<PathBuf> = (0..FRAMES)
-        .map(|index| {
+    let files: Vec<PathBuf> = frames
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| {
             let path = frames_dir.join(format!("atmos_{index:05}.bin"));
-            std::fs::write(&path, atmos_frame(index)).unwrap();
+            std::fs::write(&path, frame).unwrap();
             path
         })
         .collect();
@@ -178,7 +184,8 @@ fn check_split_atmos_track_file(encrypt: bool) {
     let root = dir.path();
     let out = root.join("dcp");
     let keys_file = root.join("KEYS.json");
-    let source = make_atmos_track_file(root, FPS, None);
+    let source_frames = source_atmos_frames();
+    let source = make_atmos_track_file(root, FPS, &source_frames, None);
     let source_descriptor = read_descriptor(&source);
     let config = DcpConfig {
         encrypt,
@@ -250,8 +257,7 @@ fn check_split_atmos_track_file(encrypt: bool) {
         }
         for frame in read_frames(&track_file, content_key) {
             assert_eq!(
-                frame,
-                atmos_frame(next_source_frame),
+                frame, source_frames[next_source_frame],
                 "reel {index} carries source frame {next_source_frame}"
             );
             next_source_frame += 1;
@@ -289,14 +295,11 @@ fn an_atmos_frame_directory_splits_into_one_track_per_reel() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let out = root.join("dcp");
+    let source_frames = source_atmos_frames();
     let frames_dir = root.join("atmos_frames");
     std::fs::create_dir_all(&frames_dir).unwrap();
-    for index in 0..FRAMES {
-        std::fs::write(
-            frames_dir.join(format!("atmos_{index:05}.bin")),
-            atmos_frame(index),
-        )
-        .unwrap();
+    for (index, frame) in source_frames.iter().enumerate() {
+        std::fs::write(frames_dir.join(format!("atmos_{index:05}.bin")), frame).unwrap();
     }
     assert_eq!(create_dcp(&split_config(root, &out, frames_dir)), 0);
 
@@ -306,7 +309,7 @@ fn an_atmos_frame_directory_splits_into_one_track_per_reel() {
     for (index, reel) in reels.iter().enumerate() {
         assert_eq!(reel.aux_duration, reel.picture_duration, "reel {index}");
         for frame in read_frames(&out.join(format!("atmos_{}.mxf", reel.aux_id)), None) {
-            assert_eq!(frame, atmos_frame(next_source_frame));
+            assert_eq!(frame, source_frames[next_source_frame]);
             next_source_frame += 1;
         }
     }
