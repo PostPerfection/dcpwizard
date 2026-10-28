@@ -1936,12 +1936,13 @@ pub fn preview_load_timeline(
     app: AppHandle,
     timeline: postkit::timeline::Timeline,
     request: SubmitRequest,
+    play_state: guikit::preview::PlayState,
     state: tauri::State<'_, guikit::preview::PreviewPlayer>,
 ) -> Result<guikit::preview::TimelinePreview, String> {
     let preferences = dcpwizard_core::preferences::load_preferences()
         .map_err(|e| format!("Cannot load the preferences: {e}"))?;
     let (timeline, options) = timeline_preview_input(timeline, request, &preferences)?;
-    guikit::preview::load_timeline_preview(&app, &state, timeline, options)
+    guikit::preview::load_timeline_preview(&app, &state, timeline, options, play_state)
 }
 
 // the options are None unless a stretch is rendered, and then fit and encode the way the build does

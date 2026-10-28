@@ -756,10 +756,10 @@ function timelineEdited(timeline) {
   afterTimelineChange();
 }
 
-function playTimeline(timeline) {
+function playTimeline(timeline, { paused }) {
   previewedPackage = null;
   const compositionName = project.compositions[project.activeComposition].name;
-  return previewTimeline(previewTimelineWire(timeline, assetById), unpackagedJobRequest(), compositionName);
+  return previewTimeline(previewTimelineWire(timeline, assetById), unpackagedJobRequest(), compositionName, { paused });
 }
 
 function showActiveTimeline() {
@@ -2350,12 +2350,12 @@ function askForContentKeys() {
 // The preview shows what the build will do to the picture, so a file a clip
 // takes as its picture carries the crop and that clip's timed text, and any
 // other file plays plain.
-async function previewSourcePicture(path, clipIndex = clipIndexShowing(path, null)) {
+async function previewSourcePicture(path, clipIndex = clipIndexShowing(path, null), { paused = false } = {}) {
   const { contentKeys, cancelled } = await contentKeysFor(path);
   if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
-  const loaded = previewFile(path, contentKeys);
+  const loaded = previewFile(path, contentKeys, [], { paused });
   forgetContentKeysIfRefused(path, loaded);
   previewedPackage = null;
   previewShowsJobPicture = clipIndex !== null;
@@ -2379,13 +2379,13 @@ function clipRate(clip) {
 }
 
 // a frame in another clip loads that clip's picture first
-async function previewClipSourceAt(frame) {
+async function previewClipSourceAt(frame, { paused }) {
   const timeline = activeTimeline();
   const place = clipAtFrame(timeline, frame);
   if (!place) return false;
   const clip = timeline.clips[place.index];
   const path = assetPath(clip.picture);
-  if (path !== previewShownPath && !(await previewSourcePicture(path, place.index))) return false;
+  if (path !== previewShownPath && !(await previewSourcePicture(path, place.index, { paused }))) return false;
   previewedClipIndex = place.index;
   const [numerator, denominator] = clipRate(clip);
   await previewSeekOnceLoaded(((clip.inFrame + place.frameInClip) * denominator) / numerator);
@@ -2394,7 +2394,7 @@ async function previewClipSourceAt(frame) {
 
 // nothing happens while the preview plays no clip
 setProjectTimelineSeeker((frame) => {
-  if (previewedClipIndex !== null) previewClipSourceAt(frame);
+  if (previewedClipIndex !== null) loadKeepingTransport((options) => previewClipSourceAt(frame, options));
 });
 
 const TIMELINE_PLAYHEAD_POLL_MILLISECONDS = 250;
