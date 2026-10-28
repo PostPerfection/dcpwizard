@@ -10,16 +10,16 @@ use std::path::{Path, PathBuf};
 /// suffix names no known channel. Case-insensitive.
 pub fn channel_index(suffix: &str) -> Option<usize> {
     match suffix.to_lowercase().as_str() {
-        "l" | "left" => Some(0),
-        "r" | "right" => Some(1),
-        "c" | "centre" | "center" => Some(2),
+        "l" | "left" | "fl" => Some(0),
+        "r" | "right" | "fr" => Some(1),
+        "c" | "centre" | "center" | "fc" => Some(2),
         "lfe" | "sub" => Some(3),
-        "ls" => Some(4),
-        "rs" => Some(5),
+        "ls" | "sl" | "lss" => Some(4),
+        "rs" | "sr" | "rss" => Some(5),
         "lc" => Some(6),
         "rc" => Some(7),
-        "bsl" | "lss" => Some(8),
-        "bsr" | "rss" => Some(9),
+        "bsl" | "lrs" | "lsr" => Some(8),
+        "bsr" | "rrs" | "rsr" => Some(9),
         "hi" => Some(14),
         "vi" | "vin" => Some(15),
         _ => None,
@@ -30,11 +30,15 @@ const CHANNEL_SUFFIX_SEPARATORS: [char; 4] = ['_', '.', '-', ' '];
 
 /// Split a channel file's stem at the last `_`, `.`, `-` or space into the
 /// set's name and the channel token: "260810 DST_MIX_V2.3.2.C.wav" gives
-/// ("260810 DST_MIX_V2.3.2", "C").
+/// ("260810 DST_MIX_V2.3.2", "C"). A stem with no separator that is a channel
+/// name is that channel in the set named "": "FL.wav" gives ("", "FL").
 pub fn channel_stem(path: &Path) -> Option<(String, String)> {
     let stem = path.file_stem()?.to_str()?;
-    let (prefix, suffix) = stem.rsplit_once(CHANNEL_SUFFIX_SEPARATORS)?;
-    Some((prefix.to_string(), suffix.to_string()))
+    match stem.rsplit_once(CHANNEL_SUFFIX_SEPARATORS) {
+        Some((prefix, suffix)) => Some((prefix.to_string(), suffix.to_string())),
+        None if channel_index(stem).is_some() => Some((String::new(), stem.to_string())),
+        None => None,
+    }
 }
 
 pub fn named_lane(path: &Path) -> Option<usize> {
@@ -167,6 +171,49 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_channel_name_is_its_channel_in_the_set_named_empty() {
+        for (name, lane) in [
+            ("FL", 0),
+            ("r", 1),
+            ("Fc", 2),
+            ("LFE", 3),
+            ("sl", 4),
+            ("SR", 5),
+            ("BSL", 8),
+            ("bsr", 9),
+        ] {
+            let path = PathBuf::from(format!("/media/{name}.wav"));
+            assert_eq!(
+                channel_stem(&path),
+                Some((String::new(), name.to_string())),
+                "{name}"
+            );
+            assert_eq!(named_lane(&path), Some(lane), "{name}");
+        }
+        assert_eq!(channel_stem(Path::new("/media/dialogue.wav")), None);
+        assert_eq!(named_lane(Path::new("/media/dialogue.wav")), None);
+    }
+
+    #[test]
+    fn side_and_rear_surround_names_take_the_dcpomatic_lanes() {
+        for (name, lane) in [
+            ("fl", 0),
+            ("fr", 1),
+            ("fc", 2),
+            ("sl", 4),
+            ("sr", 5),
+            ("Lss", 4),
+            ("Rss", 5),
+            ("Lrs", 8),
+            ("Lsr", 8),
+            ("Rrs", 9),
+            ("Rsr", 9),
+        ] {
+            assert_eq!(channel_index(name), Some(lane), "{name}");
+        }
+    }
+
+    #[test]
     fn a_set_is_ordered_by_lane_then_file_name() {
         let ordered = channel_files_in_set_order(&[
             PathBuf::from("/a/mix_Rs.wav"),
@@ -217,6 +264,24 @@ mod tests {
             values.map(|(_, value)| value),
             "each sample lands on its lane unchanged"
         );
+    }
+
+    #[test]
+    fn bare_seven_one_names_route_to_the_sixteen_channel_lanes() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let names = ["FL", "FR", "FC", "LFE", "SL", "SR", "BSL", "BSR"];
+        let lanes = [0, 1, 2, 3, 4, 5, 8, 9];
+        let mut expected = vec![0; 16];
+        for (index, (name, lane)) in names.into_iter().zip(lanes).enumerate() {
+            let value = FULL_SCALE / 20 * (index as i32 + 1);
+            write_mono(&d.join(format!("{name}.wav")), value, 20);
+            expected[lane] = value;
+        }
+        let out = d.join("routed.wav");
+        let applied = mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &out).unwrap();
+        assert!(applied.pure_routing);
+        assert_eq!(first_frame(&out), expected);
     }
 
     #[test]

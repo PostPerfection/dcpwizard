@@ -23,6 +23,11 @@ function soundFilePaths(asset) {
   return isChannelSet(asset) ? asset.channelFiles.map((file) => file.path) : [asset.path];
 }
 
+// files named only by their channel, such as FL.wav, share the empty prefix
+function channelSetName(group) {
+  return group.prefix || group.files[0].path.split(/[/\\]/).at(-2);
+}
+
 // groups come from group_channel_files over the paths of the audio assets
 export function mergeChannelSets(assets, groups, takeAssetId) {
   let merged = [...assets];
@@ -37,7 +42,7 @@ export function mergeChannelSets(assets, groups, takeAssetId) {
     const alreadyThisSet = absorbed.length === 1 && isChannelSet(absorbed[0]) && absorbed[0].channelFiles.length === groupPaths.size;
     if (alreadyThisSet) continue;
     const files = group.files.map(({ path, lane }) => ({ path, lane }));
-    const set = { id: takeAssetId(), type: "audio", name: group.prefix, meta: channelSetMeta(files), path: null, channelFiles: files };
+    const set = { id: takeAssetId(), type: "audio", name: channelSetName(group), meta: channelSetMeta(files), path: null, channelFiles: files };
     const position = merged.findIndex((asset) => absorbed.includes(asset));
     merged = merged.flatMap((asset, index) => {
       if (index === position) return [set];

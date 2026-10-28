@@ -2273,8 +2273,8 @@ pub struct ChannelFile {
 }
 
 /// Group the paths that can join a channel set by their name before the
-/// channel suffix. A path that is not a mono WAV, or has no separator in its
-/// name, is left out.
+/// channel suffix. A path that is not a mono WAV, or whose name has no
+/// separator and is no channel name, is left out.
 #[tauri::command]
 pub async fn group_channel_files(paths: Vec<String>) -> Vec<ChannelGroup> {
     channel_groups(paths)
@@ -2311,7 +2311,7 @@ fn channel_groups(paths: Vec<String>) -> Vec<ChannelGroup> {
         .collect()
 }
 
-// the set name of a mono WAV whose name has a channel suffix separator
+// the set name of a mono WAV whose name has a channel suffix separator or is a channel name
 fn channel_set_prefix(path: &Path) -> Option<String> {
     let is_wav = path
         .extension()
@@ -6106,6 +6106,48 @@ mod tests {
                 named("LFE", "260810 DST_MIX_V2.3.2.LFE.wav"),
                 named("Ls", "260810 DST_MIX_V2.3.2.Ls.wav"),
                 named("Rs", "260810 DST_MIX_V2.3.2.Rs.wav"),
+            ]
+        );
+    }
+
+    #[test]
+    fn bare_channel_names_group_into_one_set_named_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = ["BSR", "FL", "SL", "LFE", "FR", "BSL", "SR", "FC"];
+        let paths = names
+            .map(|name| {
+                let file = dir.path().join(format!("{name}.wav"));
+                write_mono(&file, 0, 4);
+                file.to_string_lossy().into_owned()
+            })
+            .to_vec();
+
+        let groups = channel_groups(paths);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].prefix, "");
+        let files: Vec<(&str, bool, String)> = groups[0]
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.lane.as_str(),
+                    file.lane_in_name,
+                    file_name_of(Path::new(&file.path)),
+                )
+            })
+            .collect();
+        let named = |lane: &'static str, name: &str| (lane, true, format!("{name}.wav"));
+        assert_eq!(
+            files,
+            [
+                named("L", "FL"),
+                named("R", "FR"),
+                named("C", "FC"),
+                named("LFE", "LFE"),
+                named("Ls", "SL"),
+                named("Rs", "SR"),
+                named("BsL", "BSL"),
+                named("BsR", "BSR"),
             ]
         );
     }

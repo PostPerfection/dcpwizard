@@ -239,12 +239,12 @@
         <li>The app joins them into one sound, which replaces the video's sound. In Assets it is one entry, with each file listed under it next to the channel the app read from its name.</li>
         <li>Check that each file is on the right channel. See <a href="#mapping">Choose each file's channel</a>.</li>
     </ol>
-    <p>The app reads the channel from the last part of each file name, after the last <code>_</code>, <code>.</code>, <code>-</code> or space. Upper or lower case does not matter. It knows L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI and VI, and also Left, Right, Centre, Center and Sub.</p>
+    <p>The app reads the channel from the last part of each file name, after the last <code>_</code>, <code>.</code>, <code>-</code> or space. Upper or lower case does not matter. It knows L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI and VI. It also reads Left, FL, Right, FR, Centre, Center and FC as L, R and C, Sub as LFE, SL and Lss as Ls, SR and Rss as Rs, Lrs and Lsr as BsL, Rrs and Rsr as BsR, and VIN as VI.</p>
     <ul>
         <li><code>film_L.wav</code> and <code>film_left.wav</code> go on L. <code>film_Rs.wav</code> goes on Rs.</li>
         <li><code>film_surround_l.wav</code> goes on L, not Ls, because only the last part, <code>l</code>, counts. Rename it to <code>film_Ls.wav</code>, or move it in the grid.</li>
     </ul>
-    <p>The files are joined only if the rest of the name is the same, <code>film</code> here.</p>
+    <p>The files are joined only if the rest of the name is the same, <code>film</code> here. A file named only by its channel, such as <code>FL.wav</code> or <code>LFE.wav</code>, also counts, and those files join into one sound named after their folder.</p>
     <p>Any other ending, such as <code>film_SW.wav</code> or <code>reel_1.wav</code>, is not recognised. That file goes on C, and the status bar tells you. Leave it there and it is mixed into the centre channel. So <code>reel_1.wav</code> to <code>reel_6.wav</code> all start on C. Either rename them before importing, for example to <code>reel_L.wav</code>, <code>reel_R.wav</code> and so on, or move each one in the grid as below.</p>
     <h3 id="mapping">Choose each file's channel</h3>
     <p>Channel mapping is a grid in Properties. Scroll Properties down to the Audio group, near the end. Each row is one of your files, named on the left, or one channel of a multichannel WAV. Each column is a channel of the DCP, labelled L, R, C, LFE, Ls, Rs and so on. A dotted cell shows where a row goes now.</p>

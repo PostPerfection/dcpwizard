@@ -99,3 +99,14 @@ test('a file that names no channel joins the set on C and the status says so', (
   );
   assert.equal(channelSetStatus(sets, [groupOf(['L', 'R'])]), 'Channel set: 260810 DST_MIX_V2.3.2 (3 ch: L R C)');
 });
+
+test('a set of files named only by their channel takes its folder name', () => {
+  const lanes = ['FL', 'FR'];
+  const loose = lanes.map((lane, index) => ({ id: index + 1, type: 'audio', path: `/media/mix 7.1/${lane}.wav`, name: `${lane}.wav`, meta: '' }));
+  const group = { prefix: '', files: loose.map((asset, laneIndex) => ({ path: asset.path, lane: ['L', 'R'][laneIndex], laneIndex, laneInName: true })) };
+
+  const { assets } = mergeChannelSets(loose, [group], idsFrom(3));
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].name, 'mix 7.1');
+});
