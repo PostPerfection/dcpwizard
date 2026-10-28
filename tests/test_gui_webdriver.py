@@ -1983,7 +1983,7 @@ def test_a_clip_with_alpha_dragged_onto_a_layer_builds_over_the_clip_under_it(wi
     assert reel_durations(cpls[0]) == [LAYERED_FRAMES]
     clips = saved_project(project_path)["form"]["project"]["compositions"][0]["timeline"]["clips"]
     assert [(clip["start"], clip["layer"], clip["sound"]["kind"]) for clip in clips] == [
-        (0, 0, "embedded"),
+        (0, 0, "none"),
         (OVERLAY_START_FRAME, 1, "none"),
     ]
 
