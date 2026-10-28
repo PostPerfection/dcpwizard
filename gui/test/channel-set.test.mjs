@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { channelSetMeta, channelSetPreviewPath, mergeChannelSets, soundSource } from '../src/channel-set.js';
+import { channelSetMeta, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from '../src/channel-set.js';
 
 const STEM = '/media/260810 DST_MIX_V2.3.2';
 const LANES = ['L', 'R', 'C', 'LFE', 'Ls', 'Rs'];
@@ -13,7 +13,7 @@ function looseAudio(id, lane) {
 function groupOf(lanes) {
   return {
     prefix: '260810 DST_MIX_V2.3.2',
-    files: lanes.map((lane, laneIndex) => ({ path: `${STEM}.${lane}.wav`, lane, laneIndex })),
+    files: lanes.map((lane, laneIndex) => ({ path: `${STEM}.${lane}.wav`, lane, laneIndex, laneInName: true })),
   };
 }
 
@@ -82,4 +82,20 @@ test('a set is sent as its files and previews nothing, a WAV as its path', () =>
   assert.equal(channelSetPreviewPath(set), null);
   assert.equal(channelSetPreviewPath(wav), wav.path);
   assert.equal(channelSetMeta(set.channelFiles), '2 ch: L R');
+});
+
+test('a file that names no channel joins the set on C and the status says so', () => {
+  const dialogue = { id: 3, type: 'audio', path: `${STEM}.dialogue.wav`, name: '260810 DST_MIX_V2.3.2.dialogue.wav', meta: '' };
+  const group = groupOf(['L', 'R']);
+  group.files.push({ path: dialogue.path, lane: 'C', laneIndex: 2, laneInName: false });
+
+  const { assets, absorbedInto } = mergeChannelSets([looseAudio(1, 'L'), looseAudio(2, 'R'), dialogue], [group], idsFrom(4));
+  const sets = [...new Set(absorbedInto.values())];
+
+  assert.deepEqual(assets[0].channelFiles.at(-1), { path: dialogue.path, lane: 'C' });
+  assert.equal(
+    channelSetStatus(sets, [group]),
+    'Channel set: 260810 DST_MIX_V2.3.2 (3 ch: L R C). 1 file has no channel in its name and went on C. Set it in Channel mapping',
+  );
+  assert.equal(channelSetStatus(sets, [groupOf(['L', 'R'])]), 'Channel set: 260810 DST_MIX_V2.3.2 (3 ch: L R C)');
 });

@@ -1,5 +1,11 @@
 const TYPING_HINT = "Click a cell to route it at 0 dB, or type a gain in dB. A dotted cell routes at 0 dB until you type in its row.";
 const AUTO_ROUTE_HINT = "Dotted cells show where each channel goes.";
+export const AUTO_ROUTE_PLACEHOLDER = "auto";
+
+// a typed gain anywhere in the row replaces the row's auto route
+export function rowAutoRoute(row) {
+  return row.typed.length ? null : row.autoRoute;
+}
 
 function headerCell(lane, upmixLanes) {
   if (!upmixLanes.includes(lane)) return `<th>${lane}</th>`;
@@ -12,7 +18,7 @@ export function audioMapTable(panel) {
   const rows = panel.channelNames.map((name, channel) => {
     const autoLane = panel.autoRoutes[channel];
     const cells = panel.lanes.map((lane) => {
-      const auto = lane === autoLane ? ' class="auto-routed" placeholder="auto"' : "";
+      const auto = lane === autoLane ? ` class="auto-routed" placeholder="${AUTO_ROUTE_PLACEHOLDER}"` : "";
       return `<td><input type="text" inputmode="decimal"${auto}${disabled} data-input="${channel + 1}" data-lane="${lane}" title="${name} to ${lane}, gain in dB"></td>`;
     }).join("");
     return `<tr><th title="${name}"><span>${name}</span></th>${cells}</tr>`;

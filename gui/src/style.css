@@ -233,10 +233,11 @@
   padding: 2px;
   text-align: center;
 }
-.prop-field .audio-map input.auto-routed {
+/* the placeholder goes once a typed gain in the row replaces the auto route */
+.prop-field .audio-map input.auto-routed[placeholder] {
   border-style: dotted;
 }
-.prop-field .audio-map input.auto-routed:not(:focus) {
+.prop-field .audio-map input.auto-routed[placeholder]:not(:focus) {
   border-color: var(--text-muted);
 }
 .audio-map input.auto-routed::placeholder {

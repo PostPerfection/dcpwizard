@@ -48,3 +48,15 @@ export function mergeChannelSets(assets, groups, takeAssetId) {
   }
   return { assets: merged, absorbedInto };
 }
+
+// sets are the ones mergeChannelSets just formed from groups
+export function channelSetStatus(sets, groups) {
+  const summary = `Channel set: ${sets.map((set) => `${set.name} (${set.meta})`).join(", ")}`;
+  const setPaths = new Set(sets.flatMap((set) => set.channelFiles.map((file) => file.path)));
+  const unnamed = groups.flatMap((group) => group.files).filter((file) => !file.laneInName && setPaths.has(file.path)).length;
+  if (unnamed === 0) return summary;
+  const files = unnamed === 1
+    ? "1 file has no channel in its name and went on C. Set it in Channel mapping"
+    : `${unnamed} files have no channel in their names and went on C. Set them in Channel mapping`;
+  return `${summary}. ${files}`;
+}

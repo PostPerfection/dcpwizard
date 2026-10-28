@@ -1,6 +1,7 @@
 import { ratingRowsFrom } from "./rating-rows.js";
 import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate, timelineWithKnownAssets } from "../../extern/guikit/src/composition-timeline.js";
 import { isChannelSet } from "./channel-set.js";
+import { rowAutoRoute } from "./audio-map-matrix.js";
 
 const VALUE = "value";
 const CHECKED = "checked";
@@ -321,7 +322,8 @@ export function audioMapSpecFrom(rows) {
   if (!rows.some((row) => row.typed.length)) return null;
   const entries = rows.flatMap((row, index) => {
     const input = index + 1;
-    if (!row.typed.length) return row.autoRoute ? [`${input}:${row.autoRoute}`] : [];
+    const autoRoute = rowAutoRoute(row);
+    if (autoRoute) return [`${input}:${autoRoute}`];
     return row.typed.map(({ lane, gain }) => (parseFloat(gain) === 0 ? `${input}:${lane}` : `${input}:${lane}@${gain}`));
   });
   return entries.join(",");

@@ -2,8 +2,8 @@
 // channel suffix (Foo_L.wav, Foo.Lfe.wav, Foo-Rs.wav, ...), combine them
 // into one interleaved multichannel WAV in the canonical DCP channel order.
 
-use hound::WavSpec;
-use postkit::wav_io::{read_interleaved, write_interleaved};
+use crate::audio_map::{AppliedAudioMap, parse_audio_map};
+use postkit::audio_mix_matrix::{MixMatrix, mix_wav_files};
 use std::path::{Path, PathBuf};
 
 /// Canonical DCP (ST 428-12) channel index for a filename suffix, or None if the
@@ -37,97 +37,70 @@ pub fn channel_stem(path: &Path) -> Option<(String, String)> {
     Some((prefix.to_string(), suffix.to_string()))
 }
 
-fn suffix_of(path: &Path) -> Option<String> {
-    channel_stem(path).map(|(_, suffix)| suffix)
+pub fn named_lane(path: &Path) -> Option<usize> {
+    channel_stem(path).and_then(|(_, suffix)| channel_index(&suffix))
 }
 
-/// Route every `*.wav` in `dir` to its channel lane and write one interleaved
-/// multichannel WAV to `output`. Every file must carry a recognized channel
-/// suffix, the rest is [`route_files`]. Returns `output`.
-pub fn route_directory(dir: &Path, output: &Path) -> Result<PathBuf, String> {
-    route_files(&channel_files(dir)?, output)
+pub fn channel_file_lane(path: &Path) -> usize {
+    named_lane(path).unwrap_or_else(|| channel_index("C").expect("C names a lane"))
 }
 
-/// Write the mono files, each at its lane, as one interleaved multichannel WAV
-/// to `output`. Every file must be mono and share sample rate / bit depth /
-/// format, anything else fails loud. The output channel count is the highest
-/// routed lane + 1, with unused lanes silent. Returns `output`.
-pub fn route_files(entries: &[(usize, PathBuf)], output: &Path) -> Result<PathBuf, String> {
-    if entries.is_empty() {
+// row n of a channel set's audio map is file n in this order
+pub fn channel_files_in_set_order(paths: &[PathBuf]) -> Vec<(usize, PathBuf)> {
+    let mut files: Vec<(usize, PathBuf)> = paths
+        .iter()
+        .map(|path| (channel_file_lane(path), path.clone()))
+        .collect();
+    files.sort_by(|(lane, path), (other_lane, other_path)| {
+        lane.cmp(other_lane)
+            .then_with(|| path.file_name().cmp(&other_path.file_name()))
+    });
+    files
+}
+
+pub fn channel_set_matrix(paths: &[PathBuf], audio_map: Option<&str>) -> Result<MixMatrix, String> {
+    if paths.is_empty() {
         return Err("no channel WAVs to route".to_string());
     }
+    let spec = match audio_map {
+        Some(spec) => spec.to_string(),
+        None => channel_files_in_set_order(paths)
+            .iter()
+            .enumerate()
+            .map(|(row, (lane, _))| format!("{}:{}", row + 1, lane + 1))
+            .collect::<Vec<_>>()
+            .join(","),
+    };
+    parse_audio_map(&spec, paths.len())
+}
 
-    // read every channel, enforcing mono and a shared format.
-    let mut spec: Option<WavSpec> = None;
-    let mut lanes: Vec<(usize, Vec<f32>)> = Vec::new();
-    for (idx, path) in entries {
-        let (s, samples) =
-            read_interleaved(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        if s.channels != 1 {
+pub fn mix_channel_set(
+    paths: &[PathBuf],
+    audio_map: Option<&str>,
+    output: &Path,
+) -> Result<AppliedAudioMap, String> {
+    let matrix = channel_set_matrix(paths, audio_map)?;
+    let inputs: Vec<PathBuf> = channel_files_in_set_order(paths)
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect();
+    for path in &inputs {
+        let channels = postkit::wav_io::channel_count(path)?;
+        if channels != 1 {
             return Err(format!(
-                "{}: channel files must be mono, got {} channels",
-                path.display(),
-                s.channels
+                "{}: channel files must be mono, got {channels} channels",
+                path.display()
             ));
         }
-        match spec {
-            None => spec = Some(s),
-            Some(first) => {
-                if first.sample_rate != s.sample_rate
-                    || first.bits_per_sample != s.bits_per_sample
-                    || first.sample_format != s.sample_format
-                {
-                    return Err(format!(
-                        "{}: format {:?} differs from the first channel {:?}",
-                        path.display(),
-                        s,
-                        first
-                    ));
-                }
-                if lanes.iter().any(|(i, _)| i == idx) {
-                    return Err(format!(
-                        "{}: channel index {idx} routed twice",
-                        path.display()
-                    ));
-                }
-            }
-        }
-        lanes.push((*idx, samples));
     }
-
-    let spec = spec.expect("entries non-empty");
-    let channels = lanes.iter().map(|(i, _)| i + 1).max().unwrap();
-    let frames = lanes.iter().map(|(_, s)| s.len()).max().unwrap();
-    let mut interleaved = vec![0.0f32; frames * channels];
-    for (idx, samples) in &lanes {
-        for (f, &v) in samples.iter().enumerate() {
-            interleaved[f * channels + idx] = v;
-        }
-    }
-
-    write_interleaved(
-        output,
-        WavSpec {
-            channels: channels as u16,
-            ..spec
-        },
-        &interleaved,
-    )
-    .map_err(|e| format!("writing {}: {e}", output.display()))?;
-    Ok(output.to_path_buf())
+    let report = mix_wav_files(&matrix, &inputs, output)?;
+    Ok(AppliedAudioMap {
+        pure_routing: matrix.is_pure_routing(),
+        report,
+    })
 }
 
-pub fn routed_channel_count(dir: &Path) -> Result<usize, String> {
-    Ok(routed_channel_count_of(&channel_files(dir)?))
-}
-
-/// Highest routed lane + 1.
-pub fn routed_channel_count_of(files: &[(usize, PathBuf)]) -> usize {
-    files.iter().map(|(index, _)| index + 1).max().unwrap_or(0)
-}
-
-// every *.wav in dir with its lane, in lane order
-fn channel_files(dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
+pub fn channel_directory_wavs(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut wavs: Vec<PathBuf> = Vec::new();
     let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
     for e in rd.filter_map(|e| e.ok()) {
@@ -145,36 +118,16 @@ fn channel_files(dir: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
     if wavs.is_empty() {
         return Err(format!("no channel WAVs found in {}", dir.display()));
     }
-    channel_lanes(&wavs)
-}
-
-/// Each file with the lane its channel suffix names, in lane order. A file
-/// with no suffix or an unknown one fails loud.
-pub fn channel_lanes(paths: &[PathBuf]) -> Result<Vec<(usize, PathBuf)>, String> {
-    let mut entries = paths
-        .iter()
-        .map(|path| {
-            let suffix = suffix_of(path).ok_or_else(|| {
-                format!(
-                    "{}: no channel suffix (expected e.g. name_L.wav or name.L.wav)",
-                    path.display()
-                )
-            })?;
-            let index = channel_index(&suffix)
-                .ok_or_else(|| format!("{}: unknown channel suffix '{suffix}'", path.display()))?;
-            Ok((index, path.clone()))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    entries.sort_by_key(|(index, _)| *index);
-    Ok(entries)
+    Ok(wavs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hound::{SampleFormat, WavReader, WavWriter};
+    use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
     const SR: u32 = 48000;
+    const FULL_SCALE: i32 = 1 << 23;
 
     fn write_mono(path: &Path, value: i32, frames: usize) {
         let spec = WavSpec {
@@ -190,91 +143,137 @@ mod tests {
         w.finalize().unwrap();
     }
 
+    fn first_frame(path: &Path) -> Vec<i32> {
+        let mut reader = WavReader::open(path).unwrap();
+        let channels = usize::from(reader.spec().channels);
+        reader
+            .samples::<i32>()
+            .take(channels)
+            .map(|sample| sample.unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_named_lane_is_the_lane_and_any_other_name_is_centre() {
+        let centre = channel_index("C").unwrap();
+        assert_eq!(channel_file_lane(Path::new("mix_Lfe.wav")), 3);
+        assert_eq!(
+            channel_file_lane(Path::new("260810 DST_MIX_V2.3.2.Rs.wav")),
+            5
+        );
+        assert_eq!(named_lane(Path::new("mix_dialogue.wav")), None);
+        assert_eq!(channel_file_lane(Path::new("mix_dialogue.wav")), centre);
+        assert_eq!(channel_file_lane(Path::new("dialogue.wav")), centre);
+    }
+
+    #[test]
+    fn a_set_is_ordered_by_lane_then_file_name() {
+        let ordered = channel_files_in_set_order(&[
+            PathBuf::from("/a/mix_Rs.wav"),
+            PathBuf::from("/a/mix_music.wav"),
+            PathBuf::from("/b/mix_C.wav"),
+            PathBuf::from("/a/mix_L.wav"),
+            PathBuf::from("/a/mix_dialogue.wav"),
+        ]);
+        let names: Vec<(usize, &str)> = ordered
+            .iter()
+            .map(|(lane, path)| (*lane, path.file_name().unwrap().to_str().unwrap()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (0, "mix_L.wav"),
+                (2, "mix_C.wav"),
+                (2, "mix_dialogue.wav"),
+                (2, "mix_music.wav"),
+                (5, "mix_Rs.wav"),
+            ]
+        );
+    }
+
     #[test]
     fn routes_five_one_in_dcp_order() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        // distinct constant per channel so we can check the lane placement.
-        let fs = 1i32 << 23;
-        write_mono(&d.join("mix_L.wav"), fs / 10, 100);
-        write_mono(&d.join("mix_R.wav"), fs / 5, 100);
-        write_mono(&d.join("mix_C.wav"), fs / 4, 100);
-        write_mono(&d.join("mix_Lfe.wav"), fs / 3, 100);
-        write_mono(&d.join("mix_Ls.wav"), fs / 2, 100);
-        write_mono(&d.join("mix_Rs.wav"), (fs / 3) * 2, 100);
+        // odd values so a lossy step would show
+        let values = [
+            ("L", FULL_SCALE / 10 + 1),
+            ("R", FULL_SCALE / 5 + 3),
+            ("C", FULL_SCALE / 4 + 5),
+            ("Lfe", FULL_SCALE / 3 + 7),
+            ("Ls", FULL_SCALE / 2 + 9),
+            ("Rs", -(FULL_SCALE / 3) * 2 - 11),
+        ];
+        for (lane, value) in values {
+            write_mono(&d.join(format!("mix_{lane}.wav")), value, 100);
+        }
 
         let out = d.join("routed.wav");
-        route_directory(d, &out).unwrap();
-        let mut r = WavReader::open(&out).unwrap();
-        assert_eq!(r.spec().channels, 6);
-        let samples: Vec<i32> = r.samples::<i32>().map(|x| x.unwrap()).collect();
-        // first frame: L,R,C,LFE,Ls,Rs in order.
-        let f0 = &samples[..6];
-        assert_eq!(f0[0], fs / 10);
-        assert_eq!(f0[1], fs / 5);
-        assert_eq!(f0[2], fs / 4);
-        assert_eq!(f0[3], fs / 3);
-        assert_eq!(f0[4], fs / 2);
-        assert_eq!(f0[5], (fs / 3) * 2);
+        let applied = mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &out).unwrap();
+        assert!(applied.pure_routing);
+        assert_eq!(applied.report.clipped_samples, 0);
+        assert_eq!(
+            first_frame(&out),
+            values.map(|(_, value)| value),
+            "each sample lands on its lane unchanged"
+        );
     }
 
     #[test]
     fn missing_lfe_leaves_silent_lane() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        let fs = 1i32 << 23;
-        write_mono(&d.join("m_L.wav"), fs / 10, 50);
-        write_mono(&d.join("m_R.wav"), fs / 5, 50);
-        write_mono(&d.join("m_Ls.wav"), fs / 2, 50); // index 4 -> 5 channels
-        write_mono(&d.join("m_Rs.wav"), fs / 3, 50);
+        write_mono(&d.join("m_L.wav"), FULL_SCALE / 10, 50);
+        write_mono(&d.join("m_R.wav"), FULL_SCALE / 5, 50);
+        write_mono(&d.join("m_Ls.wav"), FULL_SCALE / 2, 50);
+        write_mono(&d.join("m_Rs.wav"), FULL_SCALE / 3, 50);
         let out = d.join("o.wav");
-        route_directory(d, &out).unwrap();
-        let mut r = WavReader::open(&out).unwrap();
-        assert_eq!(r.spec().channels, 6); // up to Rs (index 5)
-        let s: Vec<i32> = r.samples::<i32>().map(|x| x.unwrap()).collect();
-        assert_eq!(s[2], 0, "C silent");
-        assert_eq!(s[3], 0, "LFE silent");
-        assert_eq!(s[4], fs / 2, "Ls present");
+        mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &out).unwrap();
+        let samples = first_frame(&out);
+        assert_eq!(samples.len(), 6);
+        assert_eq!(samples[2], 0, "C silent");
+        assert_eq!(samples[3], 0, "LFE silent");
+        assert_eq!(samples[4], FULL_SCALE / 2, "Ls present");
     }
 
     #[test]
-    fn dotted_suffix_routes() {
+    fn dotted_suffix_routes_and_widens_to_five_one() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        let fs = 1i32 << 23;
-        write_mono(&d.join("260810 DST_MIX_V2.3.2.L.wav"), fs / 10, 20);
-        write_mono(&d.join("260810 DST_MIX_V2.3.2.LFE.wav"), fs / 3, 20);
+        write_mono(&d.join("260810 DST_MIX_V2.3.2.L.wav"), FULL_SCALE / 10, 20);
+        write_mono(&d.join("260810 DST_MIX_V2.3.2.LFE.wav"), FULL_SCALE / 3, 20);
         assert_eq!(
             channel_stem(&d.join("260810 DST_MIX_V2.3.2.LFE.wav")),
             Some(("260810 DST_MIX_V2.3.2".to_string(), "LFE".to_string()))
         );
         let out = d.join("routed.wav");
-        route_directory(d, &out).unwrap();
-        let mut r = WavReader::open(&out).unwrap();
-        assert_eq!(r.spec().channels, 4);
-        let s: Vec<i32> = r.samples::<i32>().map(|x| x.unwrap()).collect();
-        assert_eq!(&s[..4], &[fs / 10, 0, 0, fs / 3]);
+        mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &out).unwrap();
+        assert_eq!(
+            first_frame(&out),
+            [FULL_SCALE / 10, 0, 0, FULL_SCALE / 3, 0, 0]
+        );
     }
 
     #[test]
     fn file_list_routes_like_the_directory() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        let fs = 1i32 << 23;
-        write_mono(&d.join("mix-R.wav"), fs / 5, 30);
-        write_mono(&d.join("mix L.wav"), fs / 10, 30);
-        write_mono(&d.join("mix_C.wav"), fs / 4, 30);
+        write_mono(&d.join("mix-R.wav"), FULL_SCALE / 5, 30);
+        write_mono(&d.join("mix L.wav"), FULL_SCALE / 10, 30);
+        write_mono(&d.join("mix_C.wav"), FULL_SCALE / 4, 30);
         let from_directory = d.join("from_directory.wav");
-        route_directory(d, &from_directory).unwrap();
-        let listed = channel_lanes(&[
+        mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &from_directory).unwrap();
+        let listed = [
             d.join("mix_C.wav"),
             d.join("mix L.wav"),
             d.join("mix-R.wav"),
-        ])
-        .unwrap();
-        assert_eq!(routed_channel_count_of(&listed), 3);
+        ];
+        assert_eq!(
+            channel_set_matrix(&listed, None).unwrap().output_channels(),
+            6
+        );
         let from_list = d.join("from_list.wav");
-        route_files(&listed, &from_list).unwrap();
+        mix_channel_set(&listed, None, &from_list).unwrap();
         assert_eq!(
             std::fs::read(&from_directory).unwrap(),
             std::fs::read(&from_list).unwrap()
@@ -282,12 +281,41 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_suffix() {
+    fn two_files_on_centre_are_summed() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        write_mono(&d.join("m_L.wav"), 1, 10);
-        write_mono(&d.join("m_Foo.wav"), 1, 10);
-        assert!(route_directory(d, &d.join("o.wav")).is_err());
+        write_mono(&d.join("mix_L.wav"), FULL_SCALE / 10, 30);
+        write_mono(&d.join("mix_dialogue.wav"), FULL_SCALE / 4, 30);
+        write_mono(&d.join("mix_music.wav"), FULL_SCALE / 8, 30);
+        let out = d.join("o.wav");
+        let applied = mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &out).unwrap();
+        assert!(!applied.pure_routing);
+        assert_eq!(
+            first_frame(&out),
+            [FULL_SCALE / 10, 0, FULL_SCALE / 4 + FULL_SCALE / 8, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn a_typed_map_moves_an_unnamed_file_off_centre() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write_mono(&d.join("mix_L.wav"), FULL_SCALE / 10, 30);
+        write_mono(&d.join("mix_R.wav"), FULL_SCALE / 5, 30);
+        write_mono(&d.join("mix_boom.wav"), FULL_SCALE / 3, 30);
+        let out = d.join("o.wav");
+        // set order is L, R, then the unnamed file at centre
+        let applied = mix_channel_set(
+            &channel_directory_wavs(d).unwrap(),
+            Some("1:L,2:R,3:LFE"),
+            &out,
+        )
+        .unwrap();
+        assert!(applied.pure_routing);
+        assert_eq!(
+            first_frame(&out),
+            [FULL_SCALE / 10, FULL_SCALE / 5, 0, FULL_SCALE / 3, 0, 0]
+        );
     }
 
     #[test]
@@ -306,6 +334,29 @@ mod tests {
             w.write_sample(0i32).unwrap();
         }
         w.finalize().unwrap();
-        assert!(route_directory(d, &d.join("o.wav")).is_err());
+        write_mono(&d.join("m_R.wav"), 0, 10);
+        let error = mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &d.join("o.wav"))
+            .unwrap_err();
+        assert!(error.contains("must be mono"), "{error}");
+    }
+
+    #[test]
+    fn rejects_a_second_sample_rate() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        write_mono(&d.join("m_L.wav"), 0, 10);
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        WavWriter::create(d.join("m_R.wav"), spec)
+            .unwrap()
+            .finalize()
+            .unwrap();
+        let error = mix_channel_set(&channel_directory_wavs(d).unwrap(), None, &d.join("o.wav"))
+            .unwrap_err();
+        assert!(error.contains("sample rate"), "{error}");
     }
 }

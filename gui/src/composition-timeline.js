@@ -1,13 +1,12 @@
 import {
   assetPath,
   clipHasOwnSound,
-  embeddedSound,
   firstSoundAsset,
   timelineWire,
   withProbedFrames,
   withProbedStill,
 } from "../../extern/guikit/src/composition-timeline.js";
-import { setClipRange } from "../../extern/guikit/src/timeline-editor.js";
+import { clipDefaultSound, setClipRange } from "../../extern/guikit/src/timeline-editor.js";
 import { isChannelSet, soundSource } from "./channel-set.js";
 
 // a channel set cannot be one clip's sound file, so an absorbed clip sound moves to the timeline
@@ -17,7 +16,7 @@ export function withChannelSets(timeline, absorbedInto) {
   for (const clip of grouped.clips) {
     const set = clipHasOwnSound(clip) ? absorbedInto.get(clip.sound.asset) : undefined;
     if (!set) continue;
-    clip.sound = embeddedSound();
+    clip.sound = clipDefaultSound(clip);
     grouped.sound ??= set.id;
   }
   return grouped;
@@ -72,7 +71,8 @@ export function clipTrimSpecs(clip) {
 // one clip goes as the single-picture request while that request says the same thing
 function takesSinglePictureRequest(timeline, clip) {
   if (clip.start !== 0 || clip.layer !== 0) return false;
-  if (clip.sound.kind === "none" && timeline.sound === null) return false;
+  // the request plays the source's own audio whenever the source has an audio stream
+  if (clip.sound.kind === "none" && !clip.noAudioStream && timeline.sound === null) return false;
   if (timeline.subtitle !== null && clip.subtitle !== null) return false;
   // the single-picture request times its subtitle against the source
   if (timeline.subtitle !== null && clip.inFrame > 0) return false;

@@ -188,6 +188,21 @@ test('a clip sound absorbed into a channel set moves to the timeline, which is t
   assert.deepEqual(layered.clips[1].sound, { kind: 'none', asset: null }, 'a clip above layer 0 stays soundless');
 });
 
+test('a clip of a source with no audio stream keeps no sound under a channel set and goes as the single-picture request', () => {
+  const none = { kind: 'none', asset: null };
+  const silent = { ...clip(1, 240, 0, 240, { sound: { kind: 'file', asset: 6 } }), noAudioStream: true };
+  const set = ASSETS.find((asset) => asset.id === 7);
+
+  const grouped = withChannelSets({ ...emptyTimeline([24, 1]), clips: [silent] }, new Map([[6, set]]));
+  assert.deepEqual(grouped.clips[0].sound, none);
+  assert.equal(grouped.sound, 7);
+
+  const request = requestFor({ ...emptyTimeline([24, 1]), clips: [{ ...silent, sound: none }] });
+  assert.equal(request.videoPath, '/media/a.mov');
+  assert.equal(request.audioPath, null);
+  assert.equal('timeline' in request, false);
+});
+
 test('the preview plays a timeline a channel set sounds without sound, and any other with its own', () => {
   const clips = [clip(1, 240, 0, 48), clip(2, 96, 0, 96, { start: 48, sound: { kind: 'file', asset: 4 } })];
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { audioMapHint, audioMapTable } from "../src/audio-map-matrix.js";
+import { audioMapHint, audioMapTable, rowAutoRoute } from "../src/audio-map-matrix.js";
 
 const LANES = ["L", "R", "C", "LFE", "Ls", "Rs", "Lc", "Rc"];
 const UPMIX_REFUSAL = "The audio mapping and the stereo upmix both decide which DCP lane each channel lands on: use one or the other";
@@ -55,4 +55,10 @@ test("the refusal shows only when a typed gain sits beside the upmix", () => {
   const upmixed = panel({ autoRoutes: [null, null], typedGainsOff: UPMIX_IN_CHARGE, typedMapRefusal: UPMIX_REFUSAL });
   assert.equal(audioMapHint(upmixed, { hasTypedGains: true }), `Typed gains are off. ${UPMIX_REFUSAL}.`);
   assert.doesNotMatch(audioMapHint(panel({}), { hasTypedGains: true }), /Typed gains are off/);
+});
+
+test("a typed gain anywhere in a row replaces the row's auto route", () => {
+  assert.equal(rowAutoRoute({ typed: [], autoRoute: "C" }), "C");
+  assert.equal(rowAutoRoute({ typed: [{ lane: "LFE", gain: "0" }], autoRoute: "C" }), null);
+  assert.equal(rowAutoRoute({ typed: [], autoRoute: null }), null);
 });

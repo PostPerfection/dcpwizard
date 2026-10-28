@@ -281,7 +281,9 @@ struct CreateAudioQol {
     /// Route the --audio channels to DCP lanes: comma-separated IN:OUT or
     /// IN:OUT@GAIN, where IN is a 1-based source channel, OUT a lane name
     /// (L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI, VI) or number, and GAIN is
-    /// decibels. Runs before every other audio step.
+    /// decibels. Runs before every other audio step. With a directory of
+    /// channel WAVs as --audio, IN is a file, counted in lane order and then by
+    /// name, where a file whose name names no lane counts as C.
     #[arg(long)]
     audio_map: Option<String>,
     /// Audio gain in dB, applied to the trimmed sound before the fades. With a
@@ -3181,8 +3183,8 @@ fn resolve_trim(
     })
 }
 
-/// Create-time audio processing (W5): the mix matrix, then filename channel
-/// routing when `audio` is a directory (dom#2134), then stereo->5.1 upmix
+/// Create-time audio processing (W5): the mix matrix, which also mixes the
+/// channel WAVs when `audio` is a directory (dom#2134), then stereo->5.1 upmix
 /// (dom#921/#1080), then the picture/sound delay. Intermediates go under
 /// `work_dir` (a scratch dir). Runs before sign-language packing, any pull-up
 /// and the trim, which [`finish_kept_audio`] follows with the level and fades.
@@ -3199,7 +3201,18 @@ fn prepare_create_audio(
 
     // the map places every channel by hand, so it runs before anything that
     // moves channels for it
-    if let Some(spec) = audio_map {
+    if path.is_dir() {
+        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
+        let routed = work_dir.join("routed.wav");
+        let applied = dcpwizard_core::audio_route::mix_channel_set(
+            &dcpwizard_core::audio_route::channel_directory_wavs(&path)?,
+            audio_map,
+            &routed,
+        )?;
+        tracing::info!("Routed channel WAVs from the input directory by filename");
+        warn_clipped_samples(&applied.report);
+        path = routed;
+    } else if let Some(spec) = audio_map {
         std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
         let mapped = work_dir.join("mapped.wav");
         let applied = dcpwizard_core::audio_map::apply_audio_map(spec, &path, &mapped)?;
@@ -3214,20 +3227,8 @@ fn prepare_create_audio(
                 ""
             }
         );
-        if applied.report.clipped_samples > 0 {
-            tracing::warn!(
-                "Audio map clipped {} sample(s): lower the cell gains",
-                applied.report.clipped_samples
-            );
-        }
+        warn_clipped_samples(&applied.report);
         path = mapped;
-    }
-
-    if path.is_dir() {
-        std::fs::create_dir_all(work_dir).map_err(|e| e.to_string())?;
-        let routed = work_dir.join("routed.wav");
-        path = dcpwizard_core::audio_route::route_directory(&path, &routed)?;
-        tracing::info!("Routed channel WAVs from the input directory by filename");
     }
 
     if let Some(v) = upmix {
@@ -3251,6 +3252,15 @@ fn prepare_create_audio(
     }
 
     Ok(Some(path))
+}
+
+fn warn_clipped_samples(report: &postkit::audio_mix_matrix::MixReport) {
+    if report.clipped_samples > 0 {
+        tracing::warn!(
+            "Audio map clipped {} sample(s): lower the cell gains",
+            report.clipped_samples
+        );
+    }
 }
 
 // the loudness target or the gain, then the fades, on the trimmed sound
@@ -4564,14 +4574,7 @@ fn run() {
                 upmix: upmix.is_some(),
                 channel_set: channel_directory,
             };
-            // create has no map over a channel directory's files, which the GUI has
-            let conflict = placement.conflict().or_else(|| {
-                (audio_map.is_some() && channel_directory).then_some((
-                    dcpwizard_core::channel_placement::ChannelPlacer::AudioMap,
-                    dcpwizard_core::channel_placement::ChannelPlacer::ChannelSet,
-                ))
-            });
-            if let Some((first, second)) = conflict {
+            if let Some((first, second)) = placement.conflict() {
                 refusals.messages.push(format!(
                     "{} and {} both decide which DCP lane each channel lands on: pass one or the \
                      other",

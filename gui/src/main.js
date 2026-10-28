@@ -31,6 +31,7 @@ import {
   timelineFrameAtSourceFrame,
   withFirstClipRate,
   withImportedAsset,
+  withNoAudioStream,
   withoutAsset,
   withReelStartingClipsPlaced,
   withSplitAtFrames,
@@ -48,7 +49,7 @@ import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
-import { isChannelSet, channelSetPreviewPath, mergeChannelSets, soundSource } from "./channel-set.js";
+import { isChannelSet, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from "./channel-set.js";
 import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
 import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
@@ -65,7 +66,7 @@ import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
-import { audioMapHint, audioMapTable } from "./audio-map-matrix.js";
+import { AUTO_ROUTE_PLACEHOLDER, audioMapHint, audioMapTable, rowAutoRoute } from "./audio-map-matrix.js";
 import { initPresets, savedPresetNamed, applySavedPreset, clearProfileDriven } from "./presets.js";
 import {
   chainPaths,
@@ -566,8 +567,7 @@ async function groupAudioIntoChannelSets() {
   fillTimelineFromUnplacedAssets();
   renderAssets();
   showActiveTimeline();
-  const sets = [...new Set(absorbedInto.values())];
-  setStatus(`Channel set: ${sets.map((set) => `${set.name} (${set.meta})`).join(", ")}`);
+  setStatus(channelSetStatus([...new Set(absorbedInto.values())], groups));
 }
 
 function importAssetFromPath(path, type) {
@@ -595,6 +595,7 @@ function importAssetFromPath(path, type) {
         asset.meta = raster ? `${raster.width}×${raster.height} ${length.frames} frames` : `${length.frames} frames`;
       }
       if (length) takeProbedLength(asset);
+      if (probed && !probed.hasAudio) takeNoAudioStream(asset);
       if (probed && project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(probed);
       refreshPackageNamePreview();
       renderAssets();
@@ -621,6 +622,15 @@ function takeProbedLength(asset) {
     timeline: withFirstClipRate(withProbedLength(composition.timeline, asset), assetById),
   }));
   takeTrimFields();
+  showActiveTimeline();
+}
+
+function takeNoAudioStream(asset) {
+  asset.noAudioStream = true;
+  project.compositions = project.compositions.map((composition) => ({
+    ...composition,
+    timeline: withNoAudioStream(composition.timeline, asset.id),
+  }));
   showActiveTimeline();
 }
 
@@ -778,6 +788,7 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   assetName,
   assetKind: (assetId) => TIMELINE_KIND_BY_ASSET_TYPE[assetById(assetId).type],
   sourceLength,
+  noAudioStream: (assetId) => assetById(assetId).noAudioStream,
   onChange: timelineEdited,
   previewShowsClipSource: () => previewedClipIndex !== null,
   previewClipSource: previewClipSourceAt,
@@ -1115,12 +1126,31 @@ async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
     const cell = audioMapGrid.querySelector(`input[data-input="${input}"][data-lane="${lane}"]`);
     if (cell) cell.value = value;
   }
+  showAutoRoutes();
   showAudioMapHint();
   audioMapGrid.querySelectorAll("input").forEach(cell => {
+    // the mouseup that ends a click collapses the selected 0 the focus handler writes
+    cell.addEventListener("mousedown", () => {
+      if (!cell.value.trim()) cell.addEventListener("mouseup", (event) => event.preventDefault(), { once: true });
+    });
     cell.addEventListener("focus", () => {
-      if (!cell.value.trim()) cell.value = "0";
+      if (cell.value.trim()) return;
+      cell.value = "0";
+      cell.select();
+      showRowAutoRoute(cell.closest("tr"));
     });
   });
+}
+
+function showRowAutoRoute(row) {
+  const autoCell = row.querySelector("input.auto-routed");
+  if (!autoCell) return;
+  if (rowAutoRoute(audioMapRow(row))) autoCell.placeholder = AUTO_ROUTE_PLACEHOLDER;
+  else autoCell.removeAttribute("placeholder");
+}
+
+function showAutoRoutes() {
+  for (const row of audioMapGrid.querySelectorAll("tbody tr")) showRowAutoRoute(row);
 }
 
 function showAudioMapHint() {
@@ -1134,20 +1164,22 @@ function markAudioMapOverflow() {
 }
 
 new ResizeObserver(markAudioMapOverflow).observe(audioMapGrid);
+audioMapGrid.addEventListener("input", (event) => showRowAutoRoute(event.target.closest("tr")));
 
 upmixSelect.addEventListener("change", refreshAudioMapMatrix);
 inputOrderSelect.addEventListener("change", refreshAudioMapMatrix);
 
 // The grid as an IN:LANE@GAIN spec, or null when nothing is typed.
 function audioMapSpec() {
-  const rows = [...document.querySelectorAll("#prop-audio-map tbody tr")].map((row) => {
-    const cells = [...row.querySelectorAll("input")];
-    return {
-      typed: cells.filter((cell) => cell.value.trim()).map((cell) => ({ lane: cell.dataset.lane, gain: cell.value.trim() })),
-      autoRoute: cells.find((cell) => cell.classList.contains("auto-routed"))?.dataset.lane ?? null,
-    };
-  });
-  return audioMapSpecFrom(rows);
+  return audioMapSpecFrom([...document.querySelectorAll("#prop-audio-map tbody tr")].map(audioMapRow));
+}
+
+function audioMapRow(row) {
+  const cells = [...row.querySelectorAll("input")];
+  return {
+    typed: cells.filter((cell) => cell.value.trim()).map((cell) => ({ lane: cell.dataset.lane, gain: cell.value.trim() })),
+    autoRoute: cells.find((cell) => cell.classList.contains("auto-routed"))?.dataset.lane ?? null,
+  };
 }
 
 // the number of routes the drawn matrix has no cell for
@@ -1160,6 +1192,7 @@ async function fillAudioMap(spec) {
     if (cell) cell.value = gain;
     else unroutedCells += 1;
   }
+  showAutoRoutes();
   showAudioMapHint();
   return unroutedCells;
 }

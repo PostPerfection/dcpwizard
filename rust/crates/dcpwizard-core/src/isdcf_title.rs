@@ -126,30 +126,27 @@ pub fn build_soundtrack(source: &SoundtrackSource) -> Result<SoundtrackSummary, 
 }
 
 fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
-    let channel_set = source
-        .channel_files
-        .map(crate::audio_route::channel_lanes)
-        .transpose()?;
-    let read_count = match (&channel_set, source.audio) {
-        (Some(routed), _) => crate::audio_route::routed_channel_count_of(routed),
-        (None, Some(dir)) if dir.is_dir() => crate::audio_route::routed_channel_count(dir)?,
+    let directory_files = match (source.channel_files, source.audio) {
+        (None, Some(dir)) if dir.is_dir() => Some(crate::audio_route::channel_directory_wavs(dir)?),
+        _ => None,
+    };
+    let channel_set = source.channel_files.or(directory_files.as_deref());
+    let read_count = match (channel_set, source.audio) {
+        (Some(files), _) => files.len(),
         (None, Some(wav)) => usize::from(crate::mxf_wrap::wav_channels(wav)?),
         (None, None) => picture_sound_channels(source.picture_sound)?,
     };
     if read_count == 0 {
         return Ok(0);
     }
-    // the build routes a channel directory after the map has run
-    let routes_a_directory = channel_set.is_none() && source.audio.is_some_and(Path::is_dir);
-    let channel_set_map = match (&channel_set, source.audio_map) {
-        (Some(routed), Some(spec)) => Some(crate::audio_map::channel_set_audio_map(spec, routed)?),
-        _ => None,
-    };
-    let mapped_count = match channel_set_map.as_deref().or(source.audio_map) {
-        Some(spec) if !routes_a_directory => {
+    let mapped_count = match (channel_set, source.audio_map) {
+        (Some(files), audio_map) => {
+            crate::audio_route::channel_set_matrix(files, audio_map)?.output_channels()
+        }
+        (None, Some(spec)) => {
             crate::audio_map::parse_audio_map(spec, read_count)?.output_channels()
         }
-        _ => read_count,
+        (None, None) => read_count,
     };
     if source.upmix {
         return Ok(crate::mxf_wrap::CANONICAL_51_CHANNELS as usize);
@@ -801,6 +798,16 @@ mod tests {
             channel_files: Some(&files),
             ..sound_from(None, dir.path())
         });
+        assert!(name.contains("_51_"), "{name}");
+    }
+
+    #[test]
+    fn a_channel_set_file_that_names_no_lane_counts_as_centre() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["mix_L", "mix_R", "mix_dialogue"] {
+            write_wav(&dir.path().join(format!("{name}.wav")), 1);
+        }
+        let name = name_of(sound_from(Some(dir.path()), dir.path()));
         assert!(name.contains("_51_"), "{name}");
     }
 

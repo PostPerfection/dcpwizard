@@ -1234,6 +1234,48 @@ fn create_refuses_the_alternate_input_order_beside_the_upmix_or_a_channel_direct
 }
 
 #[test]
+fn create_mixes_a_channel_directory_whose_file_names_no_lane() {
+    let dir = TempDir::new().unwrap();
+    let video = dir.path().join("hd.mp4");
+    write_test_video(&video, 1920, 1080);
+    let channels = dir.path().join("channels");
+    std::fs::create_dir_all(&channels).unwrap();
+    for name in ["mix_L", "mix_R", "mix_dialogue"] {
+        write_wav(&channels.join(format!("{name}.wav")), 1, &[0; 12_000]);
+    }
+
+    // the dialogue file on C makes a 5.1 track, which create packages at 16
+    for (output, map, packaged_channels) in [
+        ("default", None, 16),
+        ("folded", Some("1:L,2:R,3:L,3:R"), 2),
+    ] {
+        let output = dir.path().join(output);
+        let mut command = cmd();
+        command
+            .args(["create", "--title", "T", "--video"])
+            .arg(&video)
+            .arg("--audio")
+            .arg(&channels)
+            .arg("-o")
+            .arg(&output);
+        if let Some(map) = map {
+            command.args(["--audio-map", map]);
+        }
+        command.assert().success();
+
+        let mut reader = asdcplib::pcm::MxfReader::new();
+        reader
+            .open_read(&file_starting_with(&output.join("T"), "sound").to_string_lossy())
+            .expect("open the sound MXF");
+        assert_eq!(
+            reader.audio_descriptor().unwrap().channel_count,
+            packaged_channels,
+            "{map:?}"
+        );
+    }
+}
+
+#[test]
 fn create_refuses_an_audio_map_that_names_an_unknown_lane() {
     let dir = TempDir::new().unwrap();
     let video = dir.path().join("hd.mp4");
