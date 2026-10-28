@@ -48,6 +48,8 @@
         a { color: var(--accent); }
         ol.contents { margin: 1.2rem 0 0; padding-left: 1.2rem; }
         ol.contents li { margin: 0.25rem 0; }
+        main ol:not(.contents), main ul { margin: 0.6rem 0; padding-left: 1.3rem; }
+        main li { margin: 0.3rem 0; }
         pre {
             background: var(--card);
             border: 1px solid var(--border);
@@ -99,16 +101,22 @@
 </nav>
 <main>
     <h1>Manual</h1>
-    <p>Twenty-four jobs. Each one is the app first, then the same job from a terminal where it has one. Certificates live in Settings, and Encryption &amp; KDM uses that chain.</p>
+    <p>The sidebar on the left switches between screens: Project, Reels &amp; Timeline, Verify, Encryption &amp; KDM, Tools, Version File, Rebuild DCP, Jobs and Settings. You build a DCP on Project. It has Assets and the Timeline on the left, and Properties, the build settings, on the right.</p>
+    <p>Each job below shows the app first, then the same job from a terminal where there is one.</p>
     <ol class="contents">
         <li><a href="#build">Build a DCP</a></li>
+        <li><a href="#timeline-edit">Edit the timeline</a></li>
+        <li><a href="#properties">Properties</a></li>
+        <li><a href="#sound">Sound</a></li>
+        <li><a href="#picture-placement">Picture size and position</a></li>
+        <li><a href="#presets">Saved presets</a></li>
         <li><a href="#encrypt">Encrypt it</a></li>
         <li><a href="#kdm">Make a KDM</a></li>
         <li><a href="#dkdm">Re-wrap a DKDM</a></li>
         <li><a href="#cert">Export the recipient certificate</a></li>
         <li><a href="#batch">Build several DCPs</a></li>
         <li><a href="#verify">Validate a DCP</a></li>
-        <li><a href="#timeline">See the reels on the Timeline</a></li>
+        <li><a href="#timeline">See the reels of a package</a></li>
         <li><a href="#play">Play a package</a></li>
         <li><a href="#encode">Encode to JPEG 2000</a></li>
         <li><a href="#transcode">Transcode a video to frames</a></li>
@@ -120,50 +128,197 @@
         <li><a href="#burnin">Burn in subtitles</a></li>
         <li><a href="#convert">Convert to a DCI container</a></li>
         <li><a href="#ingest">Re-ingest a package</a></li>
-        <li><a href="#export">Export a DCP</a></li>
+        <li><a href="#export">Export a DCP to MP4 or ProRes</a></li>
         <li><a href="#vf">Make a Version File</a></li>
         <li><a href="#rebuild">Rebuild a DCP</a></li>
         <li><a href="#keyboard">Use the keyboard</a></li>
         <li><a href="#settings">Change the settings</a></li>
+        <li><a href="#more">More from a terminal</a></li>
     </ol>
 
     <h2 id="build">Build a DCP</h2>
     <h3>In the app</h3>
-    <p>On Project, drop the master on Assets, or press + Video and drop it on the Picture track. If the mix is its own file, press + Audio and drop it on Sound. In Properties, set Title, and under Output set Folder. Press Build DCP. The package is a new folder inside that one, named after the title. Sound comes from the video unless you added a WAV.</p>
-    <h3>Assets and the timeline</h3>
-    <p>The Timeline panel under Assets is what the build packages. Its Picture row holds the clips, each a video or image sequence cut to an In and an Out point, drawn at the frame it starts on, as wide as the frames it keeps and named after its file. Empty track between clips builds as black with no sound. Rows above it, Layer 1 and up, hold clips that lie over the ones below: a PNG sequence or a video with alpha shows the picture under it where it is transparent, and its Opacity sets how much of it shows. A clip above the Picture row has no sound. Sound and Subtitle sit under the picture rows and follow the Picture row. Every video you import goes on the Picture row after its last clip, from its first frame to its last, playing its own sound. The first WAV you import covers the whole timeline on Sound and the first subtitle file covers it on Subtitle, unless a clip already has its own. Drag a video from Assets onto a picture row to put a clip there: on a clip it starts where that clip ends, on empty track at the frame under the pointer. The empty row at the top takes a clip onto a new layer. Drop a WAV or a subtitle file on the span under a clip to give that clip its own, or on the Sound or Subtitle label to cover the whole timeline, which replaces every clip's own. A channel set only covers the whole timeline. The ✕ on a span takes it off, and a clip then plays its own sound again. Removing an asset takes it off the timeline, and an empty timeline takes the next video still in Assets.</p>
-    <p>Click a clip to select it. In and Out are timecodes in the clip's source, HH:MM:SS:FF, and the Out frame is the first one left out. While the preview plays the clip's video, Set in from playhead and Set out from playhead take the frame on screen. Start is the timeline timecode the clip starts at, Opacity is in percent for a clip above the Picture row, and Remove takes the clip off. Drag a clip along its row to move it, or onto another row to change its layer. A move or an edit that would overlap another clip on the same row changes nothing. − and + zoom the tracks. Clicking the ruler or a clip moves the preview to that frame while it plays a clip of the timeline, and loads the other clip's video first when the frame is in another clip. A frame in a gap leaves the preview where it is.</p>
-    <p>A timeline of one clip builds the way a single video always has: In and Out trim it the way Trim off the head and Trim off the tail do, and Reel length, Split at and Split at source chapter marks under Properties, Reels cut it into reels. The reel starts Split at lists show as markers on the ruler, and Split reel here adds one at the playhead and writes it into Split at. With more than one clip the trims, Still length and the reel fields are greyed out: the reels start at the markers on the ruler, Split reel here adds one at the playhead and clicking a marker removes it. Every clip has to run at the first clip's frame rate, a clip of another size is fitted onto the container the first clip on the Picture row goes into, and the Picture row's sound is joined in order. A clip that is already JPEG 2000 cannot go above the Picture row or under another clip. Burn subtitles into the picture, Right-eye video, DCI HDR, generic tone mapping and the picture fades are refused on more than one clip.</p>
-    <p>A project saved before the timeline opens with Reel 1's video as the first clip, playing Reel 1's WAV, and every later reel's video after it in reel order. Those later reels were never built before, so the status line names each one that moved. A project saved before layers opens with its clips on the Picture row one after another, where they played before.</p>
-    <p>The first video you import is probed, and a line under Properties, Picture says what it found, such as From the source: 1920x1080, 25 fps, bt709, 179 Mbit/s. Frame Rate takes the source's rate when it is a whole rate the list offers, and 24, 30, 48 or 60 for a 23.976, 29.97, 47.952 or 59.94 fps source. Frame Rate's Auto (from source) packages at that same rate. Source colour space takes Rec. 709, Rec. 2020, DCI-P3 or X'Y'Z' from the source's colour tags, and stays at Rec. 709 when the source declares none. Resolution's Auto option names the container the uncropped source goes into. A field the probe set has a dashed bar on its left, and editing it removes the bar. The probe never changes a field you edited or a delivery profile set. Bandwidth is what the encode aims for, so the source's bit rate is only shown.</p>
-    <p>Mono WAVs that share a name up to a channel suffix become one channel set on Sound when you drop them together or pick them with + Audio. The suffix is the last part of the name after <code>_</code>, <code>.</code>, <code>-</code> or a space, and names a lane: L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI or VI. So <code>mix_L.wav</code>, <code>mix.R.wav</code> and <code>mix C.wav</code> are one set, and the build puts each file on its lane. A WAV that does not fit a set, because it has no suffix, more than one channel or a lane the set already has, stays its own asset. Under Audio, Channel mapping names the file behind each row of a set, and the dotted cells show where each file or channel goes. A dotted cell routes at 0 dB until you type in its row, and then that row routes only the cells you typed.</p>
-    <p>Preview plays the asset or package you selected, or the first clip's video when nothing is selected.</p>
-    <h3 id="gain">Gain and fades</h3>
-    <p>Under Audio, Gain raises or lowers the whole sound track by that many dB. With a gain typed, the loudness target is a reference for Set gain and is not applied automatically. With Gain empty, a loudness target such as <code>leqm=85</code> or <code>lufs=-20</code> sets the level, held under the true-peak ceiling. Fade in and Fade out bring the sound up from silence at the start and down to silence at the end over that many seconds. Under Trim &amp; Stills, Picture fade in and Picture fade out do the same to the picture, from and to black. Fades and the level run on what is left after a trim, so the fades land on the first and last frames the package carries. A still hold takes no picture fade, and the build refuses one.</p>
-    <p>Measure, beside Loudness target, runs the sound steps a build runs and shows two lines. Source is the sound after routing, the channel map, the upmix, the delay and the trim. Delivered is the track the package will carry, after the loudness target or the gain and the fades. A third line lists what was applied, or Source track as is. With a loudness target typed, Set gain to reach target puts the difference between the target and the Source measurement of the same kind in Gain, to a tenth of a dB, which then sets the level in place of the target. Measure again to confirm the Delivered level.</p>
-    <p>Under the lines, a graph draws the Delivered track's short-term loudness, the loudness of the last 3 s read every 100 ms, from -60 to 0 LUFS against time in minutes and seconds. The solid line across it is the integrated loudness. The dashed vertical line marks where the true peak falls, labelled with its dBTP value. With a target in LUFS a dashed line shows it. A Leq(m) target has no line, because Leq(m) is not on the LUFS scale. A stretch of digital silence leaves a gap in the curve, and a track under 3 s draws no curve.</p>
+    <ol>
+        <li>Open Project. Drag your video onto Assets, or press + Video. It is placed on the Timeline.</li>
+        <li>If the sound is a separate file, press + Audio and pick it. See <a href="#sound">Sound</a> if you have one file per channel.</li>
+        <li>In Properties, type a Title.</li>
+        <li>Under Output, pick a Folder.</li>
+        <li>Press Build DCP.</li>
+    </ol>
+    <p>The DCP is written to a new folder inside Folder, named after the title. Progress shows in Jobs.</p>
+    <p>If a setting looks wrong, the app shows a hint before it starts. Press Build anyway or Go back.</p>
+    <p>When you import a video, the app reads its size, frame rate and colour, and fills in the Picture settings for you. The line under Properties, Picture shows what it found. Fields it filled have a dashed bar on the left. A field you change yourself is never overwritten. A 23.976 fps video becomes a 24 fps DCP, and 29.97 becomes 30.</p>
     <figure class="shot">
         <img src="manual/project.png" width="2400" height="1720" alt="Project, with movie.mov and trailer.mov on the timeline's picture track, trailer.mov trimmed to start at 00:00:01:00, mix.wav on the sound track, and the title My Film.">
     </figure>
-    <h3 id="picture-placement">Picture size and position</h3>
-    <p>Under Source Picture, Scale sizes the picture against the container with its aspect kept: 100 fits the container, under 100 leaves wider black bands, and over 100 fills past it and cuts the edges off at the frame. Offset X and Y move the picture that many container pixels right and down, and negative values move it left and up. A picture smaller than the frame stops at the frame's edge, and a larger one stops where its own edge reaches the frame. The line under Auto-crop shows the size and position the build will use. From a terminal, <code>create --picture-scale 90 --picture-offset 0,-20</code> does the same.</p>
-    <p>Preview in container, at the end of Source Picture, plays the preview through the build's own picture filters, so it shows the frame the build writes: the crop, rotation, flip, scale and offset, on the container with its black bands. The safe area, aspect mask, centre cross and thirds are then measured against that frame, and the crop overlay is off since the frame has the crop taken off already. The view follows the fields as you edit them. It is off by default and not saved in the project. A JPEG 2000 source plays through the grok player, which has no picture filters, so the box is greyed out for one.</p>
-    <h3 id="presets">Saved presets</h3>
-    <p>A preset keeps the Properties settings you reuse across films: picture, encode, packaging, audio with its channel map, the subtitle and burn-in look, and the naming metadata. It leaves out what belongs to one film: the title, the output folder, the key file, the right eye, Atmos, the closed caption and sign-language files, the burn-in subtitle file, versions, Split at, the trim, the still length and the version number, content version and version flags. Set Properties up, press Save as preset… beside Delivery profile and give it a name. Saving under a name you already have asks before it replaces that preset.</p>
-    <p>Saved presets are listed under Saved in the Delivery profile list, after the built-in profiles. Picking one sets every field it holds and marks them the way a profile does, with the hint Set by Festival: 78 settings. Edit any field to override. A field you then edit loses its mark and keeps your value. A choice the list no longer offers is named in the status line. Delete preset removes the one picked. Export… writes every preset to one file, and Import… on another machine adds the presets in that file, replacing any with the same name and naming them in the status line. Presets live in <code>presets.json</code> beside the settings file.</p>
     <h3>From a terminal</h3>
-<pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp
-dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Festival</pre>
-    <p><code>--preset</code> reads the same <code>presets.json</code>. A flag you give wins over the preset's value, and so does a flag that rules the preset's out, such as <code>--container-dims</code> over the preset's resolution. A preset field <code>create</code> has no flag for is named in a warning and left out. <code>--preset</code> and <code>--profile</code> are refused together.</p>
-    <p><code>--timeline programme.json</code> takes the place of <code>--video</code>: every clip in the timeline file, each cut to its in and out point and placed at its start frame on its layer, is built into one package with a reel at each reel start. <code>dcpwizard conform</code> writes such a file as <code>timeline.json</code>, and the README describes its fields.</p>
+<pre>dcpwizard create --title "My Film" --video movie.mov --audio mix.wav --output ./dcp</pre>
+    <p>Add <code>--check</code> to see the hints without building.</p>
+
+    <h2 id="timeline-edit">Edit the timeline</h2>
+    <p>The Timeline, under Assets, shows what goes into the DCP from left to right. It has these rows:</p>
+    <ul>
+        <li>Picture: your clips, one after another. Empty space becomes black and silence.</li>
+        <li>Layer 1, Layer 2 and up: clips shown on top of the Picture row, such as a title or a logo with a transparent background. They have no sound.</li>
+        <li>Sound and Subtitle: see <a href="#sound">Sound</a>.</li>
+    </ul>
+    <h3>Add a clip</h3>
+    <p>Every video you import goes on the end of the Picture row. To place one yourself, drag it from Assets onto a row:</p>
+    <ul>
+        <li>Drop it on a clip to put it right after that clip.</li>
+        <li>Drop it on empty space to put it where you dropped it.</li>
+        <li>Drop it on the empty row at the top to start a new layer.</li>
+    </ul>
+    <h3>Trim or move a clip</h3>
+    <ol>
+        <li>Click the clip.</li>
+        <li>Type In and Out as timecodes in the clip's own file, such as <code>00:00:02:00</code> for 2 seconds in. Or play the preview to the frame you want and press Set in from playhead or Set out from playhead.</li>
+        <li>To move the clip, drag it along its row, or onto another row.</li>
+    </ol>
+    <p>The trim cuts the sound with the picture. With only one clip, Trim off the head and Trim off the tail in Properties, Trim &amp; Stills do the same as In and Out, and take <code>2s</code> or <code>48f</code>.</p>
+    <p>Remove deletes the selected clip. Two clips cannot overlap on one row. For a clip on a layer, Opacity sets how much of it shows.</p>
+    <p>− and + zoom the timeline. Click the ruler to move the preview there. Tick Play whole timeline to have Preview play the timeline instead of the clip's file.</p>
+    <h3>Put a logo or title over the film</h3>
+    <ol>
+        <li>Make a PNG the size of the film's frame, with the logo where you want it and the rest transparent. A smaller image is scaled up to fill the frame.</li>
+        <li>Press + Video and pick the PNG. It goes on the end of the Picture row. Drag it onto the empty row at the top of the Timeline to make it Layer 1.</li>
+        <li>Drag it to where it should start. A still lasts 5 seconds. Click it and change Out to make it longer or shorter.</li>
+        <li>Set Opacity, from 0 to 100, if it should be see-through.</li>
+    </ol>
+    <h3>Reels</h3>
+    <p>With one clip, set the reels in Properties, Reels. With several clips, those fields are greyed out and you set the reels on the Timeline instead. A new clip does not start a new reel by itself.</p>
+    <ol>
+        <li>Click the ruler where the new reel should start, for example where the second clip begins. The playhead line moves there.</li>
+        <li>Press Split reel here, in the bar above the Timeline next to − and +. A marker appears on the ruler.</li>
+    </ol>
+    <p>Click a marker to remove it.</p>
+    <h3>Several clips</h3>
+    <ul>
+        <li>Every clip must have the same frame rate as the first one. Convert a clip at another rate before you import it.</li>
+        <li>These are not available: Burn subtitles into the picture, Right-eye video, DCI HDR, generic tone mapping and picture fades.</li>
+        <li>A JPEG 2000 clip can only go on the Picture row.</li>
+    </ul>
+    <p>To make more than one CPL in a project, press + CPL above the timeline. Each CPL has its own timeline, and Build DCP builds the one selected.</p>
+
+    <h2 id="properties">Properties</h2>
+    <p>Properties holds every build setting, in these groups:</p>
+    <ul>
+        <li>DCP: Title, Content Kind, Standard and Delivery profile.</li>
+        <li>Naming and metadata: the parts of the ISDCF name, the audio language and the mastering details.</li>
+        <li>Picture: Resolution, Frame Rate, Bandwidth, Quality and Source colour space.</li>
+        <li>Source Picture: crop, auto-crop, deinterlace, denoise, rotate, flip, scale and offset. See <a href="#picture-placement">Picture size and position</a>.</li>
+        <li>Trim &amp; Stills: trims, still length and picture fades.</li>
+        <li>Options: Encrypt and Validate after build.</li>
+        <li>3D: a right-eye video for a 3D DCP.</li>
+        <li>HDR: a DCI HDR package from an HDR source.</li>
+        <li>Reels: reel length and split points.</li>
+        <li>Markers: CPL markers. With none, FFOC and LFOC go on the first and last frame.</li>
+        <li>Ident Library: idents, rating cards and anti-piracy clips to play before or after the film.</li>
+        <li>Versions: a list that builds one CPL per entry.</li>
+        <li>Padding: black and silence before and after the film.</li>
+        <li>Audio: see <a href="#sound">Sound</a>.</li>
+        <li>Subtitles &amp; Captions: subtitle and closed caption files and how they look.</li>
+        <li>Sign Language: a signer video, carried on sound channel 15.</li>
+        <li>Output: the folder the DCP goes in.</li>
+    </ul>
+
+    <h2 id="sound">Sound</h2>
+    <p>Pick the case that matches your files.</p>
+    <h3>The sound is in the video</h3>
+    <p>There is nothing to do. The Sound row shows "embedded" under the clip, and the build uses the video's sound. A stereo mix stays stereo in the DCP. To make 5.1 from it, set Properties, Audio, Upmix stereo to 5.1 to Variant A or Variant B. A splits the sound by frequency, B keeps the stereo as it is and adds delayed surrounds.</p>
+    <p>If the video has no sound, the Sound row is empty. Add the sound with + Audio as below.</p>
+    <h3>One WAV with every channel</h3>
+    <ol>
+        <li>Press + Audio and pick the WAV.</li>
+        <li>It appears on the Sound row and replaces the video's sound.</li>
+    </ol>
+    <p>A six-channel WAV must be in the order L, R, C, LFE, Ls, Rs. If yours is L, R, C, Ls, Rs, LFE, set Properties, Audio, Input channel order to match. For a stereo WAV, Upmix stereo to 5.1 makes 5.1 from it.</p>
+    <h3>One WAV per channel</h3>
+    <ol>
+        <li>Press + Audio and pick all the WAVs at once.</li>
+        <li>The app joins them into one sound, which replaces the video's sound. In Assets it is one entry, with each file listed under it next to the channel the app read from its name.</li>
+        <li>Check that each file is on the right channel. See <a href="#mapping">Choose each file's channel</a>.</li>
+    </ol>
+    <p>The app reads the channel from the last part of each file name, after the last <code>_</code>, <code>.</code>, <code>-</code> or space. Upper or lower case does not matter. It knows L, R, C, LFE, Ls, Rs, Lc, Rc, BsL, BsR, HI and VI, and also Left, Right, Centre, Center and Sub.</p>
+    <ul>
+        <li><code>film_L.wav</code> and <code>film_left.wav</code> go on L. <code>film_Rs.wav</code> goes on Rs.</li>
+        <li><code>film_surround_l.wav</code> goes on L, not Ls, because only the last part, <code>l</code>, counts. Rename it to <code>film_Ls.wav</code>, or move it in the grid.</li>
+    </ul>
+    <p>The files are joined only if the rest of the name is the same, <code>film</code> here.</p>
+    <p>Any other ending, such as <code>film_SW.wav</code> or <code>reel_1.wav</code>, is not recognised. That file goes on C, and the status bar tells you. Leave it there and it is mixed into the centre channel. So <code>reel_1.wav</code> to <code>reel_6.wav</code> all start on C. Either rename them before importing, for example to <code>reel_L.wav</code>, <code>reel_R.wav</code> and so on, or move each one in the grid as below.</p>
+    <h3 id="mapping">Choose each file's channel</h3>
+    <p>Channel mapping is a grid in Properties. Scroll Properties down to the Audio group, near the end. Each row is one of your files, named on the left, or one channel of a multichannel WAV. Each column is a channel of the DCP, labelled L, R, C, LFE, Ls, Rs and so on. A dotted cell shows where a row goes now.</p>
+    <ol>
+        <li>Find the row of the file you want to move.</li>
+        <li>Click the cell in the column it should go to. The cell shows 0, which means it goes there at full level. The dotted cell in that row goes plain, because the row now goes only where you clicked.</li>
+        <li>To make it quieter or louder, type a number of dB in the cell instead, such as -3.</li>
+    </ol>
+    <figure class="shot">
+        <img src="manual/sound.png" width="2400" height="1720" alt="Channel mapping for six WAVs. film_boom.wav named no channel and started on C, and its LFE cell holds 0, so it now goes to LFE.">
+    </figure>
+    <p>Do this for every row in the wrong place, one row at a time. For <code>film_SW.wav</code>, click its LFE cell. To make the left surround 3 dB quieter, type -3 in the Ls cell of the <code>film_Ls.wav</code> row. For <code>reel_1.wav</code> to <code>reel_6.wav</code>, click one cell per row in the order your mix uses: row 1 on L, row 2 on R, and so on.</p>
+    <p>If the text under the grid says "Typed gains are off", set Upmix stereo to 5.1 to Off and Input channel order to DCP. Neither is needed for one WAV per channel.</p>
+    <h3>Sound for one clip only</h3>
+    <p>Drag a WAV from Assets onto the Sound row under that clip. The ✕ on it removes it, and the clip goes back to its own sound. A WAV made of one file per channel always covers the whole timeline.</p>
+    <h3 id="gain">Set the loudness</h3>
+    <p>Get the channels right first. The loudness is measured after Channel mapping.</p>
+    <ol>
+        <li>In Properties, Audio, Loudness target, type the level you want, such as <code>lufs=-24</code> for -24 LUFS or <code>leqm=85</code> for 85 dB Leq(m).</li>
+        <li>Optionally press Measure to check. Source is the level of your sound now. Delivered is the level the DCP will have. The graph shows the loudness over time.</li>
+        <li>Build. The build brings the sound to the target. A LUFS target is integrated loudness.</li>
+    </ol>
+    <p>The target turns the whole mix up or down by one amount, so the gains you typed in the grid keep their balance.</p>
+    <p>If a build fails with "true-peak ceiling exceeded", the target is too loud for this mix. Pick a lower target, or set True-peak ceiling, just under Loudness target, closer to 0. It is -1 dBTP by default.</p>
+    <p>To set the level by hand, type it in Gain, in dB. Once Gain has a value, the build uses it and ignores the target. After a Measure, Set gain to reach target works out that value for you.</p>
+    <h3>Fades, delay and the rest</h3>
+    <p>All under Properties, Audio:</p>
+    <ul>
+        <li>Fade in and Fade out: seconds of fade at the start and end.</li>
+        <li>Audio delay: moves the sound later, in ms. A negative number moves it earlier.</li>
+        <li>Packaged channels: how many channels the DCP carries, the extra ones silent. On Auto, a 5.1 mix is carried as 16 channels and anything else keeps its own count.</li>
+        <li>Dolby Atmos / IAB track: adds an Atmos track.</li>
+    </ul>
+    <h3>From a terminal</h3>
+<pre>dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
+  --audio ./stems --audio-map "1:L,2:R,3:C,4:LFE,5:Ls,6:Rs"</pre>
+    <p>A folder given to <code>--audio</code> is read like several WAVs picked in the app. In <code>--audio-map</code>, 1 is the first row of the app's grid, 2 the second, and so on.</p>
+
+    <h2 id="picture-placement">Picture size and position</h2>
+    <h3>In the app</h3>
+    <p>Under Source Picture:</p>
+    <ul>
+        <li>Scale sizes the picture against the container with its aspect kept. 100 fits the container, under 100 leaves wider black bands, over 100 crops the edges.</li>
+        <li>Offset X and Y move the picture right and down in container pixels. Negative values move it left and up.</li>
+        <li>The line under Auto-crop shows the size and position the build will use.</li>
+        <li>Preview in container plays the preview through the build's picture filters, so it shows the frame the build writes. It is off by default. A JPEG 2000 source cannot use it.</li>
+    </ul>
+    <h3>From a terminal</h3>
+<pre>dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
+  --picture-scale 90 --picture-offset 0,-20</pre>
+
+    <h2 id="presets">Saved presets</h2>
+    <h3>In the app</h3>
+    <p>A preset keeps the Properties settings you reuse across films: picture, encode, packaging, audio with its channel map, subtitle and burn-in look, and naming metadata. It leaves out what belongs to one film, such as the title, output folder, key file, trims and version fields.</p>
+    <ol>
+        <li>Set up Properties.</li>
+        <li>Press Save as preset… beside Delivery profile and give it a name.</li>
+    </ol>
+    <p>Saved presets appear under Saved in the Delivery profile list. Picking one sets its fields and marks them. A field you then edit keeps your value. Delete preset removes the one picked. Export… writes every preset to one file, and Import… adds them on another machine. Presets are stored in <code>presets.json</code> beside the settings file.</p>
+    <h3>From a terminal</h3>
+<pre>dcpwizard create --title "My Film" --video movie.mov --output ./dcp --preset Festival</pre>
+    <p>A flag you give wins over the preset. <code>--preset</code> and <code>--profile</code> cannot be used together.</p>
 
     <h2 id="encrypt">Encrypt it</h2>
     <h3>In the app</h3>
-    <p>Open Settings. Under Certificates, press Create signing chain…, type the organization, and pick a folder. The app fills in the signing certificate, its key, the intermediate, and the root, and saves them.</p>
+    <ol>
+        <li>Open Settings. Under Certificates, press Create signing chain…, type the organization and pick a folder.</li>
+        <li>On Project, under Properties, Options, tick Encrypt.</li>
+        <li>In Key Output File, pick where to save the keys file, outside the DCP folder.</li>
+        <li>Press Build DCP. Keep the keys file safe. You need it to make KDMs.</li>
+    </ol>
     <figure class="shot">
         <img src="manual/settings.png" width="2400" height="1720" alt="Settings, Certificates, with the signing chain and the recipient certificate filled in.">
     </figure>
-    <p>Back on Project, under Properties, Options, tick Encrypt and choose a Key Output File that is not inside the package. Press Build DCP. Keep that keys file. A package that was already built in the clear stays clear.</p>
     <figure class="shot">
         <img src="manual/encrypt.png" width="2400" height="1720" alt="Properties, Options, with Encrypt ticked and the key file set outside the package.">
     </figure>
@@ -178,8 +333,21 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
 
     <h2 id="kdm">Make a KDM</h2>
     <h3>In the app</h3>
-    <p>Open Encryption &amp; KDM. Under Make a KDM, pick the encrypted DCP. CPL ID and Content Title fill in. Pick the screen's Recipient Certificate, the Keys File from the build, Valid From, Valid To, and an output folder. Press Make KDM. The signature is the chain in Settings.</p>
-    <p>Tick DKDM for this machine when the KDM is for you. The recipient is then the certificate in Settings, so you can reissue it later.</p>
+    <ol>
+        <li>Open Encryption &amp; KDM. Under Make a KDM, pick the encrypted DCP. CPL ID and Content Title fill in.</li>
+        <li>In Recipient Certificate, pick the cinema's certificate. The cinema or its server supplier sends it, usually as a <code>.pem</code> file.</li>
+        <li>In Keys File, pick the keys file you saved when you built the DCP.</li>
+        <li>Pick the Valid From and Valid To dates and times, and an output folder.</li>
+        <li>Press Make KDM.</li>
+    </ol>
+    <p>The KDM is signed with the signing chain from Settings. To turn off forensic marking at the cinema, tick Disable picture forensic marking, or set Audio forensic marking.</p>
+    <h3>Make a DKDM for yourself</h3>
+    <p>A DKDM is a KDM made for your own copy of DCP Wizard. With it you can make KDMs for cinemas later without the keys file, see <a href="#dkdm">Re-wrap a DKDM</a>.</p>
+    <ol>
+        <li>Once, in Settings, Certificates, press Create recipient certificate…. See <a href="#cert">Export the recipient certificate</a>.</li>
+        <li>Follow the steps above, but tick DKDM for this machine. Recipient Certificate fills in with your own certificate.</li>
+        <li>Press Make KDM. The file is named <code>dkdm.xml</code>.</li>
+    </ol>
     <figure class="shot">
         <img src="manual/kdm.png" width="2400" height="2050" alt="Encryption and KDM. Make a KDM is on the left, From a DKDM is on the right.">
     </figure>
@@ -198,10 +366,14 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
 
     <h2 id="dkdm">Re-wrap a DKDM</h2>
     <h3>In the app</h3>
-    <p>On the same screen, under From a DKDM, pick the DKDM and the new screen certificate. If the DKDM was made for this machine, tick Unwrap with this machine's key. Leave Valid From and Valid To empty to keep the DKDM's window. Press Make KDM.</p>
-    <figure class="shot">
-        <img src="manual/kdm.png" width="2400" height="2050" alt="From a DKDM, with this machine's key ticked and the dates left empty.">
-    </figure>
+    <p>This makes a KDM for a cinema from a DKDM. It needs the signing chain in Settings, see <a href="#encrypt">Encrypt it</a>.</p>
+    <ol>
+        <li>Open Encryption &amp; KDM. Under From a DKDM, pick the DKDM.</li>
+        <li>A DKDM only opens with the private key of the certificate it was made for. If you made it with DKDM for this machine, tick Unwrap with this machine's key. If someone else made it for you, they made it for a certificate you sent them, so pick that certificate's private key in DKDM Private Key.</li>
+        <li>In New Recipient Certificate, pick the cinema's certificate.</li>
+        <li>Leave Valid From and Valid To empty to use the DKDM's dates, or set a shorter window.</li>
+        <li>Pick an Output and press Make KDM.</li>
+    </ol>
     <h3>From a terminal</h3>
 <pre>dcpwizard kdm-rewrap \
   --dkdm my.dkdm.xml \
@@ -215,12 +387,11 @@ dcpwizard create --title "My Film" --video movie.mov --output ./dcp \
 
     <h2 id="cert">Export the recipient certificate</h2>
     <h3>In the app</h3>
-    <p>In Settings, Certificates, press Create recipient certificate… and pick a folder. That needs the signing chain from earlier. If DCP-o-matic is already on this machine, press Import from DCP-o-matic… instead. That copies its decryption certificate and private key.</p>
-    <p>Press Export certificate… and send that file to the QC software. It is the public certificate. The private key stays here, and the button will not write a file that also holds a key.</p>
-    <figure class="shot">
-        <img src="manual/settings.png" width="2400" height="1720" alt="Settings, Certificates, with Export certificate and Import from DCP-o-matic.">
-    </figure>
-    <p>The QC tool uses it to aim a KDM at this copy of DCP Wizard. To open one of your encrypted DCPs over there, give it a KDM aimed at the QC tool, or the keys file from the build.</p>
+    <ol>
+        <li>In Settings, Certificates, press Create recipient certificate… and pick a folder. This needs the signing chain. If DCP-o-matic is on this machine, press Import from DCP-o-matic… instead to copy its decryption certificate and key.</li>
+        <li>Press Export certificate… and send the file to the QC software.</li>
+    </ol>
+    <p>The exported file holds the public certificate only. Anyone with it, such as a distributor or the maker of a QC tool, can make KDMs and DKDMs that this copy of DCP Wizard opens.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard certificate generate -t leaf \
   --cn "Studio" --organization "Studio" \
@@ -232,99 +403,170 @@ dcpwizard preferences import-dcpomatic</pre>
 
     <h2 id="batch">Build several DCPs</h2>
     <h3>In the app</h3>
-    <p>Build DCP adds the build to Jobs. Builds run one at a time, in the order you pressed Build DCP. While the first one runs, change the Title, or open the next project from the Project menu, or choose New and add its assets, and press Build DCP again. It shows in Jobs as queued and starts when the one before it finishes. Build DCP is greyed while the Title matches a build that is queued or running, since two builds with one title would write the same folder. After a build finishes, the button reads DCP Built and stays greyed until you change the project or a setting the build reads, or delete the built folder. Reopening the project keeps it that way.</p>
-    <p>Open Jobs from the sidebar to see each build's state and progress. Press ✕ on a queued or running row to cancel it. A queued row has Run next, Earlier and Later buttons, which reorder the queue. The running build never moves.</p>
+    <p>Build DCP adds the build to Jobs, and builds run one at a time in order. While one runs, change the title or open another project and press Build DCP again. The new build waits in Jobs. Each build needs its own title, since the title names its folder. They can share the output Folder.</p>
+    <ul>
+        <li>Build DCP is greyed while a queued or running build has the same title.</li>
+        <li>After a build, the button reads DCP Built until you change the project or a setting, or delete the built folder.</li>
+        <li>In Jobs, ✕ cancels a build. ⤒, ↑ and ↓ move a queued build to the front, earlier or later.</li>
+    </ul>
     <h3>From a terminal</h3>
-<pre># Build a package from every master that lands in ./incoming
+<pre># build a package from every master that lands in ./incoming
 dcpwizard watch ./incoming --output ./packages -- --standard smpte
 
-# Run the daemon in one terminal and queue from another, batch add exits 1 when the daemon is not running
+# run the daemon in one terminal and queue from another
 dcpwizard daemon
 dcpwizard batch add -T create-dcp -p '{"title":"My Film","standard":"Smpte","resolution":"TwoK","content_type":"Feature","frame_rate_num":24,"frame_rate_den":1,"max_bitrate_mbps":250,"encrypt":false,"stereo_3d":false,"container_width":0,"container_height":0,"output_dir":"./dcp","j2k_dir":"./j2k","audio_path":"./audio.wav","audio_input_order":"Canonical51","subtitle_language":"en","reel_length_minutes":0}'
 dcpwizard batch list
 dcpwizard batch move 3 --before 2</pre>
-    <p>The daemon's jobs show in the same Jobs panel, with their own Run next, Earlier and Later buttons.</p>
+    <p>The daemon's jobs appear in the app's Jobs panel too.</p>
+
     <h2 id="verify">Validate a DCP</h2>
     <h3>In the app</h3>
-    <p>Open Verify and press Validate. The view starts on the package the preview last played, else the DCP opened with Open DCP, else the last build, else the package folder beside the open project file. Select DCP… picks another, which then stays. The app runs the strict SMPTE check and then the Bv2.1 profile check, and a package with only warnings passes. Inspect MXF essence is off by default. Ticked, it reads every picture frame's codestream and names the largest frame against the DCI cap, which takes about as long as reading the picture file once. Inspect, in the bottom bar after a build, opens this view on the new package and runs it.</p>
-    <p>While Validate runs, a bar under the boxes reads Checking hashes or Scanning frames with the percent done, and Scanning frames starts from 0% for each reel. Cancel beside Validate stops the run, and the results then read Verification cancelled.</p>
-    <p>After a run, Save report… writes the findings as an HTML page, and on Linux Save PDF… prints the same page to a PDF. The save dialog offers <code>&lt;package folder&gt;-verify.html</code> or <code>.pdf</code> beside the package. The report holds the Bv2.1 findings below the strict check's, and its verdict passes only when both pass.</p>
+    <ol>
+        <li>Open Verify. It starts on the package you last played, opened or built. Select DCP… picks another.</li>
+        <li>Press Validate.</li>
+    </ol>
+    <p>It runs the strict SMPTE check, then the Bv2.1 profile check, and lists every error and warning below. A package with only warnings passes. Cancel stops the run.</p>
+    <p>Also on Verify:</p>
+    <ul>
+        <li>Inspect MXF essence reads every picture frame and names the largest against the DCI cap. It takes about as long as reading the picture file once.</li>
+        <li>Save report… writes the findings as HTML. On Linux, Save PDF… writes a PDF.</li>
+        <li>After a build, Inspect at the bottom of the window opens Verify on the new DCP and validates it.</li>
+    </ul>
     <h3>From a terminal</h3>
 <pre>dcpwizard verify "./dcp/My Film" --strict
 dcpwizard verify "./dcp/My Film" --strict --no-picture-check -o verify.html
 dcpwizard verify "./dcp/My Film" --strict --progress</pre>
-    <p><code>--progress</code> prints <code>progress hashes &lt;done&gt; &lt;total&gt;</code> and <code>progress frames &lt;done&gt; &lt;total&gt;</code> lines to stderr, one each time the whole percent changes. Hashes count bytes and frames count each reel's picture frames.</p>
+    <p><code>--progress</code> prints <code>progress hashes &lt;done&gt; &lt;total&gt;</code> and <code>progress frames &lt;done&gt; &lt;total&gt;</code> lines to stderr.</p>
 
-    <h2 id="timeline">See the reels on the Timeline</h2>
+    <h2 id="timeline">See the reels of a package</h2>
     <h3>In the app</h3>
-    <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. The Picture and Sound tracks show one block per reel of the package's first CPL, with the reel's length. Click the ruler or a track to move the preview to that point. With no package open it shows the project's timeline, one block per reel from its reel starts, and follows the preview while it plays a clip.</p>
+    <p>Press Open DCP on Project and pick a package, then open Reels &amp; Timeline. Picture and Sound show one block per reel of the first CPL. Click the ruler or a track to move the preview there. With no package open, it shows the project's reels.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard info "./dcp/Two Reels"</pre>
 
     <h2 id="play">Play a package</h2>
     <h3>In the app</h3>
-    <p>Select an asset, or press Open DCP and pick a package, then press ▶ Preview. A DCP, a CPL, a picture MXF or a folder of codestreams plays through grok, and anything else through libmpv. An encrypted package opens the Content keys dialog. Pick the KDM and the Recipient Private Key it was issued to, or the KEYS.json from the build, and press Play. The keys are reused for that package until the app closes.</p>
-    <p>The QC strip under the picture has Safe, Aspect, Cross and Thirds overlays, Crop for the crop the build applies, Sub and CC to show the subtitle and closed caption tracks, and Decode to play at full, half or quarter size. ⛶ in the preview header, or F, fills the screen. The controls and the cursor hide three seconds after the pointer last moved and come back on a pointer move or a key press. Press ⛶ again or Escape to return to the window.</p>
-    <p>Open Player under the preview and tick Level meter to see one bar per channel, named by its lane, with the peak held for a second and a clip mark at 0 dBFS. On a DCP the bars follow the sound as it plays. On any other file they run 0.3 to 0.6 s ahead of what you hear.</p>
-    <p>Queue, beside Play after a build, and + beside a project in the Project menu's recent list, add the package to the playlist under the transport bar. Click a row to play it, and the next row starts when it ends. ↑ and ↓ reorder the rows and ✕ removes one. The playlist lasts until the app closes.</p>
+    <p>Select an asset, or press Open DCP and pick a package, then press ▶ Preview. An encrypted package asks for its KDM and the matching private key, or the keys file from the build.</p>
+    <ul>
+        <li>The QC strip has Safe, Aspect, Cross and Thirds overlays, Crop for the build's crop, Sub and CC for subtitles and captions, and Decode for full, half or quarter size.</li>
+        <li>⛶ or F fills the screen. Escape returns.</li>
+        <li>Under Player, Device, Layout, Source and A/V delay set how the preview's sound plays. Level meter shows one bar per channel with a peak hold and a clip mark.</li>
+        <li>Queue, beside Play after a build, adds the package to the playlist under the transport bar. Rows play in order.</li>
+    </ul>
 
     <h2 id="encode">Encode to JPEG 2000</h2>
     <h3>In the app</h3>
-    <p>Open Tools. Under Encode to JPEG 2000, pick the image sequence folder as Input, pick an Output Directory, set Bandwidth (Mbps) and press Encode. The codestreams go in a j2k folder inside the output. Resolution fits each frame into the 2K or 4K full container, and Frame Rate is the rate the bitrate is budgeted at.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Encode to JPEG 2000.</li>
+        <li>Pick the folder of images as Input, and an Output Directory.</li>
+        <li>Set Bandwidth (Mbps) and press Encode.</li>
+    </ol>
+    <p>The JPEG 2000 files go in a <code>j2k</code> folder inside the output.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard encode -i ./frames -o ./encoded --bandwidth 230</pre>
 
     <h2 id="transcode">Transcode a video to frames</h2>
     <h3>In the app</h3>
-    <p>Under Transcode Video, pick the Input Video and an Output Directory, choose Format and Bit Depth, and press Transcode. The frames come out as frame_00000001.tiff and on, at the source's size, ready to be the Input of Encode to JPEG 2000. A 16-bit TIFF of a 2K frame is about 12 MB, so a 90 minute feature fills well over a terabyte.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Transcode Video.</li>
+        <li>Pick the Input Video and an Output Directory.</li>
+        <li>Choose Format and Bit Depth, and press Transcode.</li>
+    </ol>
+    <p>The frames are named <code>frame_00000001.tiff</code> and on. A 16-bit 2K TIFF is about 12 MB, so a feature needs over a terabyte.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard transcode -i movie.mov -o ./frames --format tiff --bit-depth 16</pre>
 
     <h2 id="loudness">Measure loudness</h2>
     <h3>In the app</h3>
-    <p>To measure the sound a build will package, use Measure under Audio in Properties, see <a href="#gain">Gain and fades</a>. Under Loudness Measurement, pick the Audio File and press Measure. It reports integrated loudness in LUFS, true peak in dBTP and the loudness range. The file has to be a WAV or a sound MXF out of a DCP. The picker also offers FLAC, AIFF and MP3, and those fail.</p>
+    <p>To check the sound of the DCP you are building, use Measure in Properties, Audio. See <a href="#gain">Set the loudness</a>.</p>
+    <p>To check any WAV or sound MXF:</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Loudness Measurement.</li>
+        <li>Pick the Audio File and press Measure.</li>
+    </ol>
+    <p>It shows the integrated loudness, the true peak and the loudness range.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard loudness mix.wav</pre>
 
     <h2 id="copy">Copy a DCP to a drive</h2>
     <h3>In the app</h3>
-    <p>Under Copy DCP, pick the Source DCP folder and the Destination, then press Copy DCP. The package lands in a folder of the same name inside the destination. Each file is read back after the copy and its hash checked against the source.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Copy DCP.</li>
+        <li>Pick the Source DCP folder and the Destination.</li>
+        <li>Press Copy DCP.</li>
+    </ol>
+    <p>Pick a folder on the drive as Destination. The DCP is copied into it in a folder of its own name. Each file is read back and compared with the original, and the copy fails and names the file if one differs. To check the copy as a DCP too, <a href="#verify">validate</a> it.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard copy --src "./dcp/My Film" --dst ./drive</pre>
 
     <h2 id="report">Make a QC report</h2>
     <h3>In the app</h3>
-    <p>Under QC Report, pick the DCP Directory and press Generate Report. The report is an HTML page written beside the package as its folder name plus .qc.html, never inside it, so the package stays clean for delivery.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to QC Report.</li>
+        <li>Pick the DCP Directory and press Generate Report.</li>
+    </ol>
+    <p>Verify checks that the DCP meets the standards. QC Report checks the content, such as the loudness against the trailer and advert limits. The report is an HTML file next to the DCP folder, named after it with <code>.qc.html</code> on the end.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard report --dcp "./dcp/My Film" -o report.html</pre>
 
     <h2 id="srt">Convert SRT to SMPTE subtitles</h2>
     <h3>In the app</h3>
-    <p>A build converts an SRT on the Subtitle track by itself, so this is only for a standalone SMPTE subtitle XML. Under SRT → SMPTE Subtitle Conversion, pick the SRT and an Output Folder and press Convert. The XML takes the SRT's name, and with no folder picked it goes beside the SRT.</p>
+    <p>You only need this for a separate subtitle file. A build converts an SRT on the Subtitle row by itself.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to SRT → SMPTE Subtitle Conversion.</li>
+        <li>Pick the SRT, and an Output Folder if you want one.</li>
+        <li>Press Convert.</li>
+    </ol>
+    <p>The XML goes in Output Folder, or next to the SRT.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard subtitle-convert -i subs.srt -o subs.xml -l en --fps 24 --vposition 8</pre>
 
     <h2 id="subextract">Extract subtitles</h2>
     <h3>In the app</h3>
-    <p>Under Subtitle Extraction, press Folder for a DCP or File for a subtitle XML or MXF, choose Format and press Extract. The text goes to subtitles.srt or subtitles.txt in Output Folder, or in the folder that holds the input when Output Folder is empty. Cue times come out rounded to the DCP's frames.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Subtitle Extraction.</li>
+        <li>Press Folder to pick a DCP, or File to pick a subtitle XML or MXF.</li>
+        <li>Choose Format and press Extract.</li>
+    </ol>
+    <p>The text goes to <code>subtitles.srt</code> or <code>subtitles.txt</code> in Output Folder, or next to the input.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard subtitle-extract -i "./dcp/Subbed" -o subtitles.srt</pre>
 
     <h2 id="burnin">Burn in subtitles</h2>
     <h3>In the app</h3>
-    <p>Subtitle Burn-in makes a review copy, a video file rather than a package. For a DCP with burnt-in text, set Burn subtitles into the picture in Properties and build. Burn In writes the video's name plus _burnin.mp4 into Output Directory, or beside the video. It takes SRT, ASS/SSA, WebVTT, and SMPTE or Interop XML or MXF, which it converts first.</p>
+    <p>This makes a video to review, not a DCP. To burn subtitles into a DCP, set Burn subtitles into the picture in Properties.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Subtitle Burn-in.</li>
+        <li>Pick the Video Input and the Subtitle File. SRT, ASS/SSA, WebVTT, and SMPTE or Interop XML or MXF all work.</li>
+        <li>Press Burn In.</li>
+    </ol>
+    <p>The result is <code>&lt;video name&gt;_burnin.mp4</code>.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard burnin -i movie.mov -s subs.srt -o review.mp4</pre>
 
     <h2 id="convert">Convert to a DCI container</h2>
     <h3>In the app</h3>
-    <p>Target Conversion scales, crops or letterboxes a video to one of the six DCI containers. Convert writes the video's name plus the container, for example clip_2k-scope.mov, into Output Directory, or beside the video. From a terminal the codec follows the output's name, so scope.mov comes out as H.264.</p>
+    <p>This scales, crops or letterboxes a video to one of the six DCI sizes.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Target Conversion.</li>
+        <li>Pick the Input Video/Sequence, the Target Container and the Method: Letterbox, Crop or Scale.</li>
+        <li>Press Convert.</li>
+    </ol>
+    <p>The result is named after the video and the size, for example <code>clip_2k-scope.mov</code>.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard convert -i movie.mov -t 2k-scope -m letterbox -o scope.mov</pre>
+    <p>The codec follows the output's extension.</p>
 
     <h2 id="ingest">Re-ingest a package</h2>
     <h3>In the app</h3>
-    <p>Under Re-ingest Package, pick the Package Directory and press Rebuild ASSETMAP &amp; PKL. It writes a new ASSETMAP and PKL listing every asset file in the folder, deletes the old ones, and leaves the essence alone. With a signing chain in Settings the new PKL is signed, which an encrypted package needs to pass Validate.</p>
+    <p>Use this after adding or removing files in a DCP folder by hand. It rewrites the ASSETMAP and PKL, the files that list what is in the DCP.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Re-ingest Package.</li>
+        <li>Pick the Package Directory.</li>
+        <li>Press Rebuild ASSETMAP &amp; PKL.</li>
+    </ol>
+    <p>The picture and sound files are not touched. With a signing chain in Settings, the new PKL is signed. An encrypted DCP needs that to pass Validate.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard ingest-package ./pkg
 dcpwizard ingest-package ./pkg \
@@ -333,24 +575,48 @@ dcpwizard ingest-package ./pkg \
   --signer-chain ~/dcp-certs/intermediate.pem \
   --signer-chain ~/dcp-certs/root.pem</pre>
 
-    <h2 id="export">Export a DCP</h2>
+    <h2 id="export">Export a DCP to MP4 or ProRes</h2>
     <h3>In the app</h3>
-    <p>Under Export DCP, press DCP folder or CPL or MXF, choose Format, press Save as for the Output and press Export. A composition exports with all its reels in order as one file. A picture MXF on its own exports silent unless a Sound override is given. An encrypted DCP needs its KDM with the Recipient private key it was issued to, or the KEYS.json from the build.</p>
+    <p>This turns a DCP into a normal video file.</p>
+    <ol>
+        <li>Click Tools in the sidebar and go to Export DCP.</li>
+        <li>Under Input, press DCP folder to pick a whole DCP, or CPL or MXF to pick one file.</li>
+        <li>Choose a Format: ProRes, H.264, H.265, DNxHR or PNG sequence. Pick H.264 for an MP4.</li>
+        <li>Press Save as to name the output, and press Export.</li>
+    </ol>
+    <p>All the reels go into one file. An encrypted DCP needs its KDM and private key, or the keys file from the build.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard export --input "./dcp/My Film" -o my-film.mp4 --format h264
 dcpwizard export --input ./dcp/Locked --keys ~/keys/locked.json -o locked.mp4</pre>
 
     <h2 id="vf">Make a Version File</h2>
     <h3>In the app</h3>
-    <p>Open Version File (Supplemental DCP) and pick the Original Version (OV) Directory and an Output Folder. Under Replacement Reels, set each Reel number and pick its Picture, a folder of J2K frames or an MXF through MXF…, or its Sound, a WAV, which a 16-bit file is widened to 24 bits for, press + Reel for the next one, and press Create Version File. The VF goes in a new folder named after Title, which defaults to the OV's title with _VF on the end. A replacement has to run exactly as long as the reel it replaces, or Create Version File refuses it. Validate the VF against its OV from a terminal, as below.</p>
+    <ol>
+        <li>Open Version File (Supplemental DCP). Pick the Original Version (OV) Directory and an Output Folder.</li>
+        <li>Under Replacement Reels, set the Reel number and pick its Picture (a J2K folder, or an MXF through MXF…) or its Sound (a WAV). Press + Reel for another.</li>
+        <li>Press Create Version File.</li>
+    </ol>
+    <p>A replacement must run exactly as long as the reel it replaces. The VF goes in a folder named after Title, which defaults to the OV's title plus <code>_VF</code>.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard create-vf --ov "./dcp/Two Reels" --output ./vf \
   --replace-picture 2=./j2k-reel2 --replace-sound 2=reel2.wav
 dcpwizard verify "./vf/Two Reels_VF" --strict --ov "./dcp/Two Reels"</pre>
+    <p>The second command validates the VF against its OV, which the app cannot do.</p>
 
     <h2 id="rebuild">Rebuild a DCP</h2>
     <h3>In the app</h3>
-    <p>Open Rebuild DCP and pick the Source DCP folder. Its title, standard, picture size and active area, frame rate, reels and kind are listed under it, and its title and ratings fill Title and Ratings. A DCP with more than one CPL, an encrypted one, or one with closed captions or an Atmos track is refused there with the reason. Change Title, edit, add or remove Ratings, pick an Output Folder and press Rebuild. Container fits the picture into another container with black bars, Custom WxH takes any size up to 4K, and Bit rate sets the picture's Mbit/s and the library items'. Only a new container or a bit rate re-encodes the picture, otherwise its track is copied byte for byte. Pick a library item and press Add to head or Add to tail to play it before or after the DCP, and drag the chips to reorder them. The new OV goes in a new folder named after Title, and the source is never changed. Cancel stops the rebuild and removes what it wrote.</p>
+    <ol>
+        <li>Open Rebuild DCP and pick the Source DCP folder. Its details are listed, and its title and ratings fill Title and Ratings.</li>
+        <li>Change Title and Ratings as needed.</li>
+        <li>To add an ident or trailer, pick a library item and press Add to head or Add to tail. Drag the chips to reorder.</li>
+        <li>Pick an Output Folder and press Rebuild.</li>
+    </ol>
+    <ul>
+        <li>Container fits the picture into another container with black bars. Custom WxH takes any size up to 4K.</li>
+        <li>Bit rate sets the picture's Mbit/s. Only a new container or bit rate re-encodes the picture, otherwise it is copied as is.</li>
+        <li>A DCP with several CPLs, encryption, closed captions or Atmos is refused, with the reason.</li>
+        <li>The source is never changed. Cancel removes what the rebuild wrote.</li>
+    </ul>
     <h3>From a terminal</h3>
 <pre>dcpwizard assemble --input "./dcp/My Film" --output ./rebuilt --title "My Film UK" \
   --rating "http://www.bbfc.co.uk=12A" --head-item "Studio Ident"
@@ -359,15 +625,39 @@ dcpwizard assemble --input ./scope --output ./rebuilt --title "My Film Scope"</p
 
     <h2 id="keyboard">Use the keyboard</h2>
     <h3>In the app</h3>
-    <p>Hold Alt to see the underlined letter on a button, and press Alt with that letter to press it. Ctrl+1 to Ctrl+9 open the sidebar views from the top, so Version File is Ctrl+6, Rebuild DCP Ctrl+7, Jobs Ctrl+8 and Settings Ctrl+9. Ctrl+Enter runs the action of the section the focus is in. In a path field Alt+Down opens its file dialog, and Escape leaves a text field. Alt+P opens the Project menu, where N, O, S and A run New, Open, Save and Save As and the arrow keys pick a recent project. After a build, Ctrl+Shift+P plays it, Ctrl+Shift+A queues it, Ctrl+Shift+E opens it in Verify and Ctrl+Shift+F shows its folder.</p>
-    <p>Ctrl+K lists every shortcut. Click one and press the new keys. Backspace clears it and Escape cancels. ↺ puts one shortcut back to its default and Reset all puts back every one. Your changes are saved.</p>
+    <ul>
+        <li>Ctrl+K lists every shortcut. Click one to change it.</li>
+        <li>Hold Alt to see each button's underlined letter, and press Alt with the letter.</li>
+        <li>Ctrl+1 to Ctrl+9 open the sidebar views from the top.</li>
+        <li>Ctrl+Enter runs the action of the focused section.</li>
+        <li>Alt+Down in a path field opens its file dialog.</li>
+        <li>Alt+P opens the Project menu: N, O, S and A are New, Open, Save and Save As.</li>
+        <li>After a build: Ctrl+Shift+P plays it, Ctrl+Shift+A queues it, Ctrl+Shift+E validates it and Ctrl+Shift+F shows its folder.</li>
+    </ul>
 
     <h2 id="settings">Change the settings</h2>
     <h3>In the app</h3>
-    <p>Open Settings, change what you need and press Save. Terminal commands read the same file, so Encode on the GPU, Encode threads, Grok License and Report black and frozen runs while encoding apply there too, and their flags override them. A build goes to Default Output Directory when Folder is empty, and ISDCF Facility Code fills the mastering facility in the CPL and the ISDCF name when the project leaves it blank. If grok cannot start the GPU plugin, Save unticks Encode on the GPU and the status bar says why. Standard, Resolution, Frame Rate and Bandwidth are what a new project starts with. Reset puts every setting back to its default.</p>
+    <p>Open Settings, change what you need and press Save. Reset restores the defaults.</p>
+    <ul>
+        <li>Standard, Resolution, Frame Rate and Bandwidth are what a new project starts with.</li>
+        <li>Default Output Directory is used when Folder is empty.</li>
+        <li>ISDCF Facility Code fills the facility in the CPL and the ISDCF name.</li>
+        <li>Encode on the GPU, Encode threads, Grok License and Report black and frozen runs apply to the terminal too. If grok cannot start the GPU plugin, Save unticks Encode on the GPU and says why.</li>
+    </ul>
     <h3>From a terminal</h3>
 <pre>dcpwizard preferences show
 dcpwizard preferences set encode-threads 8</pre>
+
+    <h2 id="more">More from a terminal</h2>
+    <p><code>dcpwizard --help</code> lists every command, and <code>dcpwizard &lt;command&gt; --help</code> lists its flags. Some have no screen in the app:</p>
+    <ul>
+        <li>Packaging: <code>create-multi</code>, <code>combine</code>, <code>edit</code>, <code>decrypt</code>, <code>trailer</code>, <code>markers</code>, <code>dcdm</code>, <code>watermark</code>.</li>
+        <li>Picture and HDR: <code>colour</code>, <code>hdr-convert</code>, <code>dv-inject</code>, <code>hdr10-inject</code>, <code>frame-extract</code>.</li>
+        <li>Sound: <code>crossfade</code>, <code>mid-side-decode</code>.</li>
+        <li>KDMs: <code>kdm-batch</code>, <code>cinema</code>, <code>kdm-history</code>, <code>kdm-template</code>, <code>cert-fetch</code>.</li>
+        <li>Drives: <code>format-drive</code>, <code>check-drive</code>.</li>
+        <li>Other: <code>subtitle-edit</code>, <code>serve</code>, <code>tms</code>, <code>webhook</code>, <code>completion</code>.</li>
+    </ul>
 
 </main>
 <footer>

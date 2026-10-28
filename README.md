@@ -100,7 +100,7 @@ Free and open-source alternative to easyDCP Creator+.
 - **Packaged channel count** via `create --audio-channels 2|6|8|16`: the sound track is filled with silent channels up to the count, so a stereo source ships in a 16-channel container without an upmix. Without the flag a 5.1 source is widened to 16 and everything else is packaged at its own width. A source wider than the count is refused, with `--audio-map` to fold channels instead
 - **Stereo→5.1 upmix** at create via `create --upmix a|b`
 - **Audio delay** via `create --audio-delay <ms>` (positive later, negative earlier), keeping the running time
-- **Filename channel auto-routing**: point `create --audio` at a directory of mono `name_L.wav`/`_R`/`_C`/`_Lfe`/`_Ls`/`_Rs`… files. The suffix follows the last `_`, `.`, `-` or space, so `name.L.wav` and `name-L.wav` work too. In the GUI, mono WAVs with one name and a channel suffix become one channel set on the Sound track when dropped on Assets
+- **Filename channel auto-routing**: point `create --audio` at a directory of mono `name_L.wav`/`_R`/`_C`/`_Lfe`/`_Ls`/`_Rs`… files. The suffix follows the last `_`, `.`, `-` or space, so `name.L.wav` and `name-L.wav` work too. In the GUI, mono WAVs with one name and a channel suffix become one channel set on the Sound track when dropped on Assets. A file whose suffix names no lane goes to C, two files on one lane are summed, and `--audio-map` rows are the files in lane order, then by name
 - **Crossfade join** of two WAVs via `crossfade --a --b -o --overlap`
 - **Mid-side decode** via `mid-side-decode -i -o --mid --side`
 - **WAV audio** input
@@ -390,7 +390,7 @@ pnpm tauri dev                         # or: pnpm tauri build --no-bundle
 
 Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 
-`xvfb-run -a --server-args="-screen 0 2560x1920x24" uv run --no-project --with pytest --with python-xlib python tests/manual_screenshots.py` rewrites the manual's four screenshots in `docs/manual/` from the release binary, with the same tools the webdriver suite in `tests/` needs.
+`xvfb-run -a --server-args="-screen 0 2560x1920x24" uv run --no-project --with pytest --with python-xlib python tests/manual_screenshots.py` rewrites the manual's five screenshots in `docs/manual/` from the release binary, with the same tools the webdriver suite in `tests/` needs. Shot names such as `sound.png` after the script name retake only those.
 
 **Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI from a source build, launched without `GRK_PLUGIN_PATH`, finds no plugin, reports `GPU encoding unavailable` and turns the GPU setting off. The GPU rpm and deb set it themselves to `/usr/lib/dcpwizard`. On Metal the same directory must also contain `grok_kernels.metallib`.
 

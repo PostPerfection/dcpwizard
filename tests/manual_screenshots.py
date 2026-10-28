@@ -16,6 +16,9 @@ from tauri_webdriver import (
     xdotool,
 )
 from test_gui_webdriver import (
+    ASSET_PATHS,
+    AUDIO_MAP_ROWS,
+    CHANNEL_SET_ROWS,
     CLIP_TITLES,
     CREATE_TIMEOUT_SECONDS,
     FIXTURE_SIZE,
@@ -44,6 +47,7 @@ from test_gui_webdriver import (
     text_dialog_open,
     wait_for_status,
     wait_for_view,
+    write_mono_channel,
     write_picture,
     write_sound,
 )
@@ -74,6 +78,16 @@ ENCRYPTED_PACKAGE_SECONDS = 1
 # file names the app adds to the folder picked for each KDM output
 MAKE_KDM_OUTPUT_NAME = "dkdm.xml"
 REWRAP_OUTPUT_NAME = "kdm.xml"
+
+CHANNEL_SET_PREFIX = "film"
+# the last suffix names no channel, so the app routes that file to C
+CHANNEL_SET_SUFFIXES = ("L", "R", "C", "Ls", "Rs", "boom")
+UNNAMED_CHANNEL_FILE = f"{CHANNEL_SET_PREFIX}_boom.wav"
+UNNAMED_CHANNEL_ROW = f'#prop-audio-map tr:has(th[title="{UNNAMED_CHANNEL_FILE}"])'
+UNNAMED_CHANNEL_LFE_CELL = f'{UNNAMED_CHANNEL_ROW} input[data-lane="LFE"]'
+UNNAMED_CHANNEL_AUTO_CELL = f"{UNNAMED_CHANNEL_ROW} input.auto-routed"
+# the driver reads a missing attribute as an empty string
+HAS_PLACEHOLDER = "return document.querySelector(arguments[0]).hasAttribute('placeholder')"
 
 SCROLL_INTO_VIEW = "document.querySelector(arguments[0]).scrollIntoView({ block: arguments[1] })"
 VIEW_OVERFLOW = """
@@ -157,6 +171,57 @@ def stage_project_view(window, root):
         lambda: TRAILER_IN in session.execute(CLIP_TITLES)[1],
         REACTION_TIMEOUT_SECONDS,
     )
+
+
+def channel_set_file_count(session):
+    rows = session.execute(CHANNEL_SET_ROWS)
+    return len(rows[0]["files"]) if len(rows) == 1 else 0
+
+
+def stage_sound_mapping(window, root):
+    session = window.session
+    movie = write_picture(root / "movie.mov", FIXTURE_SIZE, MOVIE_SECONDS)
+    channels = [root / f"{CHANNEL_SET_PREFIX}_{suffix}.wav" for suffix in CHANNEL_SET_SUFFIXES]
+    for channel in channels:
+        write_mono_channel(channel)
+    project_path = root / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    choose_in_dialog(window, "#import-video", movie)
+    choose_in_dialog(window, "#import-audio", channels[0])
+    wait_until(
+        "the first channel never reached the asset list",
+        lambda: session.execute(ASSET_PATHS) == [str(movie), str(channels[0])],
+        REACTION_TIMEOUT_SECONDS,
+    )
+    # each import regroups every sound file, so the next waits for the set to grow
+    for count, channel in enumerate(channels[1:], start=2):
+        choose_in_dialog(window, "#import-audio", channel)
+        wait_until(
+            f"the channel set never grew to {count} files",
+            lambda: channel_set_file_count(session) == count,
+            REACTION_TIMEOUT_SECONDS,
+        )
+    wait_until(
+        "the mapping matrix never routed the unnamed file to C",
+        lambda: {"name": UNNAMED_CHANNEL_FILE, "autoRouted": ["C"]} in session.execute(AUDIO_MAP_ROWS),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(UNNAMED_CHANNEL_LFE_CELL)
+    wait_for_field(session, UNNAMED_CHANNEL_LFE_CELL, "0")
+    wait_until(
+        "the C cell kept its dotted auto route beside the typed LFE gain",
+        lambda: not session.execute(HAS_PLACEHOLDER, UNNAMED_CHANNEL_AUTO_CELL),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(NEUTRAL_TARGET)
+    window.session.execute(SCROLL_INTO_VIEW, "#prop-audio-map", "center")
 
 
 def wait_for_field(session, css, value):
@@ -342,12 +407,15 @@ MANUAL_SHOTS = {
     "settings.png": (stage_settings_view, WINDOW_CSS_SIZE),
     "encrypt.png": (stage_encrypt_options, WINDOW_CSS_SIZE),
     "kdm.png": (stage_kdm_view, KDM_WINDOW_CSS_SIZE),
+    "sound.png": (stage_sound_mapping, WINDOW_CSS_SIZE),
 }
 
 
 def main():
     assert os.environ.get("DISPLAY"), "no DISPLAY: run under xvfb-run"
-    for name, (stage, css_size) in MANUAL_SHOTS.items():
+    # shot names on the command line pick which ones to retake
+    for name in sys.argv[1:] or MANUAL_SHOTS:
+        stage, css_size = MANUAL_SHOTS[name]
         # WebKit's helper processes can still be writing here after the app is killed
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
