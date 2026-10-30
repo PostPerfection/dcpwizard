@@ -66,7 +66,7 @@ import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
-import { AUTO_ROUTE_PLACEHOLDER, audioMapHint, audioMapTable, rowAutoRoute } from "./audio-map-matrix.js";
+import { AUTO_ROUTE_PLACEHOLDER, audioMapHint, audioMapTable, invalidGainSentence, rowAutoRoute } from "./audio-map-matrix.js";
 import { initPresets, savedPresetNamed, applySavedPreset, clearProfileDriven } from "./presets.js";
 import {
   chainPaths,
@@ -1121,7 +1121,6 @@ async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
   if (requestNumber !== audioMapRequest) return;
   audioMapGrid.innerHTML = audioMapTable(panel);
   drawnAudioMapPanel = panel;
-  markAudioMapOverflow();
   for (const { input, lane, value } of keptCells) {
     const cell = audioMapGrid.querySelector(`input[data-input="${input}"][data-lane="${lane}"]`);
     if (cell) cell.value = value;
@@ -1156,15 +1155,22 @@ function showAutoRoutes() {
 function showAudioMapHint() {
   if (!drawnAudioMapPanel) return;
   const hasTypedGains = typedAudioMapCells().length > 0;
-  document.getElementById("prop-audio-map-hint").textContent = audioMapHint(drawnAudioMapPanel, { hasTypedGains });
+  document.getElementById("prop-audio-map-hint").textContent =
+    audioMapGainProblem() ?? audioMapHint(drawnAudioMapPanel, { hasTypedGains });
 }
 
-function markAudioMapOverflow() {
-  audioMapGrid.classList.toggle("lanes-overflow", audioMapGrid.scrollWidth > audioMapGrid.clientWidth);
+function audioMapGainProblem() {
+  const cells = [...audioMapGrid.querySelectorAll("tbody tr")].flatMap((row) => {
+    const channelName = row.querySelector("th").title;
+    return [...row.querySelectorAll("input")].map((cell) => ({ channelName, lane: cell.dataset.lane, value: cell.value }));
+  });
+  return invalidGainSentence(cells);
 }
 
-new ResizeObserver(markAudioMapOverflow).observe(audioMapGrid);
-audioMapGrid.addEventListener("input", (event) => showRowAutoRoute(event.target.closest("tr")));
+audioMapGrid.addEventListener("input", (event) => {
+  showRowAutoRoute(event.target.closest("tr"));
+  showAudioMapHint();
+});
 
 upmixSelect.addEventListener("change", refreshAudioMapMatrix);
 inputOrderSelect.addEventListener("change", refreshAudioMapMatrix);
@@ -2038,6 +2044,8 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   const anotherBuildInFlight = buildsInFlight.anyBuildInFlight();
 
   if (activeTimeline().clips.length === 0) { tauriMessage("Import a video asset first"); return; }
+  const gainProblem = audioMapGainProblem();
+  if (gainProblem) { tauriMessage(gainProblem); return; }
 
   const encrypt = document.getElementById("prop-encrypt")?.checked || false;
   const keyOut = document.getElementById("prop-key-out")?.value || "";

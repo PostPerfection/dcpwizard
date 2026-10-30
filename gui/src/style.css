@@ -179,29 +179,12 @@
   fill: var(--text);
 }
 
-/* Audio channel mapping matrix: one row per source channel, one column per lane */
-/* WebKitGTK draws an auto scrollbar over the hint below the matrix, so the scrollbar is switched on from JS */
-.audio-map {
-  overflow-x: hidden;
-}
-.audio-map.lanes-overflow {
-  overflow-x: scroll;
-}
-/* the base scrollbar thumb is nearly the panel colour */
-.audio-map::-webkit-scrollbar {
-  height: 10px;
-}
-.audio-map::-webkit-scrollbar-track {
-  background: var(--surface-alt);
-}
-.audio-map::-webkit-scrollbar-thumb {
-  background: var(--text-muted);
-}
+/* Audio channel mapping matrix: one row per source channel, its lanes wrapped onto lines of --lanes-per-line */
 /* each input channel's name takes a full-width line above its cells */
 .audio-map table {
   display: grid;
   /* 40px holds -12.5 at the panel's 12px input font */
-  grid-template-columns: repeat(var(--lane-count), minmax(40px, 1fr));
+  grid-template-columns: repeat(var(--lanes-per-line), minmax(40px, 1fr));
 }
 .audio-map thead,
 .audio-map tbody,
@@ -232,6 +215,9 @@
 .prop-field .audio-map input[type="text"] {
   padding: 2px;
   text-align: center;
+}
+.prop-field .audio-map input:invalid {
+  border-color: var(--error, #dc2626);
 }
 /* the placeholder goes once a typed gain in the row replaces the auto route */
 .prop-field .audio-map input.auto-routed[placeholder] {
