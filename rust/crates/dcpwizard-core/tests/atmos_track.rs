@@ -84,6 +84,59 @@ fn split_config(root: &Path, out: &Path, atmos: PathBuf) -> DcpConfig {
     }
 }
 
+fn cpl_main_sound_ids(out: &Path) -> Vec<String> {
+    let cpl = std::fs::read_dir(out)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("CPL_")
+        })
+        .expect("a CPL");
+    let text = std::fs::read_to_string(cpl).unwrap();
+    let document = roxmltree::Document::parse(&text).expect("parse CPL");
+    document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "MainSound")
+        .map(|sound| bare_uuid(child_text(sound, "Id").unwrap()))
+        .collect()
+}
+
+// every frame of every reel's sound names that sound asset and its own frame number on channel 14
+fn check_sound_carries_atmos_sync(out: &Path) {
+    let sound_ids = cpl_main_sound_ids(out);
+    assert!(!sound_ids.is_empty(), "a MainSound in every reel");
+    for sound_id in sound_ids {
+        let path = out.join(format!("sound_{sound_id}.mxf"));
+        let mut reader = asdcplib::pcm::MxfReader::new();
+        reader.open_read(&path.to_string_lossy()).unwrap();
+        let descriptor = reader.audio_descriptor().unwrap();
+        assert_eq!(descriptor.channel_count, 16, "{sound_id} channels");
+        let channels = descriptor.channel_count as usize;
+        let mut frame = vec![0u8; 2000 * channels * 3];
+        for frame_index in 0..descriptor.container_duration {
+            reader
+                .read_frame(frame_index, &mut frame, None, None)
+                .unwrap();
+            let packets =
+                postkit::atmos_sync::decode_atmos_sync_frame(&frame, channels, FPS).unwrap();
+            let named: Vec<u8> = packets
+                .iter()
+                .flat_map(|packet| packet.sound_asset_uuid_quarter)
+                .collect();
+            assert_eq!(named, uuid::Uuid::parse_str(&sound_id).unwrap().as_bytes());
+            assert!(
+                packets
+                    .iter()
+                    .all(|packet| packet.frame_index == frame_index)
+            );
+        }
+    }
+}
+
 struct ReelAux {
     picture_duration: u64,
     aux_id: String,
@@ -276,6 +329,10 @@ fn check_split_atmos_track_file(encrypt: bool) {
         assert!(keys.keys.len() >= 2);
     }
 
+    if !encrypt {
+        check_sound_carries_atmos_sync(&out);
+    }
+
     let result = dcpwizard_core::verify::verify_dcp(&out);
     assert!(result.valid, "dcpdoctor errors: {:?}", result.errors);
 }
@@ -314,4 +371,92 @@ fn an_atmos_frame_directory_splits_into_one_track_per_reel() {
         }
     }
     assert_eq!(next_source_frame, FRAMES);
+}
+
+fn write_stereo_wav(wav: &Path) -> Vec<i32> {
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: 48_000,
+        bits_per_sample: 24,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(wav, spec).unwrap();
+    let stereo: Vec<i32> = (0..FRAMES * 2000 * 2)
+        .map(|index| (index as i32 * 41) % 3_000_000 - 1_500_000)
+        .collect();
+    for &sample in &stereo {
+        writer.write_sample(sample).unwrap();
+    }
+    writer.finalize().unwrap();
+    stereo
+}
+
+#[test]
+fn a_stereo_mix_beside_atmos_is_packaged_on_sixteen_channels_with_the_sync_signal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let out = root.join("dcp");
+    let wav = root.join("stereo.wav");
+    let stereo = write_stereo_wav(&wav);
+    let config = DcpConfig {
+        audio_path: Some(wav),
+        reel_split_frames: Vec::new(),
+        ..split_config(
+            root,
+            &out,
+            make_atmos_track_file(root, FPS, &source_atmos_frames(), None),
+        )
+    };
+    assert_eq!(create_dcp(&config), 0);
+
+    check_sound_carries_atmos_sync(&out);
+    let sound_id = cpl_main_sound_ids(&out).remove(0);
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader
+        .open_read(&out.join(format!("sound_{sound_id}.mxf")).to_string_lossy())
+        .unwrap();
+    let mut frame = vec![0u8; 2000 * 16 * 3];
+    reader.read_frame(1, &mut frame, None, None).unwrap();
+    for sample in 0..2000 {
+        for channel in 0..2 {
+            let at = (sample * 16 + channel) * 3;
+            let packaged = i32::from_le_bytes([0, frame[at], frame[at + 1], frame[at + 2]]) >> 8;
+            assert_eq!(packaged, stereo[(2000 + sample) * 2 + channel]);
+        }
+    }
+    let result = dcpwizard_core::verify::verify_dcp(&out);
+    assert!(result.valid, "dcpdoctor errors: {:?}", result.errors);
+}
+
+#[test]
+fn a_vf_replacing_the_sound_of_an_atmos_ov_writes_the_sync_signal_for_its_new_sound() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let ov = root.join("ov");
+    let ov_config = DcpConfig {
+        reel_split_frames: Vec::new(),
+        ..split_config(
+            root,
+            &ov,
+            make_atmos_track_file(root, FPS, &source_atmos_frames(), None),
+        )
+    };
+    assert_eq!(create_dcp(&ov_config), 0);
+    let wav = root.join("stereo.wav");
+    write_stereo_wav(&wav);
+    let vf_config = dcpwizard_core::vf::VfConfig {
+        ov_dir: ov,
+        vf_dir: root.join("vf"),
+        title: "Atmos VF".into(),
+        replacement_reels: vec![dcpwizard_core::vf::ReplacementReel {
+            reel_number: 1,
+            sound: Some(wav),
+            ..Default::default()
+        }],
+        subtitle_language: "en".into(),
+        ..Default::default()
+    };
+    assert_eq!(dcpwizard_core::vf::create_vf(&vf_config), 0);
+
+    check_sound_carries_atmos_sync(&dcpwizard_core::vf::vf_package_dir(&vf_config).unwrap());
 }

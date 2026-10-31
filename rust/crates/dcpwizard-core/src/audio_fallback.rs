@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-const SAMPLE_RATE: u32 = 48_000;
+pub(crate) const SAMPLE_RATE: u32 = 48_000;
 const BITS_PER_SAMPLE: u16 = 24;
 
 /// Pull the video's own audio out to a 48 kHz 24-bit WAV in `work_dir`, every

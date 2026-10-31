@@ -484,14 +484,19 @@ fn planned_reel_frames(plan: &CreatePlan) -> Vec<u64> {
 /// 5.1 padding when it asked for none.
 fn packaged_channels(plan: &CreatePlan) -> Option<u32> {
     let channels = crate::preflight::content_channels(plan)?;
-    Some(match plan.audio_channels {
-        Some(count) => count,
-        // the wrap widens a 5.1 source to the 16-channel DCP layout on its own
-        None if channels == crate::mxf_wrap::CANONICAL_51_CHANNELS => {
-            crate::mxf_wrap::DEFAULT_PACKAGED_51_CHANNELS
-        }
-        None => channels,
-    })
+    Some(
+        match crate::atmos_track::packaged_sound_channels(
+            plan.audio_channels,
+            plan.atmos.as_deref(),
+        ) {
+            Some(count) => count,
+            // the wrap widens a 5.1 source to the 16-channel DCP layout on its own
+            None if channels == crate::mxf_wrap::CANONICAL_51_CHANNELS => {
+                crate::mxf_wrap::DEFAULT_PACKAGED_51_CHANNELS
+            }
+            None => channels,
+        },
+    )
 }
 
 /// The markers the job places, dropping any spec that does not parse: the

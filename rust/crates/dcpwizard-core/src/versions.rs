@@ -832,7 +832,7 @@ pub(crate) fn wrap_sound_reel(
     let wrapped = crate::mxf_wrap::wrap_mxf_files(
         vec![wav_tmp.clone()],
         &path,
-        crate::mxf_wrap::MxfType::PcmAudio,
+        crate::atmos_track::sound_mxf_type(config.atmos_path.is_some()),
         fps,
         key.as_ref().map(crate::reel::mxf_enc),
         None,

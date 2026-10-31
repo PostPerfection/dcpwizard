@@ -504,7 +504,7 @@ pub fn create_multi_reel_dcp(config: &DcpConfig, fps: u32) -> i32 {
             let wrapped = crate::mxf_wrap::wrap_mxf_files(
                 vec![wav_tmp.clone()],
                 &sound_path,
-                crate::mxf_wrap::MxfType::PcmAudio,
+                crate::atmos_track::sound_mxf_type(config.atmos_path.is_some()),
                 fps,
                 key.as_ref().map(mxf_enc),
                 mca_config,

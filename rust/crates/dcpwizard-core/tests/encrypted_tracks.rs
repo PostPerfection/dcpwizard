@@ -392,6 +392,21 @@ fn an_encrypted_dcp_keys_every_essence_and_the_kdm_carries_them_all() {
         atmos_frame_count(&mxf_with_prefix(&out, "atmos").unwrap()),
         "the Atmos track keeps its frame count"
     );
+
+    // the rewrapped sound has a new id, and its sync signal names that one
+    let clear_sound = mxf_with_prefix(&clear, "sound").unwrap();
+    let mut reader = asdcplib::pcm::MxfReader::new();
+    reader.open_read(&clear_sound.to_string_lossy()).unwrap();
+    let sound_id = reader.writer_info().unwrap().asset_uuid;
+    let channels = reader.audio_descriptor().unwrap().channel_count as usize;
+    let mut frame = vec![0u8; 2000 * channels * 3];
+    reader.read_frame(0, &mut frame, None, None).unwrap();
+    let named: Vec<u8> = postkit::atmos_sync::decode_atmos_sync_frame(&frame, channels, FPS)
+        .unwrap()
+        .iter()
+        .flat_map(|packet| packet.sound_asset_uuid_quarter)
+        .collect();
+    assert_eq!(named, sound_id);
 }
 
 /// Frames the Atmos MXF declares, which a rewrap has to preserve.

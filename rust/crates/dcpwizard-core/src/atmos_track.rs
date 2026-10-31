@@ -5,6 +5,49 @@ use std::path::{Path, PathBuf};
 
 const ATMOS_HEADER_SIZE: u32 = 16384;
 
+// channel 14 of the main sound carries the Atmos sync signal
+pub fn atmos_sound_channels(requested: Option<u32>) -> u32 {
+    requested.unwrap_or(crate::sign_language::DCP_SOUND_CHANNELS as u32)
+}
+
+pub fn packaged_sound_channels(requested: Option<u32>, atmos: Option<&Path>) -> Option<u32> {
+    match atmos {
+        Some(_) => Some(atmos_sound_channels(requested)),
+        None => requested,
+    }
+}
+
+pub fn sound_mxf_type(carries_atmos: bool) -> crate::mxf_wrap::MxfType {
+    if carries_atmos {
+        crate::mxf_wrap::MxfType::PcmAudioWithAtmosSync
+    } else {
+        crate::mxf_wrap::MxfType::PcmAudio
+    }
+}
+
+pub fn wav_carries_atmos_sync(wav: &Path, fps: u32) -> Result<bool, String> {
+    use std::io::{Read, Seek};
+    let cannot_read = |e: std::io::Error| format!("cannot read {}: {e}", wav.display());
+    let mut file = std::io::BufReader::new(std::fs::File::open(wav).map_err(cannot_read)?);
+    let layout = postkit::wav_io::WavLayout::parse(&mut file).map_err(cannot_read)?;
+    let channels = u32::from(layout.spec.channels);
+    if layout.spec.bits_per_sample != 24
+        || postkit::atmos_sync::check_atmos_sync_sound(fps, layout.spec.sample_rate, channels)
+            .is_err()
+    {
+        return Ok(false);
+    }
+    let frame_bytes = (layout.spec.sample_rate / fps * channels * 3) as usize;
+    if layout.data.size < frame_bytes as u64 {
+        return Ok(false);
+    }
+    let mut frame = vec![0u8; frame_bytes];
+    file.seek(std::io::SeekFrom::Start(layout.data.body_offset()))
+        .map_err(cannot_read)?;
+    file.read_exact(&mut frame).map_err(cannot_read)?;
+    Ok(postkit::atmos_sync::decode_atmos_sync_frame(&frame, channels as usize, fps).is_ok())
+}
+
 pub(crate) enum AtmosSource {
     FrameFiles(Vec<PathBuf>),
     TrackFile {

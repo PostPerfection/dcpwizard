@@ -411,13 +411,21 @@ pub(crate) fn process_sound(
         return Err(e);
     }
 
+    // the sync signal names the sound asset, and the rewrap gives it a new id
+    let mxf_type = match crate::atmos_track::wav_carries_atmos_sync(&wav_path, fps) {
+        Ok(carries_atmos) => crate::atmos_track::sound_mxf_type(carries_atmos),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&work);
+            return Err(e);
+        }
+    };
     let asset_id = uuid::Uuid::new_v4();
     let filename = format!("sound_{asset_id}.mxf");
     let out_mxf = out_dir.join(&filename);
     let track = crate::mxf_wrap::wrap_mxf_files(
         vec![wav_path],
         &out_mxf,
-        crate::mxf_wrap::MxfType::PcmAudio,
+        mxf_type,
         fps,
         None,
         None,

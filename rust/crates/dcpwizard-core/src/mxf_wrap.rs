@@ -42,6 +42,7 @@ pub enum MxfType {
     #[default]
     J2kPicture,
     PcmAudio,
+    PcmAudioWithAtmosSync,
     TimedText,
     Atmos,
 }
@@ -351,7 +352,7 @@ pub fn wrap_mxf_files(
     // PCM: reject non-DCP sample rates and derive MCA labels from the channel
     // count when the caller gave no explicit config.
     let mut mca_config = mca_config;
-    if mxf_type == MxfType::PcmAudio {
+    if matches!(mxf_type, MxfType::PcmAudio | MxfType::PcmAudioWithAtmosSync) {
         for f in &input_files {
             let (channels, sr) = match wav_fmt(f) {
                 Ok(v) => v,
@@ -385,6 +386,7 @@ pub fn wrap_mxf_files(
     let essence_type = match mxf_type {
         MxfType::J2kPicture => postkit::mxf_wrap::EssenceType::J2k,
         MxfType::PcmAudio => postkit::mxf_wrap::EssenceType::Pcm,
+        MxfType::PcmAudioWithAtmosSync => postkit::mxf_wrap::EssenceType::PcmWithAtmosSync,
         MxfType::TimedText => postkit::mxf_wrap::EssenceType::TimedText,
         MxfType::Atmos => postkit::mxf_wrap::EssenceType::Atmos,
     };

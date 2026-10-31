@@ -747,6 +747,7 @@ fn check_atmos(plan: &CreatePlan) -> Result<(), String> {
         return Ok(());
     };
     check_atmos_path(atmos)?;
+    check_atmos_sync_sound(plan)?;
     let source = crate::atmos_track::AtmosSource::open(atmos, plan.fps)?;
     let Some(picture_frames) = planned_picture_frames(plan) else {
         return Ok(());
@@ -788,6 +789,18 @@ fn check_resume(plan: &CreatePlan) -> Result<(), String> {
         bitrate_mbps: plan.video_bit_rate_mbps,
     };
     encode_state.check_resumable(&plan.output).map(|_| ())
+}
+
+fn check_atmos_sync_sound(plan: &CreatePlan) -> Result<(), String> {
+    let sample_rate = match plan.packaged_wav() {
+        Some(wav) => read_wav_spec(wav)?.sample_rate,
+        None => crate::audio_fallback::SAMPLE_RATE,
+    };
+    postkit::atmos_sync::check_atmos_sync_sound(
+        plan.fps,
+        sample_rate,
+        crate::atmos_track::atmos_sound_channels(plan.audio_channels),
+    )
 }
 
 /// The Atmos essence has to be there before the picture is encoded around it.
@@ -1187,6 +1200,33 @@ mod tests {
 
         let error = only_refusal(&plan);
         assert!(error.contains("Atmos input not found"), "{error}");
+    }
+
+    #[test]
+    fn an_atmos_job_whose_sound_cannot_carry_the_sync_signal_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let codestreams = dir.path().join("j2k");
+        write_codestreams(&codestreams, 2, 1920, 1080);
+        let atmos = dir.path().join("atmos");
+        std::fs::create_dir_all(&atmos).unwrap();
+        for frame in 0..2 {
+            std::fs::write(atmos.join(format!("atmos_{frame}.bin")), b"frame").unwrap();
+        }
+        let wav = dir.path().join("sound.wav");
+        write_wav(&wav, 2, 48_000);
+        let mut plan = plan_with_picture(codestreams);
+        plan.atmos = Some(atmos);
+        plan.audio = Some(wav.clone());
+        assert_eq!(check_before_encode(&plan), Ok(()));
+
+        plan.audio_channels = Some(8);
+        let error = only_refusal(&plan);
+        assert!(error.contains("channel 14"), "{error}");
+
+        plan.audio_channels = None;
+        write_wav(&wav, 2, 96_000);
+        let error = only_refusal(&plan);
+        assert!(error.contains("96000 Hz"), "{error}");
     }
 
     #[test]

@@ -315,9 +315,11 @@ fn silent_sound_fill(config: &DcpConfig, fps: u32) -> Result<Option<PathBuf>, St
     if frames == 0 {
         return Ok(None);
     }
-    let channels = config
-        .audio_channels
-        .unwrap_or(crate::mxf_wrap::CANONICAL_51_CHANNELS);
+    let channels = crate::atmos_track::packaged_sound_channels(
+        config.audio_channels,
+        config.atmos_path.as_deref(),
+    )
+    .unwrap_or(crate::mxf_wrap::CANONICAL_51_CHANNELS);
     crate::mxf_wrap::check_packaged_channel_count(channels)?;
     let output = config
         .output_dir
@@ -551,7 +553,10 @@ pub fn create_dcp_with_progress(
                 path,
                 &output,
                 config.audio_input_order,
-                config.audio_channels,
+                crate::atmos_track::packaged_sound_channels(
+                    config.audio_channels,
+                    config.atmos_path.as_deref(),
+                ),
             ) {
                 Ok(true) => Some(output),
                 Ok(false) => None,
@@ -832,7 +837,7 @@ pub fn create_dcp_with_progress(
         let wrap_config = crate::mxf_wrap::MxfWrapConfig {
             input_path: wrap_source,
             output_mxf: sound_mxf_path.clone(),
-            mxf_type: crate::mxf_wrap::MxfType::PcmAudio,
+            mxf_type: crate::atmos_track::sound_mxf_type(config.atmos_path.is_some()),
             frame_rate: fps,
             encryption: sound_key
                 .as_ref()

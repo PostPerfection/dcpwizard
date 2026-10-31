@@ -592,7 +592,9 @@ pub fn create_vf_with_keys(
                 let Some(a) = prepare_asset(
                     input,
                     "sound",
-                    crate::mxf_wrap::MxfType::PcmAudio,
+                    crate::atmos_track::sound_mxf_type(
+                        entry.aux_data_type == postkit::packaging::ATMOS_DATA_TYPE_UL,
+                    ),
                     edit_num,
                     entry.duration_frames,
                     new_key_type(crate::encrypt::KeyType::Mdak),
@@ -881,7 +883,7 @@ fn wrapped_asset_uuid_and_duration(
             let duration = reader.picture_descriptor().ok()?.container_duration;
             (reader.writer_info().ok()?, duration)
         }
-        crate::mxf_wrap::MxfType::PcmAudio => {
+        crate::mxf_wrap::MxfType::PcmAudio | crate::mxf_wrap::MxfType::PcmAudioWithAtmosSync => {
             let mut reader = asdcplib::pcm::MxfReader::new();
             reader.open_read(&file).ok()?;
             let duration = reader.audio_descriptor().ok()?.container_duration;
@@ -973,13 +975,20 @@ fn prepare_asset(
         let key = mint_key(key_type, &id.to_string()).ok()?;
         let filename = format!("{prefix}_{id}.mxf");
         let packaged_sound = vf_dir.join(format!(".dcpwizard_audio_{id}.wav"));
+        let packaged_channels = match mxf_type {
+            crate::mxf_wrap::MxfType::PcmAudioWithAtmosSync => {
+                Some(crate::atmos_track::atmos_sound_channels(None))
+            }
+            _ => None,
+        };
         let input_path = match mxf_type {
-            crate::mxf_wrap::MxfType::PcmAudio => {
+            crate::mxf_wrap::MxfType::PcmAudio
+            | crate::mxf_wrap::MxfType::PcmAudioWithAtmosSync => {
                 match crate::mxf_wrap::prepare_packaged_channels(
                     input,
                     &packaged_sound,
                     crate::mxf_wrap::AudioInputOrder::default(),
-                    None,
+                    packaged_channels,
                 ) {
                     Ok(true) => packaged_sound.clone(),
                     Ok(false) => input.to_path_buf(),

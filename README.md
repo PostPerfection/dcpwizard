@@ -591,7 +591,9 @@ dcpwizard create --title "My 3D Film" --video left.mov --right-eye right.mov \
 # directory with one payload file per picture frame. A track file must be
 # cleartext, at the DCP's edit rate and as long as the picture. With
 # --reel-length or --split-at each reel gets its own Atmos MXF holding that
-# reel's frames. Real-essence conformance needs real Atmos material.
+# reel's frames. Channel 14 of the main sound carries the sync signal the cinema
+# processor locks the Atmos track to, so the sound is packaged on 16 channels at
+# 48 kHz. Real-essence conformance needs real Atmos material.
 # DTS:X: since ST 429-18/-19 it is delivered as a standard IAB track (ST 2098-2,
 # "DTS:X for IAB"), which is this same --atmos path. There is no separate DTS:X UL.
 dcpwizard create --title "My Film" --video ./j2k --audio ./audio.wav \
