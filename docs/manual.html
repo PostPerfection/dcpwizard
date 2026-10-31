@@ -264,7 +264,7 @@
     <p>Get the channels right first. The loudness is measured after Channel mapping.</p>
     <ol>
         <li>In Properties, Audio, Loudness target, type the level you want, such as <code>lufs=-24</code> for -24 LUFS or <code>leqm=85</code> for 85 dB Leq(m).</li>
-        <li>Optionally press Measure to check. Source is the level of your sound now. Delivered is the level the DCP will have. The graph shows the loudness of the mix over time. Tick a channel under the graph to add its own curve, and untick Mix to hide the mix.</li>
+        <li>Optionally press Measure to check. Source is the level of your sound now. Delivered is the level the DCP will have. The graph shows the loudness of the mix over time. Tick a channel under the graph to add its own curve, and untick Mix to hide the mix. Tick Channel peaks to add a dashed line with the true peak of each ticked channel, which shows clicks and the LFE better than loudness does. Point at the graph to read the values at that moment.</li>
         <li>Build. The build brings the sound to the target. A LUFS target is integrated loudness.</li>
     </ol>
     <p>The target turns the whole mix up or down by one amount, so the gains you typed in the grid keep their balance.</p>
@@ -447,7 +447,7 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
 
     <h2 id="play">Play a package</h2>
     <h3>In the app</h3>
-    <p>Select an asset, or press Open DCP and pick a package, then press ▶ Preview. An encrypted package asks for its KDM and the matching private key, or the keys file from the build.</p>
+    <p>Once a build finishes, ▶ Preview plays the DCP it wrote. To play something else, click an asset or a clip, or press Open DCP and pick a package, then press ▶ Preview. Ctrl+click the selected asset or clip to go back to the built DCP. Preview is off until something is selected or built. An encrypted package asks for its KDM and the matching private key, or the keys file from the build.</p>
     <ul>
         <li>The QC strip has Safe, Aspect, Cross and Thirds overlays, Crop for the build's crop, Sub and CC for subtitles and captions, and Decode for full, half or quarter size.</li>
         <li>⛶ or F fills the screen. Escape returns.</li>

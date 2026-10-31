@@ -666,9 +666,13 @@ function renderAssets() {
     el.addEventListener('contextmenu', (e) => {
       showContextMenu(e, parseInt(el.dataset.assetId));
     });
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (event) => {
       const asset = project.assets.find(a => a.id === parseInt(el.dataset.assetId));
       if (!asset) return;
+      if ((event.ctrlKey || event.metaKey) && el.classList.contains("selected")) {
+        clearPreviewSelection();
+        return;
+      }
       const previewPath = channelSetPreviewPath(asset);
       if (previewPath) selectPreview("source", previewPath);
       else setStatus(CHANNEL_SET_PREVIEW_STATUS);
@@ -792,6 +796,10 @@ initTimelineEditor(document.getElementById("timeline-editor"), {
   onChange: timelineEdited,
   previewShowsClipSource: () => previewedClipIndex !== null,
   previewClipSource: previewClipSourceAt,
+  pickClipSource: (assetId) => selectPreview("source", assetPath(assetId)),
+  unpickClipSource: (assetId) => {
+    if (selectedPreview?.path === assetPath(assetId)) clearPreviewSelection();
+  },
   playTimeline,
   seekTimeline: previewSeekOnceLoaded,
   loadKeepingTransport,
@@ -1316,7 +1324,7 @@ async function openDcp(dir) {
 }
 
 document.getElementById("btn-open-dcp")?.addEventListener("click", async () => {
-  const dir = await open({ directory: true });
+  const dir = await open({ directory: true, defaultPath: finishedBuild?.packagePath });
   if (dir) openDcp(dir);
 });
 
@@ -2185,13 +2193,7 @@ function applyPreviewSelection() {
 }
 
 function previewTargetInput() {
-  const firstClip = firstBaseClip(activeTimeline())?.clip;
-  return {
-    selectedPreview,
-    firstPicturePath: firstClip ? assetPath(firstClip.picture) : null,
-    openedPackage,
-    outputPath: submittedPackage,
-  };
+  return { selectedPreview, builtPackage: finishedBuild?.packagePath ?? null };
 }
 
 function previewCurrentTarget() {
@@ -3574,7 +3576,7 @@ async function refreshFinishedBuild() {
     forgetFinishedBuild(FINISHED_BUILDS_KEY, finishedBuild.packagePath);
     finishedBuild = null;
   }
-  updateBuildButton();
+  updateToolbarState();
 }
 
 setInterval(refreshFinishedBuild, FINISHED_BUILD_CHECK_MILLISECONDS);

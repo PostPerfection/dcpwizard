@@ -605,6 +605,22 @@ def write_dialog_diagnostics(window, button, windows_before):
 
 
 # the real GTK file picker, driven through its location bar
+ASSET_ID_NAMED = """
+const items = [...document.querySelectorAll("#asset-list .asset-item")];
+return items.find((item) => item.querySelector(".asset-name").textContent === arguments[0])?.dataset.assetId ?? null;
+"""
+
+
+# Preview plays the picked asset, the built package or nothing
+def pick_asset(window, name):
+    asset_id = wait_until(
+        f"{name} never reached the asset list",
+        lambda: window.session.execute(ASSET_ID_NAMED, name),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click(f'#asset-list .asset-item[data-asset-id="{asset_id}"]')
+
+
 def choose_in_dialog(window, button, path):
     windows_before = visible_windows()
     window.click(button)
@@ -1342,7 +1358,7 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert session.execute(INSIDE_PROPERTIES_PANEL, MEASURE_BUTTON)
     source, delivered = measure_integrated_lufs(window, [ROUTED_STEP])
     assert source == delivered
-    assert session.execute(LOUDNESS_CURVE_CHOICES) == ["mix", "L", "R"]
+    assert session.execute(LOUDNESS_CURVE_CHOICES) == ["mix", "peaks", "L", "R"]
     assert session.execute(CHANNEL_CURVE_PATH, RIGHT_CHANNEL) is None
     window.click('#prop-loudness-curves input[value="R"]')
     wait_until(
@@ -1525,6 +1541,7 @@ def test_the_preview_in_container_shows_the_frame_the_build_writes(window, tmp_p
         lambda: session.property(AUTO_RESOLUTION_OPTION, "textContent") == CONTAINER_VIEW_AUTO_RESOLUTION,
         OPEN_TIMEOUT_SECONDS,
     )
+    pick_asset(window, picture.name)
     window.click("#btn-preview")
     wait_for_shown_frame_size(session, CONTAINER_VIEW_SOURCE_SIZE, "the preview never showed the source")
 
@@ -1593,6 +1610,7 @@ def test_scrubbing_the_preview_moves_the_project_timeline_playhead(window, tmp_p
         PAGE_TIMEOUT_SECONDS,
     )
     choose_in_dialog(window, "#import-video", picture)
+    pick_asset(window, picture.name)
     window.click(REELS_VIEW_BUTTON)
     wait_until(
         "the project timeline never drew its playhead",
@@ -1804,6 +1822,7 @@ def test_ticking_and_unticking_play_whole_timeline_swaps_the_preview_at_the_play
     )
     assert session.property(PLAY_WHOLE_TIMELINE_BOX, "checked") is False
 
+    pick_asset(window, first.name)
     window.click("#btn-preview")
     wait_until(
         "Preview never showed the first clip's source",
@@ -2079,6 +2098,7 @@ def test_play_timeline_plays_a_png_sequence_with_alpha_rendered_over_the_clip_un
     )
 
     tick_play_whole_timeline(window)
+    pick_asset(window, base.name)
     window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(BASE_CLIP_SECONDS)
@@ -2108,6 +2128,7 @@ def test_play_timeline_plays_a_held_still_on_layer_0(window, tmp_path):
     )
 
     tick_play_whole_timeline(window)
+    pick_asset(window, card.name)
     window.click("#btn-preview")
     wait_for_rendered_timeline(session)
     assert reported_duration(session) == pytest.approx(HELD_STILL_SECONDS)
@@ -2161,6 +2182,7 @@ def test_a_preview_scrolled_partly_out_of_its_column_stays_inside_it(window, tmp
         PAGE_TIMEOUT_SECONDS,
     )
     choose_in_dialog(window, "#import-video", picture)
+    pick_asset(window, picture.name)
     window.click("#btn-preview")
     wait_for_shown_frame_size(session, SCROLLED_PREVIEW_SIZE, "the preview never showed the source")
 
