@@ -199,13 +199,13 @@ sudo akmods --force
 sudo reboot
 ```
 
-**GPU encoding on Ubuntu.** A deb with the CUDA plugin is built inside an Ubuntu 24.04 container with podman, from a Grok source checkout that has the plugin submodule, for one CUDA compute capability:
+**GPU encoding on Ubuntu.** A deb with the CUDA plugin is built inside an Ubuntu 24.04 or 26.04 container with podman, from a Grok source checkout that has the plugin submodule, for one CUDA compute capability. `GPUP_KERNEL_KEY_FILE` names the hex key file the plugin's encode kernels are encrypted with, and `UBUNTU_VERSION` defaults to 24.04:
 
 ```bash
-./scripts/build-ubuntu-deb.sh /path/to/grok/source 86
+UBUNTU_VERSION=26.04 GPUP_KERNEL_KEY_FILE=/path/to/prod_license_key.hex ./scripts/build-ubuntu-deb.sh /path/to/grok/source 86
 ```
 
-The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_<version>-sm86_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:24.04` container. Build caches stay in `~/.cache/postperfection/ubuntu24`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
+The deb is written under `gui/src-tauri/target/release/bundle/deb`, for example `DCP-Wizard_<version>-sm86.ubuntu26.04_amd64.deb` for an RTX 30 series card, and the script ends by installing it in a plain `ubuntu:26.04` container. Build caches stay in `~/.cache/postperfection/ubuntu26`. Like the rpm, the target machine needs the NVIDIA driver and a Grok licence entered under Settings.
 
 **GPU encoding on Arch Linux.** A pacman package with the CUDA plugin is built inside an `archlinux:base-devel` container with podman, the same way as the deb:
 

@@ -1,4 +1,5 @@
-FROM docker.io/nvidia/cuda:13.2.1-devel-ubuntu24.04
+ARG CUDA_IMAGE
+FROM $CUDA_IMAGE
 
 # the cuda image's entrypoint prints a banner into every captured output
 ENTRYPOINT []
@@ -32,6 +33,8 @@ RUN apt-get update \
         jq \
         rsync \
         xz-utils \
+        python3 \
+        python3-cryptography \
     && rm -rf /var/lib/apt/lists/*
 
 ENV FFMPEG_MPV_DIR=/opt/ffmpeg-mpv

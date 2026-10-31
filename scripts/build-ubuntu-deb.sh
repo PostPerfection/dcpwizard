@@ -7,9 +7,22 @@ GROK_SOURCE="${1:-}"
 CUDA_ARCH="${2:-}"
 
 if [[ -z "$GROK_SOURCE" || ! "$CUDA_ARCH" =~ ^[0-9]+$ ]]; then
-    echo "usage: $0 /path/to/grok/source <cuda arch, for example 86>" >&2
+    echo "usage: [UBUNTU_VERSION=26.04] GPUP_KERNEL_KEY_FILE=<hex key file> $0 /path/to/grok/source <cuda arch, for example 86>" >&2
     exit 2
 fi
+
+if [[ ! -f "${GPUP_KERNEL_KEY_FILE:-}" ]]; then
+    echo "set GPUP_KERNEL_KEY_FILE to the file holding the key the plugin's encode kernels are encrypted with" >&2
+    exit 2
+fi
+
+UBUNTU_VERSION="${UBUNTU_VERSION:-24.04}"
+# NVIDIA's ubuntu2604 repo starts at CUDA 13.3
+case "$UBUNTU_VERSION" in
+    24.04) CUDA_IMAGE=docker.io/nvidia/cuda:13.2.1-devel-ubuntu24.04 ;;
+    26.04) CUDA_IMAGE=docker.io/nvidia/cuda:13.4.3-devel-ubuntu26.04 ;;
+    *) echo "no CUDA image for Ubuntu $UBUNTU_VERSION, use 24.04 or 26.04" >&2; exit 2 ;;
+esac
 
 GROK_SOURCE="$(cd "$GROK_SOURCE" && pwd)"
 if [[ ! -f "$GROK_SOURCE/extern/grok-gpu-plugin/CMakeLists.txt" ]]; then
@@ -17,9 +30,9 @@ if [[ ! -f "$GROK_SOURCE/extern/grok-gpu-plugin/CMakeLists.txt" ]]; then
     exit 1
 fi
 
-IMAGE=postperfection-ubuntu24-build
-UBUNTU_IMAGE=docker.io/library/ubuntu:24.04
-CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/ubuntu24"
+IMAGE="postperfection-ubuntu${UBUNTU_VERSION%%.*}-build"
+UBUNTU_IMAGE="docker.io/library/ubuntu:$UBUNTU_VERSION"
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/ubuntu${UBUNTU_VERSION%%.*}"
 GROK_BUILD="$CACHE_ROOT/grok-build-sm$CUDA_ARCH"
 GROK_INSTALL="$CACHE_ROOT/grok-install-sm$CUDA_ARCH"
 CARGO_CACHE="$CACHE_ROOT/cargo"
@@ -29,7 +42,7 @@ OUTPUT_DIRECTORY="$ROOT/gui/src-tauri/target/release/bundle/deb"
 
 mkdir -p "$GROK_BUILD" "$GROK_INSTALL" "$CARGO_CACHE" "$PNPM_STORE" "$WORK" "$OUTPUT_DIRECTORY"
 
-podman build --tag "$IMAGE" --file "$ROOT/scripts/ubuntu-deb.Containerfile" "$ROOT/scripts"
+podman build --tag "$IMAGE" --build-arg CUDA_IMAGE="$CUDA_IMAGE" --file "$ROOT/scripts/ubuntu-deb.Containerfile" "$ROOT/scripts"
 
 # :z would relabel every file in the grok and wizard trees for selinux
 run_in_image() {
@@ -41,6 +54,7 @@ run_in_image \
     -v "$GROK_SOURCE:/grok:ro" \
     -v "$GROK_BUILD:/grok-build" \
     -v "$GROK_INSTALL:/grok-install" \
+    -v "$GPUP_KERNEL_KEY_FILE:/kernel-key.hex:ro" \
     "$IMAGE" bash -euo pipefail <<'EOF'
 cmake -S /grok -B /grok-build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
@@ -51,6 +65,8 @@ cmake -S /grok -B /grok-build -G Ninja \
     -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
     -DGPUP_ENABLE_AUTH=ON \
     -DGPUP_USE_LEGACY_AUTH=OFF \
+    -DGPUP_ALLOW_DEV_LICENSE_KEY=OFF \
+    -DGPUP_KERNEL_KEY_FILE=/kernel-key.hex \
     -DGRK_BUILD_CORE_SWIG_BINDINGS=OFF \
     -DGRK_BUILD_JPEG=OFF
 cmake --build /grok-build
@@ -121,9 +137,13 @@ read_tauri_config() {
 PRODUCT_NAME="$(read_tauri_config .productName)"
 VERSION="$(read_tauri_config .version)"
 BUILT_DEB="$WORK/gui/src-tauri/target/release/bundle/deb/${PRODUCT_NAME}_${VERSION}_amd64.deb"
-DEB_NAME="${PRODUCT_NAME// /-}_${VERSION}-sm${CUDA_ARCH}_amd64.deb"
+DEB_NAME="${PRODUCT_NAME// /-}_${VERSION}-sm${CUDA_ARCH}.ubuntu${UBUNTU_VERSION}_amd64.deb"
 cp "$BUILT_DEB" "$OUTPUT_DIRECTORY/$DEB_NAME"
-"$ROOT/scripts/check-linux-package-payload.sh" "$OUTPUT_DIRECTORY/$DEB_NAME"
+# the image has dpkg-deb, the host may not
+run_in_image \
+    -v "$ROOT/scripts:/scripts:ro" \
+    -v "$OUTPUT_DIRECTORY/$DEB_NAME:/debs/$DEB_NAME:ro" \
+    "$IMAGE" /scripts/check-linux-package-payload.sh "/debs/$DEB_NAME"
 echo "wrote $OUTPUT_DIRECTORY/$DEB_NAME"
 
 podman run --rm -i --security-opt label=disable \
@@ -142,11 +162,12 @@ if [[ "$(ldd /usr/bin/dcpwizard-gui | grep -c "not found" || true)" != 0 ]]; the
     exit 1
 fi
 
-if ldd /usr/lib/dcpwizard/libgrokj2k_plugin.so | grep "not found"; then
+# libcuda.so.1 comes with the NVIDIA driver, which the container does not have
+if ldd /usr/lib/dcpwizard/libgrokj2k_plugin.so | grep "not found" | grep -v "^\s*libcuda\.so\.1 "; then
     echo "libgrokj2k_plugin.so has an unresolved library" >&2
     exit 1
 fi
 
 GRK_PLUGIN_PATH=/usr/lib/dcpwizard dcpwizard --version
 EOF
-echo "deb installs on ubuntu:24.04"
+echo "deb installs on ubuntu:$UBUNTU_VERSION"
