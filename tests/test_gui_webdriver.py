@@ -84,6 +84,9 @@ MEASURE_SOURCE = "#prop-loudness-source"
 MEASURE_DELIVERED = "#prop-loudness-delivered"
 MEASURE_STEPS = "#prop-loudness-steps"
 LOUDNESS_CHART_CURVE = "#prop-loudness-chart svg.loudness-chart path.loudness-chart-curve"
+LOUDNESS_CURVE_CHOICES = 'return [...document.querySelectorAll("#prop-loudness-curves input")].map((box) => box.value);'
+CHANNEL_CURVE_PATH = 'return document.querySelector(`#prop-loudness-chart path.loudness-chart-channel[data-channel="${arguments[0]}"]`)?.getAttribute("d") ?? null;'
+RIGHT_CHANNEL = 1
 SOURCE_PREFIX = "Source: Integrated "
 DELIVERED_PREFIX = "Delivered: Integrated "
 ROUTED_STEP = "Routed the channel set by filename"
@@ -1339,10 +1342,19 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert session.execute(INSIDE_PROPERTIES_PANEL, MEASURE_BUTTON)
     source, delivered = measure_integrated_lufs(window, [ROUTED_STEP])
     assert source == delivered
+    assert session.execute(LOUDNESS_CURVE_CHOICES) == ["mix", "L", "R"]
+    assert session.execute(CHANNEL_CURVE_PATH, RIGHT_CHANNEL) is None
+    window.click('#prop-loudness-curves input[value="R"]')
+    wait_until(
+        "ticking R never drew its curve",
+        lambda: (session.execute(CHANNEL_CURVE_PATH, RIGHT_CHANNEL) or "").startswith("M"),
+        REACTION_TIMEOUT_SECONDS,
+    )
     window.click(AUDIO_GAIN_FIELD)
     window.type_text(AUDIO_GAIN_TYPED)
     window.click(TOOLBAR_PROJECT_LABEL)
     _, quieter = measure_integrated_lufs(window, [ROUTED_STEP, GAIN_STEP])
+    assert (session.execute(CHANNEL_CURVE_PATH, RIGHT_CHANNEL) or "").startswith("M"), "the R tick was lost"
     assert abs(source + AUDIO_GAIN_TYPED_DB - quieter) < LOUDNESS_TOLERANCE_LU, (source, quieter)
 
     window.click(LOUDNESS_TARGET_FIELD)

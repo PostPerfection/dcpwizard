@@ -50,7 +50,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, appl
 import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from "./channel-set.js";
-import { gainToReachTarget, optionalNumber, sourceLine, deliveredLine, measurementSteps, deliveredChart } from "./loudness-panel.js";
+import { initLoudnessPanel, optionalNumber } from "../../extern/guikit/src/loudness-panel.js";
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
 import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
@@ -66,7 +66,7 @@ import { prefilledRecipientKey } from "./recipient-identity.js";
 import { outputFileInFolder, qcReportPathBeside, SUBTITLE_CONVERSION_EXTENSION, BURN_IN_EXTENSION, BURN_IN_NAME_PART, TARGET_CONVERSION_EXTENSION } from "./tool-output.js";
 import { PREFERRED_PROJECT_CONTROLS, projectDefaultsFromPreferences } from "./project-defaults.js";
 import { autoResolutionLabel, detectedValues, probeMayFill } from "./detected-values.js";
-import { AUTO_ROUTE_PLACEHOLDER, audioMapHint, audioMapTable, invalidGainSentence, rowAutoRoute } from "./audio-map-matrix.js";
+import { AUTO_ROUTE_PLACEHOLDER, audioMapHint, audioMapTable, invalidGainSentence, rowAutoRoute } from "../../extern/guikit/src/audio-map-matrix.js";
 import { initPresets, savedPresetNamed, applySavedPreset, clearProfileDriven } from "./presets.js";
 import {
   chainPaths,
@@ -1972,65 +1972,14 @@ function jobRequest({ title, output, encrypt, keyOut }) {
   };
 }
 
-let lastSoundMeasurement = null;
-
-function loudnessPanelFields() {
-  return {
-    target: document.getElementById("prop-loudness"),
-    measure: document.getElementById("prop-measure-sound"),
-    setGain: document.getElementById("prop-gain-to-target"),
-    source: document.getElementById("prop-loudness-source"),
-    delivered: document.getElementById("prop-loudness-delivered"),
-    steps: document.getElementById("prop-loudness-steps"),
-    chart: document.getElementById("prop-loudness-chart"),
-  };
-}
-
-function refreshGainToTarget() {
-  const fields = loudnessPanelFields();
-  if (!fields.setGain) return;
-  fields.setGain.disabled = gainToReachTarget(fields.target?.value, lastSoundMeasurement) === null;
-}
-
-function markDeliveredStale() {
-  if (!lastSoundMeasurement) return;
-  loudnessPanelFields().delivered.textContent = deliveredLine(lastSoundMeasurement, true);
-}
-
-document.getElementById("prop-measure-sound")?.addEventListener("click", async () => {
-  const timeline = activeTimeline();
-  if (timeline.clips.length === 0 && !firstSoundAsset(timeline, assetById)) { setStatus("Import a video or sound asset first"); return; }
-  const fields = loudnessPanelFields();
-  fields.measure.disabled = true;
-  fields.source.textContent = "Measuring…";
-  fields.delivered.textContent = "";
-  fields.steps.textContent = "";
-  fields.chart.innerHTML = "";
-  lastSoundMeasurement = null;
-  refreshGainToTarget();
-  try {
-    lastSoundMeasurement = await invoke("measure_sound", { request: currentJobRequest() });
-    fields.source.textContent = sourceLine(lastSoundMeasurement);
-    fields.delivered.textContent = deliveredLine(lastSoundMeasurement);
-    fields.steps.textContent = measurementSteps(lastSoundMeasurement);
-    fields.chart.innerHTML = deliveredChart(lastSoundMeasurement, fields.target.value);
-  } catch (e) {
-    fields.source.textContent = String(e);
-  } finally {
-    fields.measure.disabled = false;
-    refreshGainToTarget();
-  }
+initLoudnessPanel({
+  measureSound: () => invoke("measure_sound", { request: currentJobRequest() }),
+  soundMissing: () => {
+    const timeline = activeTimeline();
+    if (timeline.clips.length === 0 && !firstSoundAsset(timeline, assetById)) return "Import a video or sound asset first";
+    return null;
+  },
 });
-
-document.getElementById("prop-gain-to-target")?.addEventListener("click", () => {
-  const gain = gainToReachTarget(loudnessPanelFields().target.value, lastSoundMeasurement);
-  if (gain === null) return;
-  document.getElementById("prop-audio-gain").value = gain.toFixed(1);
-  markDeliveredStale();
-});
-
-document.getElementById("prop-loudness")?.addEventListener("input", refreshGainToTarget);
-document.getElementById("prop-audio-gain")?.addEventListener("input", markDeliveredStale);
 
 document.getElementById("btn-build")?.addEventListener("click", async () => {
   let title = document.getElementById("prop-title")?.value?.trim();

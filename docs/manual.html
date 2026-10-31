@@ -204,6 +204,7 @@
     <p>Properties holds every build setting, in these groups:</p>
     <ul>
         <li>DCP: Title, Content Kind, Standard and Delivery profile.</li>
+        <li>Output: the folder the DCP goes in.</li>
         <li>Picture: Resolution, Frame Rate, Bandwidth, Quality and Source colour space.</li>
         <li>Source Picture: crop, auto-crop, deinterlace, denoise, rotate, flip, scale and offset. See <a href="#picture-placement">Picture size and position</a>.</li>
         <li>Audio: see <a href="#sound">Sound</a>.</li>
@@ -219,7 +220,6 @@
         <li>Padding: black and silence before and after the film.</li>
         <li>Subtitles &amp; Captions: subtitle and closed caption files and how they look.</li>
         <li>Sign Language: a signer video, carried on sound channel 15.</li>
-        <li>Output: the folder the DCP goes in.</li>
     </ul>
 
     <h2 id="sound">Sound</h2>
@@ -264,7 +264,7 @@
     <p>Get the channels right first. The loudness is measured after Channel mapping.</p>
     <ol>
         <li>In Properties, Audio, Loudness target, type the level you want, such as <code>lufs=-24</code> for -24 LUFS or <code>leqm=85</code> for 85 dB Leq(m).</li>
-        <li>Optionally press Measure to check. Source is the level of your sound now. Delivered is the level the DCP will have. The graph shows the loudness over time.</li>
+        <li>Optionally press Measure to check. Source is the level of your sound now. Delivered is the level the DCP will have. The graph shows the loudness of the mix over time. Tick a channel under the graph to add its own curve, and untick Mix to hide the mix.</li>
         <li>Build. The build brings the sound to the target. A LUFS target is integrated loudness.</li>
     </ol>
     <p>The target turns the whole mix up or down by one amount, so the gains you typed in the grid keep their balance.</p>

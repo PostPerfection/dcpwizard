@@ -3266,27 +3266,23 @@ fn warn_clipped_samples(report: &postkit::audio_mix_matrix::MixReport) {
 // the loudness target or the gain, then the fades, on the trimmed sound
 fn finish_kept_audio(
     audio: Option<PathBuf>,
-    adjust: &dcpwizard_core::audio_adjust::AudioAdjust,
+    adjust: &postkit::audio_adjust::AudioAdjust,
     loudness_target: Option<&str>,
     true_peak_ceiling: Option<f64>,
     work_dir: &Path,
 ) -> Option<PathBuf> {
     let sound = audio?;
-    let target = match loudness_target
-        .map(dcpwizard_core::loudness::parse_loudness_target)
-        .transpose()
-    {
-        Ok(target) => target,
+    let finish = match postkit::audio_adjust::SoundFinish::from_typed(
+        adjust.clone(),
+        loudness_target,
+        true_peak_ceiling,
+    ) {
+        Ok(finish) => finish,
         Err(e) => exit_failed(e),
     };
-    match dcpwizard_core::audio_adjust::finish_kept_sound(
-        &sound,
-        work_dir,
-        adjust,
-        target,
-        true_peak_ceiling.unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP),
-        |line| tracing::info!("{line}"),
-    ) {
+    match postkit::audio_adjust::finish_kept_sound(&sound, work_dir, &finish, |line| {
+        tracing::info!("{line}")
+    }) {
         Ok(finished) => Some(finished),
         Err(e) => exit_failed(e),
     }
@@ -4518,7 +4514,7 @@ fn run() {
                 container_dims.as_deref(),
                 fourk,
             ));
-            let audio_adjust = dcpwizard_core::audio_adjust::AudioAdjust {
+            let audio_adjust = postkit::audio_adjust::AudioAdjust {
                 gain_db: audio_gain,
                 fade_in_seconds: audio_fade_in,
                 fade_out_seconds: audio_fade_out,

@@ -220,6 +220,19 @@
                 </fieldset>
 
                 <fieldset>
+                  <legend>Output</legend>
+                  <div class="prop-field">
+                    <label for="prop-output">Folder</label>
+                    <div class="input-with-btn">
+                      <input id="prop-output" type="text" placeholder="Default output folder from Settings, or Documents" readonly>
+                      <button id="browse-output" class="btn-sm">…</button>
+                    </div>
+                    <p class="field-hint" id="prop-output-folder-hint">The DCP is written to a new folder inside this one, named after the title or its ISDCF name.</p>
+                    <p class="field-hint" id="prop-output-folder-preview" hidden></p>
+                  </div>
+                </fieldset>
+
+                <fieldset>
                   <legend>Picture</legend>
                   <div class="prop-field">
                     <label for="prop-resolution">Resolution</label>
@@ -389,6 +402,7 @@
                     <p class="field-hint" id="prop-loudness-delivered"></p>
                     <p class="field-hint" id="prop-loudness-steps"></p>
                     <div id="prop-loudness-chart"></div>
+                    <div id="prop-loudness-curves" class="loudness-curve-choices"></div>
                   </div>
                   <div class="prop-field">
                     <label for="prop-true-peak">True-peak ceiling (dBTP)</label>
@@ -818,19 +832,6 @@
                   <div class="prop-field">
                     <label for="prop-sign-language-tag">Sign-language tag (RFC 5646)</label>
                     <input id="prop-sign-language-tag" type="text" placeholder="Not set (for example sgn-ase)">
-                  </div>
-                </fieldset>
-
-                <fieldset>
-                  <legend>Output</legend>
-                  <div class="prop-field">
-                    <label for="prop-output">Folder</label>
-                    <div class="input-with-btn">
-                      <input id="prop-output" type="text" placeholder="Default output folder from Settings, or Documents" readonly>
-                      <button id="browse-output" class="btn-sm">…</button>
-                    </div>
-                    <p class="field-hint" id="prop-output-folder-hint">The DCP is written to a new folder inside this one, named after the title or its ISDCF name.</p>
-                    <p class="field-hint" id="prop-output-folder-preview" hidden></p>
                   </div>
                 </fieldset>
               </div>

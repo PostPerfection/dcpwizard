@@ -504,8 +504,8 @@ pub struct JobConfig {
 }
 
 impl JobConfig {
-    fn audio_adjust(&self) -> dcpwizard_core::audio_adjust::AudioAdjust {
-        dcpwizard_core::audio_adjust::AudioAdjust {
+    fn audio_adjust(&self) -> postkit::audio_adjust::AudioAdjust {
+        postkit::audio_adjust::AudioAdjust {
             gain_db: self.audio_gain_db,
             fade_in_seconds: self.audio_fade_in_seconds,
             fade_out_seconds: self.audio_fade_out_seconds,
@@ -1503,58 +1503,13 @@ pub async fn submit_job(app: AppHandle, request: SubmitRequest) -> Result<Submit
     })
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SoundLevels {
-    pub integrated_lufs: f64,
-    pub leq_m_db: f64,
-    pub true_peak_dbtp: f64,
-    pub range_lu: f64,
-    pub short_term_max_lufs: f64,
-    pub short_term_lufs: Vec<Option<f32>>,
-    pub short_term_first_seconds: f64,
-    pub short_term_step_seconds: f64,
-    pub true_peak_at_seconds: f64,
-}
-
-// before is the trimmed sound ahead of the level step and the fades, delivered is what ships
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SoundMeasurement {
-    pub before: SoundLevels,
-    pub delivered: SoundLevels,
-    pub steps: Vec<String>,
-}
-
-fn sound_levels(sound: &Path) -> Result<SoundLevels, String> {
-    let loudness = postkit::loudness::measure_loudness(sound);
-    if !loudness.success {
-        return Err(format!("Cannot measure the loudness: {}", loudness.error));
-    }
-    let leq_m = postkit::loudness::measure_leq_m(sound);
-    if !leq_m.success {
-        return Err(format!("Cannot measure Leq(m): {}", leq_m.error));
-    }
-    Ok(SoundLevels {
-        integrated_lufs: loudness.integrated_lufs,
-        leq_m_db: leq_m.leq_m_db,
-        true_peak_dbtp: loudness.true_peak_dbtp,
-        range_lu: loudness.range_lu,
-        short_term_max_lufs: loudness.short_term_max_lufs,
-        short_term_lufs: loudness.short_term_lufs,
-        short_term_first_seconds: loudness.short_term_first_seconds,
-        short_term_step_seconds: loudness.short_term_step_seconds,
-        true_peak_at_seconds: loudness.true_peak_at_seconds,
-    })
-}
-
 const SOUND_MEASUREMENT_DIRECTORY: &str = "sound-measurement";
 
 #[tauri::command]
 pub async fn measure_sound(
     app: AppHandle,
     request: SubmitRequest,
-) -> Result<SoundMeasurement, String> {
+) -> Result<postkit::loudness::SoundMeasurement, String> {
     let scratch_parent = app
         .path()
         .app_cache_dir()
@@ -1569,7 +1524,10 @@ pub async fn measure_sound(
 }
 
 // the same steps a build runs on the sound, in a scratch folder removed afterwards
-fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeasurement, String> {
+fn measure_job_sound(
+    job: &JobConfig,
+    scratch_parent: &Path,
+) -> Result<postkit::loudness::SoundMeasurement, String> {
     std::fs::create_dir_all(scratch_parent).map_err(|e| e.to_string())?;
     let scratch = tempfile::tempdir_in(scratch_parent).map_err(|e| e.to_string())?;
     let steps = std::cell::RefCell::new(Vec::new());
@@ -1618,18 +1576,25 @@ fn measure_job_sound(job: &JobConfig, scratch_parent: &Path) -> Result<SoundMeas
     }
     let before_sound = sound
         .ok_or("There is no sound to measure: import a sound asset or a video that carries one")?;
-    let before = sound_levels(&before_sound)?;
     let delivered_sound = finish_sound(job, &before_sound, scratch.path(), log)?;
-    let delivered = if delivered_sound == before_sound {
-        before.clone()
-    } else {
-        sound_levels(&delivered_sound)?
-    };
-    Ok(SoundMeasurement {
-        before,
-        delivered,
-        steps: steps.into_inner(),
-    })
+    let channels = postkit::wav_io::channel_count(&delivered_sound)?;
+    postkit::loudness::measure_before_and_delivered(
+        &before_sound,
+        &delivered_sound,
+        steps.into_inner(),
+        dcp_channel_labels(channels),
+    )
+}
+
+// the delivered sound is in DCP lane order
+fn dcp_channel_labels(channels: usize) -> Vec<String> {
+    (0..channels)
+        .map(|channel| {
+            dcp_lane_name(channel)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Channel {}", channel + 1))
+        })
+        .collect()
 }
 
 /// Read the source once for the pre-build check. A codestream directory has
@@ -3364,20 +3329,14 @@ fn finish_sound(
     output: &Path,
     log: impl Fn(&str),
 ) -> Result<PathBuf, String> {
-    let target = job
-        .loudness_target
-        .as_deref()
-        .map(dcpwizard_core::loudness::parse_loudness_target)
-        .transpose()?;
-    dcpwizard_core::audio_adjust::finish_kept_sound(
-        input,
-        &output.join("audio_work"),
-        &job.audio_adjust(),
-        target,
-        job.true_peak_ceiling
-            .unwrap_or(dcpwizard_core::loudness::DEFAULT_TRUE_PEAK_CEILING_DBTP),
-        |line| log(&format!("[AUDIO] {line}")),
-    )
+    let finish = postkit::audio_adjust::SoundFinish::from_typed(
+        job.audio_adjust(),
+        job.loudness_target.as_deref(),
+        job.true_peak_ceiling,
+    )?;
+    postkit::audio_adjust::finish_kept_sound(input, &output.join("audio_work"), &finish, |line| {
+        log(&format!("[AUDIO] {line}"))
+    })
 }
 
 fn build_dcp_config(
@@ -7424,7 +7383,8 @@ mod tests {
             ("C", 0.3),
         ] {
             let file = channels.join(format!("260810 DST_MIX_V2.3.2.{lane}.wav"));
-            write_tone(&file, amplitude, 2.0);
+            // past the 3 s short term window, so each channel has a curve
+            write_tone(&file, amplitude, 4.0);
             files.push(file);
         }
         let routed_directly = dir.path().join("routed.wav");
@@ -7463,6 +7423,23 @@ mod tests {
         assert_eq!(
             measured.steps,
             vec!["Routed the channel set by filename", "Applied gain/fades"]
+        );
+        assert_eq!(
+            measured.channel_labels[..6],
+            ["L", "R", "C", "LFE", "Ls", "Rs"]
+        );
+        let last_short_term = |channel: usize| {
+            measured.delivered.channel_short_term_lufs[channel]
+                .last()
+                .copied()
+                .flatten()
+                .unwrap()
+        };
+        // L carries a 0.5 tone and Ls a 0.1 tone, 14 dB apart
+        let left_over_left_surround = last_short_term(0) - last_short_term(4);
+        assert!(
+            (left_over_left_surround - 14.0).abs() < 0.2,
+            "L is {left_over_left_surround} dB above Ls"
         );
         assert_eq!(
             std::fs::read_dir(&scratch_parent).unwrap().count(),

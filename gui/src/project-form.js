@@ -1,7 +1,7 @@
 import { ratingRowsFrom } from "./rating-rows.js";
 import { DEFAULT_TIMELINE_FPS, emptyTimeline, parseFrameRate, timelineWithKnownAssets } from "../../extern/guikit/src/composition-timeline.js";
 import { isChannelSet } from "./channel-set.js";
-import { rowAutoRoute } from "./audio-map-matrix.js";
+import { rowAutoRoute } from "../../extern/guikit/src/audio-map-matrix.js";
 
 const VALUE = "value";
 const CHECKED = "checked";
