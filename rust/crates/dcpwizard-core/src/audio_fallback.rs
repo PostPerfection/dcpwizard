@@ -38,6 +38,52 @@ pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<Pa
     Ok(Some(output))
 }
 
+const FFPROBE_DEFAULT_DISPOSITION: &str = "1";
+
+// the stream ffmpeg extracts with no map: a default one first, then the widest
+pub fn embedded_channel_count(picture: &Path) -> Result<usize, String> {
+    if !picture.is_file() {
+        return Ok(0);
+    }
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=channels:stream_disposition=default",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(picture)
+        .output()
+        .map_err(|e| format!("failed to run ffprobe on {}: {e}", picture.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ffprobe could not read the sound in {}: {}",
+            picture.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let streams = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (channels, default) = line.trim().split_once(',')?;
+            Some((
+                default == FFPROBE_DEFAULT_DISPOSITION,
+                channels.parse::<usize>().ok()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    // max keeps the last of equals, so the first stream wins a tie
+    Ok(streams
+        .into_iter()
+        .rev()
+        .max()
+        .map_or(0, |(_, channels)| channels))
+}
+
 /// Write `frames` frames' worth of 48 kHz 24-bit silence across `channels`,
 /// sample-accurate at the frame edge so it lines up with the picture.
 pub fn write_silent_wav(output: &Path, channels: u32, frames: u64, fps: u32) -> Result<(), String> {

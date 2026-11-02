@@ -109,7 +109,9 @@ pub fn timeline_sound_channels(timeline: &postkit::timeline::Timeline) -> Result
 fn picture_sound_channels(picture_sound: Option<PictureSound>) -> Result<usize, String> {
     match picture_sound {
         None => Ok(0),
-        Some(PictureSound::Video(picture)) => embedded_channel_count(picture),
+        Some(PictureSound::Video(picture)) => {
+            crate::audio_fallback::embedded_channel_count(picture)
+        }
         Some(PictureSound::Timeline(timeline)) => timeline_sound_channels(timeline),
     }
 }
@@ -152,52 +154,6 @@ fn prepared_channel_count(source: &SoundtrackSource) -> Result<usize, String> {
         return Ok(crate::mxf_wrap::CANONICAL_51_CHANNELS as usize);
     }
     Ok(mapped_count)
-}
-
-const FFPROBE_DEFAULT_DISPOSITION: &str = "1";
-
-// the stream ffmpeg extracts with no map: a default one first, then the widest
-fn embedded_channel_count(picture: &Path) -> Result<usize, String> {
-    if !picture.is_file() {
-        return Ok(0);
-    }
-    let output = std::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=channels:stream_disposition=default",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(picture)
-        .output()
-        .map_err(|e| format!("failed to run ffprobe on {}: {e}", picture.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "ffprobe could not read the sound in {}: {}",
-            picture.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let streams = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let (channels, default) = line.trim().split_once(',')?;
-            Some((
-                default == FFPROBE_DEFAULT_DISPOSITION,
-                channels.parse::<usize>().ok()?,
-            ))
-        })
-        .collect::<Vec<_>>();
-    // max keeps the last of equals, so the first stream wins a tie
-    Ok(streams
-        .into_iter()
-        .rev()
-        .max()
-        .map_or(0, |(_, channels)| channels))
 }
 
 // what the ISDCF name of a package is built from
@@ -752,7 +708,7 @@ mod tests {
             .expect("the source has sound");
         let extracted_channels = crate::mxf_wrap::wav_channels(&extracted).unwrap();
         assert_eq!(
-            embedded_channel_count(&source).unwrap(),
+            crate::audio_fallback::embedded_channel_count(&source).unwrap(),
             usize::from(extracted_channels)
         );
     }

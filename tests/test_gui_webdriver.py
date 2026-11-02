@@ -1411,6 +1411,36 @@ def test_mono_channel_wavs_become_one_channel_set_that_builds(window, tmp_path):
     assert abs(ratio - 10 ** (gain_db / 20)) < AUDIO_GAIN_TOLERANCE, (ratio, gain_db)
 
 
+def test_the_mapping_matrix_lists_the_channels_a_video_carries(window, tmp_path):
+    session = window.session
+    picture = tmp_path / "five_one.mov"
+    run_ffmpeg(
+        "-f", "lavfi",
+        "-i", f"testsrc2=size={FIXTURE_SIZE}:rate={FIXTURE_FPS}:duration={FIXTURE_SECONDS}",
+        "-f", "lavfi",
+        "-i", f"sine=frequency=440:sample_rate=48000:duration={FIXTURE_SECONDS}",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-ac", str(FIXTURE_CHANNELS), "-c:a", "pcm_s24le",
+        str(picture),
+    )
+
+    wait_until(
+        "the page never finished loading",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    choose_in_dialog(window, "#import-video", picture)
+    wait_until(
+        "the mapping matrix never listed the video's six channels",
+        lambda: session.execute(AUDIO_MAP_ROWS)
+        == [
+            {"name": f"Channel {channel}", "autoRouted": [lane]}
+            for channel, lane in enumerate(["L", "R", "C", "LFE", "Ls", "Rs"], start=1)
+        ],
+        OPEN_TIMEOUT_SECONDS,
+    )
+
+
 def test_a_channel_set_sounds_a_timeline_of_two_clips(window, tmp_path):
     session = window.session
     media = tmp_path / "media"

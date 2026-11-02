@@ -31,4 +31,9 @@ for binary in "$PAYLOAD/usr/bin/dcpwizard" "$PAYLOAD/usr/bin/dcpwizard-gui"; do
         fi
     done
 done
+# dcpdoctor looks for the XSDs in the folder tauri bundles resources into
+if ! compgen -G "$PAYLOAD/usr/lib/DCP Wizard/schemas/*.xsd" >/dev/null; then
+    echo "/usr/lib/DCP Wizard/schemas has no XSDs" >&2
+    failed=1
+fi
 exit $failed

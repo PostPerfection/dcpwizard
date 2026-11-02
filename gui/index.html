@@ -383,7 +383,7 @@
                   <div class="prop-field">
                     <label>Channel mapping (gain in dB, empty is unrouted)</label>
                     <div id="prop-audio-map" class="audio-map"></div>
-                    <p class="field-hint" id="prop-audio-map-hint">Import a sound asset to map its channels.</p>
+                    <p class="field-hint" id="prop-audio-map-hint">Import a sound asset, or a video that carries sound, to map its channels.</p>
                   </div>
                   <div class="prop-field">
                     <label for="prop-audio-delay">Audio delay (ms, negative is earlier)</label>
@@ -1609,7 +1609,7 @@
               </fieldset>
               <fieldset>
                 <legend>Certificates</legend>
-                <p class="field-hint">The signing chain signs encrypted DCPs and KDMs. The recipient certificate is this machine: export it so other software can make a KDM for you.</p>
+                <p class="field-hint">The signing chain signs the CPL and PKL of every DCP built, and the KDMs. The recipient certificate is this machine: export it so other software can make a KDM for you.</p>
                 <div class="prop-field">
                   <label for="set-signing-cert">Signing Certificate</label>
                   <div class="input-with-btn">

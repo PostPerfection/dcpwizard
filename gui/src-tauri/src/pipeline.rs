@@ -2010,21 +2010,29 @@ pub struct InputOrderField {
     pub hint: Option<String>,
 }
 
-/// The rows a channel set or an interleaved WAV gives the grid, and the lanes a
-/// map may name.
+enum MappedSound {
+    Wav(String),
+    ChannelSet(Vec<String>),
+    Embedded(String),
+}
+
+/// The rows a channel set, an interleaved WAV or a picture's own sound gives the
+/// grid, and the lanes a map may name.
 #[tauri::command]
 pub async fn probe_audio_map(
     audio_path: Option<String>,
     channel_files: Option<Vec<String>>,
+    embedded_sound_picture: Option<String>,
     audio_input_order: Option<String>,
     upmix: Option<String>,
 ) -> Result<AudioMapPanel, String> {
-    audio_map_panel(
-        audio_path,
-        channel_files,
-        audio_input_order.as_deref(),
-        upmix.as_deref(),
-    )
+    let sound = match (audio_path, channel_files, embedded_sound_picture) {
+        (Some(path), None, None) => MappedSound::Wav(path),
+        (None, Some(files), None) => MappedSound::ChannelSet(files),
+        (None, None, Some(picture)) => MappedSound::Embedded(picture),
+        _ => return Err("name exactly one sound to map".into()),
+    };
+    audio_map_panel(sound, audio_input_order.as_deref(), upmix.as_deref())
 }
 
 // a saved alternate order stays editable beside its conflict
@@ -2065,9 +2073,24 @@ pub fn input_order_field(
 
 const STEREO_CHANNELS: usize = 2;
 
+fn interleaved_rows(
+    channels: usize,
+    input_order: dcpwizard_core::mxf_wrap::AudioInputOrder,
+) -> (Vec<String>, Vec<Option<String>>) {
+    let source_of_slot = input_order.source_channel_of_slot(channels as u32);
+    (0..channels)
+        .map(|input| {
+            let slot = source_of_slot.iter().position(|source| *source == input);
+            (
+                format!("Channel {}", input + 1),
+                slot.and_then(dcp_lane_name).map(str::to_string),
+            )
+        })
+        .unzip()
+}
+
 fn audio_map_panel(
-    audio_path: Option<String>,
-    channel_files: Option<Vec<String>>,
+    sound: MappedSound,
     audio_input_order: Option<&str>,
     upmix: Option<&str>,
 ) -> Result<AudioMapPanel, String> {
@@ -2076,7 +2099,7 @@ fn audio_map_panel(
     let placement = dcpwizard_core::channel_placement::ChannelPlacement {
         input_order,
         upmix: upmix.is_some(),
-        channel_set: channel_files.is_some(),
+        channel_set: matches!(sound, MappedSound::ChannelSet(_)),
         ..Default::default()
     };
     let audio_map_placer = dcpwizard_core::channel_placement::ChannelPlacer::AudioMap;
@@ -2092,27 +2115,24 @@ fn audio_map_panel(
         .iter()
         .map(|lane| lane.to_string())
         .collect();
-    let (channel_names, routes): (Vec<String>, Vec<Option<String>>) = match channel_files {
-        Some(files) => {
+    let (channel_names, routes) = match sound {
+        MappedSound::ChannelSet(files) => {
             let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
             dcpwizard_core::audio_route::channel_files_in_set_order(&files)
                 .iter()
                 .map(|(lane, path)| (file_name_of(path), dcp_lane_name(*lane).map(str::to_string)))
                 .unzip()
         }
-        None => {
-            let audio_path = audio_path.ok_or("no sound to map")?;
-            let channels = postkit::wav_io::channel_count(Path::new(&audio_path))?;
-            let source_of_slot = input_order.source_channel_of_slot(channels as u32);
-            (0..channels)
-                .map(|input| {
-                    let slot = source_of_slot.iter().position(|source| *source == input);
-                    (
-                        format!("Channel {}", input + 1),
-                        slot.and_then(dcp_lane_name).map(str::to_string),
-                    )
-                })
-                .unzip()
+        MappedSound::Wav(path) => interleaved_rows(
+            postkit::wav_io::channel_count(Path::new(&path))?,
+            input_order,
+        ),
+        MappedSound::Embedded(picture) => {
+            let picture = Path::new(&picture);
+            match dcpwizard_core::audio_fallback::embedded_channel_count(picture)? {
+                0 => return Err(format!("{} carries no sound", file_name_of(picture))),
+                channels => interleaved_rows(channels, input_order),
+            }
         }
     };
     let channels = channel_names.len();
@@ -6120,8 +6140,7 @@ mod tests {
         write_mono(&right, 0, 4);
         write_mono(&left, 0, 4);
         let set = audio_map_panel(
-            None,
-            Some(vec![
+            MappedSound::ChannelSet(vec![
                 right.to_string_lossy().into_owned(),
                 left.to_string_lossy().into_owned(),
             ]),
@@ -6136,8 +6155,7 @@ mod tests {
         let unnamed = dir.path().join("mix_dialogue.wav");
         write_mono(&unnamed, 0, 4);
         let with_unnamed = audio_map_panel(
-            None,
-            Some(
+            MappedSound::ChannelSet(
                 [&unnamed, &right, &left]
                     .map(|file| file.to_string_lossy().into_owned())
                     .to_vec(),
@@ -6160,12 +6178,34 @@ mod tests {
             sample_format: SampleFormat::Int,
         };
         WavWriter::create(&wide, spec).unwrap().finalize().unwrap();
-        let interleaved =
-            audio_map_panel(Some(wide.to_string_lossy().into_owned()), None, None, None).unwrap();
+        let interleaved = audio_map_panel(
+            MappedSound::Wav(wide.to_string_lossy().into_owned()),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(interleaved.channel_names[0], "Channel 1");
         assert_eq!(interleaved.auto_routes[3], Some("LFE".into()));
         assert_eq!(interleaved.auto_routes[10], None);
         assert_eq!(interleaved.auto_routes[14], Some("HI".into()));
+    }
+
+    #[test]
+    fn the_map_panel_lists_the_channels_of_a_picture_with_its_own_sound() {
+        let dir = tempfile::tempdir().unwrap();
+        let picture = source_with_five_one_sound(dir.path());
+        let panel = audio_map_panel(
+            MappedSound::Embedded(picture.to_string_lossy().into_owned()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(panel.channels, 6);
+        assert_eq!(panel.channel_names[5], "Channel 6");
+        assert_eq!(
+            panel.auto_routes,
+            ["L", "R", "C", "LFE", "Ls", "Rs"].map(|lane| Some(lane.to_string()))
+        );
     }
 
     fn write_channels(path: &std::path::Path, values: &[i32], frames: usize) {
@@ -6191,8 +6231,7 @@ mod tests {
         let values = [1000, 2000, 3000, 4000, 5000, 6000];
         write_channels(&source, &values, 4);
         let panel = audio_map_panel(
-            Some(source.to_string_lossy().into_owned()),
-            None,
+            MappedSound::Wav(source.to_string_lossy().into_owned()),
             Some("lrc-ls-rs-lfe"),
             None,
         )
@@ -6245,8 +6284,7 @@ mod tests {
         let stereo = dir.path().join("stereo.wav");
         write_channels(&stereo, &[1000, -1000], 4800);
         let panel = audio_map_panel(
-            Some(stereo.to_string_lossy().into_owned()),
-            None,
+            MappedSound::Wav(stereo.to_string_lossy().into_owned()),
             None,
             Some("a"),
         )
@@ -6285,8 +6323,7 @@ mod tests {
         let six = dir.path().join("six.wav");
         write_channels(&six, &[0; 6], 4);
         let not_stereo = audio_map_panel(
-            Some(six.to_string_lossy().into_owned()),
-            None,
+            MappedSound::Wav(six.to_string_lossy().into_owned()),
             None,
             Some("b"),
         )
@@ -6304,8 +6341,7 @@ mod tests {
         );
 
         let plain = audio_map_panel(
-            Some(stereo.to_string_lossy().into_owned()),
-            None,
+            MappedSound::Wav(stereo.to_string_lossy().into_owned()),
             None,
             None,
         )

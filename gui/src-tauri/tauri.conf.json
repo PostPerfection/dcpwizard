@@ -42,6 +42,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["dcpwizard"],
+    "resources": { "../../extern/dcpdoctor/schemas": "schemas" },
     "fileAssociations": [
       {
         "ext": ["dcpwizard"],

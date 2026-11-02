@@ -1093,26 +1093,35 @@ function typedAudioMapCells() {
     .map((cell) => ({ input: cell.dataset.input, lane: cell.dataset.lane, value: cell.value }));
 }
 
+function embeddedSoundPicture(timeline) {
+  const firstClip = firstBaseClip(timeline)?.clip;
+  if (firstClip?.sound.kind !== "embedded") return null;
+  return assetById(firstClip.picture).path;
+}
+
 function refreshAudioMapMatrix() {
-  const { audioPath, audioChannelFiles } = soundSource(firstSoundAsset(activeTimeline(), assetById));
+  const timeline = activeTimeline();
+  const soundAsset = firstSoundAsset(timeline, assetById);
+  const { audioPath, audioChannelFiles } = soundSource(soundAsset);
+  const embeddedPicture = soundAsset ? null : embeddedSoundPicture(timeline);
   refreshInputOrderField(Boolean(audioChannelFiles));
-  const sound = audioPath ?? audioChannelFiles?.join("\n") ?? null;
+  const sound = audioPath ?? audioChannelFiles?.join("\n") ?? embeddedPicture;
   const settings = `${inputOrderSelect.value} ${upmixSelect.value}`;
   if (sound === audioMapSource && settings === audioMapSettings) return audioMapDrawn;
   const keptCells = sound === audioMapSource ? typedAudioMapCells() : [];
   audioMapSource = sound;
   audioMapSettings = settings;
-  audioMapDrawn = drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells });
+  audioMapDrawn = drawAudioMapMatrix({ audioPath, audioChannelFiles, embeddedPicture, keptCells });
   return audioMapDrawn;
 }
 
-async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
+async function drawAudioMapMatrix({ audioPath, audioChannelFiles, embeddedPicture, keptCells }) {
   const hint = document.getElementById("prop-audio-map-hint");
   const requestNumber = ++audioMapRequest;
   audioMapGrid.innerHTML = "";
   drawnAudioMapPanel = null;
-  if (!audioPath && !audioChannelFiles) {
-    hint.textContent = "Import a sound asset to map its channels.";
+  if (!audioPath && !audioChannelFiles && !embeddedPicture) {
+    hint.textContent = "Import a sound asset, or a video that carries sound, to map its channels.";
     return;
   }
   let panel;
@@ -1120,6 +1129,7 @@ async function drawAudioMapMatrix({ audioPath, audioChannelFiles, keptCells }) {
     panel = await invoke("probe_audio_map", {
       audioPath,
       channelFiles: audioChannelFiles,
+      embeddedSoundPicture: embeddedPicture,
       audioInputOrder: inputOrderSelect.value,
       upmix: upmixSelect.value,
     });
