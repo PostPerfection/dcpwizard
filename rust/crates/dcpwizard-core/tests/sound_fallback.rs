@@ -126,6 +126,48 @@ fn the_sources_own_audio_is_extracted_when_no_wav_is_named() {
 }
 
 #[test]
+fn a_source_with_six_mono_tracks_extracts_one_six_channel_sound() {
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("mono_tracks.mov");
+    let mut command = std::process::Command::new("ffmpeg");
+    command
+        .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i"])
+        .arg(format!("testsrc=size=320x240:rate={FPS}:duration=1"));
+    for track in 1..=6 {
+        command.args(["-f", "lavfi", "-i"]).arg(format!(
+            "sine=frequency={}:sample_rate={SAMPLE_RATE}:duration=1",
+            track * 100
+        ));
+    }
+    for input in 0..=6 {
+        command.args(["-map", &input.to_string()]);
+    }
+    let made = command
+        .args(["-c:a", "pcm_s24le"])
+        .arg(&clip)
+        .output()
+        .unwrap();
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+
+    assert_eq!(
+        dcpwizard_core::audio_fallback::embedded_channel_count(&clip).unwrap(),
+        6
+    );
+    let extracted =
+        dcpwizard_core::audio_fallback::extract_embedded_audio(&clip, &dir.path().join("work"))
+            .expect("extract the embedded audio")
+            .expect("the clip carries audio");
+    assert_eq!(
+        hound::WavReader::open(&extracted).unwrap().spec().channels,
+        6
+    );
+}
+
+#[test]
 fn a_source_without_audio_extracts_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let clip = dir.path().join("mute.mp4");

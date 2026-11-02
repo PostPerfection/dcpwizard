@@ -12,9 +12,9 @@ const BITS_PER_SAMPLE: u16 = 24;
 /// Pull the video's own audio out to a 48 kHz 24-bit WAV in `work_dir`, every
 /// channel as the source carries it. None when the source has no audio stream.
 pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<PathBuf>, String> {
-    if !crate::probe::probe_video(video).is_some_and(|info| info.has_audio) {
+    let Some(sound) = postkit::embedded_sound::embedded_sound(video)? else {
         return Ok(None);
-    }
+    };
     std::fs::create_dir_all(work_dir)
         .map_err(|e| format!("cannot create {}: {e}", work_dir.display()))?;
     let output = work_dir.join("embedded.wav");
@@ -22,8 +22,8 @@ pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<Pa
         .arg("-y")
         .arg("-i")
         .arg(video)
-        .arg("-vn")
-        .args(["-c:a", "pcm_s24le", "-ar", &SAMPLE_RATE.to_string()])
+        .args(sound.ffmpeg_arguments(&format!("aresample={SAMPLE_RATE}")))
+        .args(["-c:a", "pcm_s24le"])
         .args(["-rf64", "auto"])
         .arg(&output)
         .output()
@@ -38,50 +38,12 @@ pub fn extract_embedded_audio(video: &Path, work_dir: &Path) -> Result<Option<Pa
     Ok(Some(output))
 }
 
-const FFPROBE_DEFAULT_DISPOSITION: &str = "1";
-
-// the stream ffmpeg extracts with no map: a default one first, then the widest
 pub fn embedded_channel_count(picture: &Path) -> Result<usize, String> {
     if !picture.is_file() {
         return Ok(0);
     }
-    let output = std::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=channels:stream_disposition=default",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(picture)
-        .output()
-        .map_err(|e| format!("failed to run ffprobe on {}: {e}", picture.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "ffprobe could not read the sound in {}: {}",
-            picture.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let streams = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let (channels, default) = line.trim().split_once(',')?;
-            Some((
-                default == FFPROBE_DEFAULT_DISPOSITION,
-                channels.parse::<usize>().ok()?,
-            ))
-        })
-        .collect::<Vec<_>>();
-    // max keeps the last of equals, so the first stream wins a tie
-    Ok(streams
-        .into_iter()
-        .rev()
-        .max()
-        .map_or(0, |(_, channels)| channels))
+    Ok(postkit::embedded_sound::embedded_sound(picture)?
+        .map_or(0, |sound| usize::from(sound.channels)))
 }
 
 /// Write `frames` frames' worth of 48 kHz 24-bit silence across `channels`,

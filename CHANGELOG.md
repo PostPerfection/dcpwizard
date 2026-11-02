@@ -28,6 +28,7 @@
 - **A picture dropped on empty timeline track snaps**: it snaps to a clip edge or the playhead the way a dragged clip does.
 
 ### Fixed
+- **A video with mono sound tracks builds with all of them**: a MOV whose sound is six mono tracks gives a 6-channel sound, one channel per track in track order, where the build took one track and packaged mono. Channel mapping lists those six channels. A video whose tracks are not all mono still takes one track, a default one first, then the widest.
 - **The Linux packages run the XSD pass**: the Linux and macOS packages bundle dcpdoctor's XSDs, in `/usr/lib/DCP Wizard/schemas` on Linux. QC reports had a `schema_validation_skipped` warning on every package.
 - **The signing chain hint names what it signs**: Settings, Certificates said the chain signs encrypted DCPs and KDMs. It signs the CPL and PKL of every DCP built.
 - **Channel mapping shows all twelve lanes**: the grid puts L to Rs on a row's first line and Lc to VI on its second, so BsL and BsR are no longer off the right edge of Properties. A cell holding something other than a number of dB, such as `auto`, turns red, the text under the grid names its file and lane, and Build DCP refuses to start until it is fixed.
