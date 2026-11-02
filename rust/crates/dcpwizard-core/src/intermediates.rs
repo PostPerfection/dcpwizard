@@ -12,10 +12,9 @@ const INTERMEDIATE_DIRECTORIES: [&str; 7] = [
 ];
 
 // every scratch file a create run writes inside the output directory
-const INTERMEDIATE_FILES: [&str; 11] = [
+const INTERMEDIATE_FILES: [&str; 10] = [
     "frames.ffconcat",
     "j2k_trimmed.wav",
-    "audio_demux.wav",
     "audio_pullup.wav",
     "range_corrected.mkv",
     "hdr_to_dci_source.mov",

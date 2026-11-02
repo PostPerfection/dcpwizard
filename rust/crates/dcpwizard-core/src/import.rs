@@ -36,41 +36,45 @@ pub fn import_video(config: &ImportConfig) -> i32 {
         return frames_exit_code;
     }
 
-    // Extract audio as 24-bit 48kHz WAV
+    let sound = match postkit::embedded_sound::embedded_sound(&config.input_file) {
+        Ok(Some(sound)) => sound,
+        Ok(None) => {
+            tracing::info!("{} has no audio to extract", config.input_file.display());
+            return 0;
+        }
+        Err(error) => {
+            tracing::error!("{error}");
+            return 1;
+        }
+    };
     if let Some(parent) = config.audio_output_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-
     let audio_result = std::process::Command::new("ffmpeg")
         .arg("-y")
         .arg("-i")
         .arg(&config.input_file)
-        .arg("-vn")
-        .arg("-acodec")
-        .arg("pcm_s24le")
-        .arg("-ar")
-        .arg("48000")
-        .args(["-rf64", "auto"])
+        .args(sound.ffmpeg_arguments(&[]))
+        .args(["-acodec", "pcm_s24le", "-ar", "48000", "-rf64", "auto"])
         .arg(&config.audio_output_file)
         .output();
-
     match audio_result {
         Ok(o) if o.status.success() => {
             tracing::info!("Extracted audio to {}", config.audio_output_file.display());
+            0
         }
         Ok(o) => {
-            // Audio extraction may fail if source has no audio — treat as warning
-            tracing::warn!(
-                "ffmpeg audio extraction issue: {}",
+            tracing::error!(
+                "ffmpeg could not extract the audio: {}",
                 String::from_utf8_lossy(&o.stderr)
             );
+            1
         }
         Err(e) => {
-            tracing::warn!("Could not extract audio: {e}");
+            tracing::error!("Could not run ffmpeg to extract the audio: {e}");
+            1
         }
     }
-
-    0
 }
 
 /// Return the list of supported input video formats.

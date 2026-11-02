@@ -269,6 +269,9 @@ fn trim_audio(
     gain_factor: Option<f64>,
     dst: &Path,
 ) -> Result<bool, String> {
+    let Some(sound) = postkit::embedded_sound::embedded_sound(src)? else {
+        return Ok(false);
+    };
     let mut cmd = std::process::Command::new("ffmpeg");
     cmd.args(["-y", "-i"]).arg(src);
     if source_out > source_in {
@@ -276,17 +279,13 @@ fn trim_audio(
         let dur = (source_out - source_in) as f64 / fps as f64;
         cmd.args(["-ss", &format!("{start}"), "-t", &format!("{dur}")]);
     }
-    if let Some(filter) = volume_filter(gain_factor) {
-        cmd.args(["-af", &filter]);
-    }
-    cmd.args(["-vn", "-acodec", "pcm_s24le", "-ar", "48000"])
+    let volume = volume_filter(gain_factor);
+    cmd.args(sound.ffmpeg_arguments(volume.as_deref().as_slice()))
+        .args(["-acodec", "pcm_s24le", "-ar", "48000"])
         .args(["-rf64", "auto"])
         .arg(dst);
-    match cmd.output() {
-        Ok(o) if o.status.success() && dst.exists() => Ok(true),
-        Ok(_) => Ok(false),
-        Err(e) => Err(format!("failed to run ffmpeg: {e}")),
-    }
+    run_ffmpeg(cmd, "the audio trim")?;
+    Ok(true)
 }
 
 fn run_ffmpeg(mut cmd: std::process::Command, what: &str) -> Result<(), String> {

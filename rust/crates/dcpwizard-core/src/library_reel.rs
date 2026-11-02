@@ -395,29 +395,39 @@ fn build_item_sound(
 
     // one pan lands the item's channels on the job's lanes and leaves the rest
     // silent, whatever either count is
-    let source_channels = item
-        .item
-        .has_audio
-        .then(|| source_audio_channels(&item.media))
-        .transpose()?
-        .unwrap_or(0);
+    let item_sound = if item.item.has_audio {
+        postkit::embedded_sound::embedded_sound(&item.media)?
+    } else {
+        None
+    };
+    let source_channels = item_sound
+        .as_ref()
+        .map_or(0, |item_sound| u32::from(item_sound.channels));
     let carried = source_channels.min(sound.channels);
     let mut lanes = vec![format!("pan={}c", sound.channels)];
     lanes.extend((0..carried).map(|c| format!("c{c}=c{c}")));
+    let pan = lanes.join("|");
 
     let mut command = std::process::Command::new("ffmpeg");
     command.arg("-y");
-    if carried == 0 {
-        let seconds = frames as f64 / fps.max(1) as f64;
-        command
-            .args(["-f", "lavfi", "-i"])
-            .arg(format!("anullsrc=r={}:cl=mono", sound.sample_rate))
-            .args(["-t", &format!("{seconds}")]);
-    } else {
-        command.arg("-i").arg(&item.media);
+    match &item_sound {
+        None => {
+            let seconds = frames as f64 / fps.max(1) as f64;
+            command
+                .args(["-f", "lavfi", "-i"])
+                .arg(format!("anullsrc=r={}:cl=mono", sound.sample_rate))
+                .args(["-t", &format!("{seconds}")])
+                .args(["-af", &pan]);
+        }
+        Some(item_sound) => {
+            command
+                .arg("-i")
+                .arg(&item.media)
+                .args(item_sound.ffmpeg_arguments(&[&pan]));
+        }
     }
     command
-        .args(["-vn", "-af", &lanes.join("|"), "-ar"])
+        .arg("-ar")
         .arg(sound.sample_rate.to_string())
         .args(["-c:a", codec, "-rf64", "auto"])
         .arg(&raw);
@@ -448,27 +458,6 @@ fn build_item_sound(
     crate::reel::write_reel_wav(&raw, &info, 0, samples, out)?;
     let _ = std::fs::remove_file(&raw);
     Ok(())
-}
-
-/// Channels the source's first audio stream carries. Zero for a source ffprobe
-/// finds no audio stream in.
-fn source_audio_channels(path: &Path) -> Result<u32, String> {
-    let output = std::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "quiet",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=channels",
-            "-of",
-            "csv=p=0",
-        ])
-        .arg(path)
-        .output()
-        .map_err(|e| format!("cannot run ffprobe on {}: {e}", path.display()))?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.trim().parse::<u32>().unwrap_or(0))
 }
 
 /// The sound the item reels have to match, read off the feature's packaged WAV.

@@ -183,3 +183,56 @@ fn create_packages_every_source_container_the_readme_names() {
         );
     }
 }
+
+#[test]
+fn create_packages_the_mono_tracks_of_a_video_as_one_five_one_sound() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let source = directory.path().join("mono_tracks.mov");
+    let seconds = FRAMES as f64 / f64::from(FRAME_RATE);
+    let mut make = std::process::Command::new("ffmpeg");
+    make.args(["-y", "-v", "error", "-f", "lavfi", "-i"])
+        .arg(format!(
+            "testsrc=size={WIDTH}x{HEIGHT}:rate={FRAME_RATE}:duration={seconds}"
+        ));
+    for track in 1..=6 {
+        make.args(["-f", "lavfi", "-i"]).arg(format!(
+            "sine=frequency={}:sample_rate=48000:duration={seconds}",
+            track * 100
+        ));
+    }
+    for input in 0..=6 {
+        make.args(["-map", &input.to_string()]);
+    }
+    let made = make
+        .args(["-c:a", "pcm_s24le"])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+
+    let out = directory.path().join("dcp");
+    Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .args([
+            "create",
+            "--title",
+            "Mono",
+            "--video",
+            source.to_str().unwrap(),
+        ])
+        .args(["-o", out.to_str().unwrap(), "--twok"])
+        .assert()
+        .success();
+
+    let cpl = std::fs::read_to_string(only_file_starting_with(&out.join("Mono"), "CPL_")).unwrap();
+    assert!(
+        cpl.contains("MainSoundConfiguration>51/L,R,C,LFE,Ls,Rs,"),
+        "six mono tracks must package as 5.1: {cpl}"
+    );
+}

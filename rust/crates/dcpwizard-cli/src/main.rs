@@ -3943,18 +3943,14 @@ fn trailer_to_dcp(
     }
 
     // demux audio if the packaged trailer carries any (card/leader are silent)
-    let audio_path = {
-        let wav = output_dir.join("audio_demux.wav");
-        let demux = std::process::Command::new("ffmpeg")
-            .args(["-y", "-i"])
-            .arg(mp4)
-            .args(["-vn", "-acodec", "pcm_s24le", "-ar", "48000"])
-            .args(["-rf64", "auto"])
-            .arg(&wav)
-            .output();
-        match demux {
-            Ok(o) if o.status.success() => Some(wav),
-            _ => None,
+    let audio_path = match dcpwizard_core::audio_fallback::extract_embedded_audio(
+        mp4,
+        &output_dir.join("audio_work"),
+    ) {
+        Ok(sound) => sound,
+        Err(error) => {
+            tracing::error!("{error}");
+            return 1;
         }
     };
 
@@ -5646,32 +5642,16 @@ fn run() {
                 } else if silent_clip {
                     None
                 } else {
-                    let wav_out = output_dir.join("audio_demux.wav");
-                    let demux = std::process::Command::new("ffmpeg")
-                        .arg("-y")
-                        .arg("-i")
-                        .arg(&video_path)
-                        .arg("-vn")
-                        .arg("-acodec")
-                        .arg("pcm_s24le")
-                        .arg("-ar")
-                        .arg("48000")
-                        .args(["-rf64", "auto"])
-                        .arg(&wav_out)
-                        .output();
-                    match demux {
-                        Ok(o) if o.status.success() => {
-                            tracing::info!("Demuxed audio: {}", wav_out.display());
-                            Some(wav_out)
-                        }
-                        Ok(_) => {
-                            tracing::warn!("No audio stream found in input (or demux failed)");
+                    match dcpwizard_core::audio_fallback::extract_embedded_audio(
+                        &video_path,
+                        &output_dir.join("audio_work"),
+                    ) {
+                        Ok(None) => {
+                            tracing::warn!("No audio stream found in input");
                             None
                         }
-                        Err(e) => {
-                            tracing::warn!("ffmpeg not available for audio demux: {e}");
-                            None
-                        }
+                        Ok(sound) => sound,
+                        Err(error) => exit_failed(error),
                     }
                 };
                 // W5 audio processing: filename channel routing (a --audio
@@ -6426,31 +6406,18 @@ fn run() {
             let audio_path = if let Some(a) = audio {
                 Some(PathBuf::from(a))
             } else {
-                let wav_out = output_dir.join("audio_demux.wav");
-                let demux = std::process::Command::new("ffmpeg")
-                    .arg("-y")
-                    .arg("-i")
-                    .arg(&input_path)
-                    .arg("-vn")
-                    .arg("-acodec")
-                    .arg("pcm_s24le")
-                    .arg("-ar")
-                    .arg("48000")
-                    .args(["-rf64", "auto"])
-                    .arg(&wav_out)
-                    .output();
-                match demux {
-                    Ok(o) if o.status.success() => {
-                        tracing::info!("Demuxed audio: {}", wav_out.display());
-                        Some(wav_out)
-                    }
-                    Ok(_) => {
-                        tracing::warn!("No audio stream in input (or demux failed)");
+                match dcpwizard_core::audio_fallback::extract_embedded_audio(
+                    &input_path,
+                    &output_dir.join("audio_work"),
+                ) {
+                    Ok(None) => {
+                        tracing::warn!("No audio stream in input");
                         None
                     }
-                    Err(e) => {
-                        tracing::warn!("ffmpeg not available for audio demux: {e}");
-                        None
+                    Ok(sound) => sound,
+                    Err(error) => {
+                        tracing::error!("{error}");
+                        std::process::exit(1);
                     }
                 }
             };
