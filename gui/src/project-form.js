@@ -91,6 +91,7 @@ export const PROJECT_FILE_MIGRATIONS = { 2: withoutChannelDirectory, 3: reelsInt
 // [form key, control id, control property], keyed like the submit_job payload
 export const FORM_CONTROLS = [
   ["title", "prop-title", VALUE],
+  ["isdcfNaming", "prop-isdcf-naming", CHECKED],
   ["outputDir", "prop-output", VALUE],
   ["validate", "prop-validate", CHECKED],
   ["standard", "prop-standard", VALUE],
@@ -197,6 +198,7 @@ export const OUTPUT_FIELDS = ["keyOut"];
 // form keys that belong to one title, which a saved preset leaves out
 export const PROJECT_ONLY_FORM_KEYS = [
   "title",
+  "isdcfNaming",
   "outputDir",
   "keyOut",
   "rightEye",

@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { initPreview, loadKeepingTransport, previewSeekOnceLoaded, previewDcp, previewFile, previewTimeline, watchPreviewTimelinePosition, previewNeedsContentKeys, coverPreviewSurface, uncoverPreviewSurface, PREVIEW_SHORTCUTS, isPreviewVisible, stopPreview, setPreviewCrop, setPreviewSubtitleFile, setPreviewCaptionFile, watchPreviewShown, setPreviewPictureFilters, setPreviewContentOutline, previewTakesPictureFilters } from "../../extern/guikit/src/preview.js";
 import { previewTarget, previewButtonEnabled, sourcePreviewTarget, PREVIEW_KIND_SOURCE } from "../../extern/guikit/src/preview-target.js";
 import { verifyTarget } from "./verify-target.js";
@@ -48,7 +49,7 @@ import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
 import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
-import { initProjects, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
+import { initProjects, readProjectFile, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from "./channel-set.js";
 import { initLoudnessPanel, optionalNumber } from "../../extern/guikit/src/loudness-panel.js";
@@ -1783,7 +1784,7 @@ function namingMetadata() {
     redBand: document.getElementById("prop-red-band")?.checked || false,
     twoDVersionOfThreeD: document.getElementById("prop-two-d-version-of-three-d")?.checked || false,
     versionFile: document.getElementById("prop-version-file")?.checked || false,
-    isdcfNaming: getPrefs().isdcfNaming || false,
+    isdcfNaming: document.getElementById("prop-isdcf-naming").checked,
   };
 }
 
@@ -1843,7 +1844,7 @@ async function refreshPackageNamePreview() {
   const folderPreview = document.getElementById("prop-output-folder-preview");
   if (!isdcfPreview || !folderHint || !folderPreview) return;
   const request = isdcfNameRequest();
-  isdcfPreview.hidden = !request.naming.isdcfNaming || !request.title;
+  document.getElementById("prop-isdcf-name").hidden = !request.naming.isdcfNaming || !request.title;
   folderHint.hidden = Boolean(request.title);
   folderPreview.hidden = !request.title;
   if (!request.title) return;
@@ -1858,7 +1859,7 @@ async function refreshPackageNamePreview() {
 }
 
 const PACKAGE_NAME_PREVIEW_CONTROLS = [
-  "prop-title", "prop-content-kind", "prop-standard", "prop-resolution", "prop-framerate",
+  "prop-title", "prop-isdcf-naming", "prop-content-kind", "prop-standard", "prop-resolution", "prop-framerate",
   "prop-subtitle-language", "prop-subtitles-burnt-in", "prop-ccap-language", "prop-audio-language", "prop-studio",
   "prop-territory-type", "prop-content-versions", "prop-temp-version", "prop-pre-release",
   "prop-red-band", "prop-two-d-version-of-three-d", "prop-version-file",
@@ -1869,6 +1870,24 @@ const PACKAGE_NAME_PREVIEW_CONTROLS = [
 for (const id of PACKAGE_NAME_PREVIEW_CONTROLS) {
   document.getElementById(id)?.addEventListener("input", refreshPackageNamePreview);
 }
+
+document.getElementById("prop-copy-isdcf-name").addEventListener("click", async () => {
+  let name;
+  try {
+    name = await invoke("package_name_preview", { request: isdcfNameRequest() });
+  } catch (e) {
+    tauriMessage(String(e), { title: "Copy as title failed", kind: "error" });
+    return;
+  }
+  document.getElementById("prop-isdcf-naming").checked = false;
+  setProjectTitle(name.title);
+});
+
+document.getElementById("prop-isdcf-naming").addEventListener("change", (e) => {
+  if (!e.target.checked) return;
+  const title = document.getElementById("prop-title").value;
+  setProjectTitle(title.split("_")[0]);
+});
 
 renderRatings();
 
@@ -3472,7 +3491,8 @@ async function restoreBuildPanel(saved, projectPath) {
 }
 
 async function retitleRecentPackage(packagePath, projectPath) {
-  const isdcfNaming = getPrefs().isdcfNaming || false;
+  const { form } = readProjectFile(await readTextFile(projectPath), "dcpwizard", PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS);
+  const { isdcfNaming } = { ...buildPanelDefaults, ...form };
   const folderName = packagePath.split(/[/\\]/).pop();
   // retitle_dcp rebuilds the ISDCF name around a new title part
   const title = await askForText({
@@ -3868,12 +3888,9 @@ renderAssets();
 showActiveTimeline();
 const buildPanelDefaults = serializeBuildPanel();
 
-function preferredProjectControls() {
-  return PREFERRED_PROJECT_CONTROLS.map(([key, id]) => [key, document.getElementById(id)]);
-}
-
 function takeProjectDefaultsFromPreferences() {
-  const optionValues = preferredProjectControls()
+  const optionValues = PREFERRED_PROJECT_CONTROLS
+    .map(([key, id]) => [key, document.getElementById(id)])
     .filter(([, control]) => control.options)
     .map(([key, control]) => [key, [...control.options].map((option) => option.value)]);
   const preferredDefaults = projectDefaultsFromPreferences(getPrefs(), Object.fromEntries(optionValues));
@@ -3887,8 +3904,10 @@ function showProjectTimeline() {
 }
 
 preferencesLoaded.then(() => {
-  const controls = Object.fromEntries(preferredProjectControls());
-  for (const [key, value] of Object.entries(takeProjectDefaultsFromPreferences())) controls[key].value = value;
+  const preferredDefaults = takeProjectDefaultsFromPreferences();
+  for (const [key, id, property] of PREFERRED_PROJECT_CONTROLS) {
+    if (key in preferredDefaults) document.getElementById(id)[property] = preferredDefaults[key];
+  }
   initProjects({
     wizard: "dcpwizard",
     projectFileVersion: PROJECT_FILE_VERSION,

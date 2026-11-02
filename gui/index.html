@@ -184,7 +184,13 @@
                   <div class="prop-field">
                     <label for="prop-title">Title</label>
                     <input id="prop-title" type="text" placeholder="Title of the DCP">
-                    <p class="field-hint" id="prop-isdcf-preview" hidden></p>
+                  </div>
+                  <div class="prop-field">
+                    <label><input type="checkbox" id="prop-isdcf-naming"> Use ISDCF name</label>
+                    <div id="prop-isdcf-name" hidden>
+                      <p class="field-hint" id="prop-isdcf-preview"></p>
+                      <button id="prop-copy-isdcf-name" class="btn-sm" data-key="y">Copy as title</button>
+                    </div>
                   </div>
                   <div class="prop-field">
                     <label for="prop-content-kind">Content Kind</label>
@@ -1675,7 +1681,7 @@
                   <input type="text" id="set-output-dir" placeholder="/path/to/output">
                 </div>
                 <div class="prop-field">
-                  <label><input type="checkbox" id="set-isdcf-naming"> Name DCPs by the ISDCF convention</label>
+                  <label><input type="checkbox" id="set-isdcf-naming"> New projects use ISDCF names</label>
                 </div>
                 <div class="prop-field">
                   <label><input type="checkbox" id="set-show-hints" checked> Show hints before building</label>

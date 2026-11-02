@@ -18,15 +18,21 @@ const PROPERTIES_OPTIONS = Object.fromEntries(
     .filter(([, values]) => values),
 );
 
-const SAVED = { standard: "Interop", resolution: "2k-flat", framerate: 25, bandwidth: 180 };
+const SAVED = { isdcfNaming: true, standard: "Interop", resolution: "2k-flat", framerate: 25, bandwidth: 180 };
 
-test("the four Properties controls a new project takes from Settings", () => {
+test("the five Properties controls a new project takes from Settings", () => {
   assert.deepEqual(PREFERRED_PROJECT_CONTROLS, [
-    ["standard", "prop-standard"],
-    ["resolution", "prop-resolution"],
-    ["framerate", "prop-framerate"],
-    ["bandwidth", "prop-bandwidth"],
+    ["isdcfNaming", "prop-isdcf-naming", "checked"],
+    ["standard", "prop-standard", "value"],
+    ["resolution", "prop-resolution", "value"],
+    ["framerate", "prop-framerate", "value"],
+    ["bandwidth", "prop-bandwidth", "value"],
   ]);
+});
+
+test("the saved ISDCF naming setting ticks the checkbox as a boolean", () => {
+  assert.equal(projectDefaultsFromPreferences(SAVED, PROPERTIES_OPTIONS).isdcfNaming, true);
+  assert.equal(projectDefaultsFromPreferences({ ...SAVED, isdcfNaming: false }, PROPERTIES_OPTIONS).isdcfNaming, false);
 });
 
 test("the saved standard maps onto the Properties option spelled in lowercase", () => {

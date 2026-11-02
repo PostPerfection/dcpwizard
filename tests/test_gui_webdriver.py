@@ -953,6 +953,78 @@ def test_a_marker_row_offers_the_ten_labels_and_takes_a_position(window):
     assert session.property(MARKER_FROM_PLAYER_BUTTON, "title") == NO_PICTURE_FOR_MARKER
 
 
+ISDCF_NAMING_BOX = "#prop-isdcf-naming"
+ISDCF_NAME_ROW = "#prop-isdcf-name"
+ISDCF_NAME_HINT = "#prop-isdcf-preview"
+ISDCF_NAME_PREFIX = "ISDCF name: "
+SHORT_TITLE = "MRK"
+SHORT_TITLE_IN_ISDCF_NAME = "Mrk_"
+OUTPUT_FOLDER_PREVIEW = "#prop-output-folder-preview"
+
+
+def isdcf_name_shown(session):
+    hint = session.property(ISDCF_NAME_HINT, "textContent")
+    if not hint.startswith(ISDCF_NAME_PREFIX + SHORT_TITLE_IN_ISDCF_NAME):
+        return None
+    return hint.removeprefix(ISDCF_NAME_PREFIX)
+
+
+def test_an_isdcf_name_copied_as_the_title_names_the_folder_as_edited(window, tmp_path):
+    session = window.session
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    window.press("ctrl+9")
+    wait_for_view(session, "view-settings")
+    window.click("#set-isdcf-naming")
+    window.click("#settings-form button[type='submit']")
+    wait_for_status(session, "Settings saved", STATUS_TIMEOUT_SECONDS)
+    window.press(PROJECT_CHORD)
+    wait_for_view(session, PROJECT_VIEW)
+
+    project_path = tmp_path / f"{PROJECT_TITLE}.{PROJECT_WIZARD}"
+    save_in_dialog_by_chord(window, NEW_PROJECT_CHORD, project_path)
+    wait_for_status(session, f"Saved {project_path}", REACTION_TIMEOUT_SECONDS)
+    assert session.property(ISDCF_NAMING_BOX, "checked") is True
+
+    type_into_field(window, "#prop-title", SHORT_TITLE)
+    isdcf_name = wait_until(
+        "the ISDCF name was never shown",
+        lambda: isdcf_name_shown(session),
+        REACTION_TIMEOUT_SECONDS,
+    )
+    window.click("#prop-copy-isdcf-name")
+    wait_until(
+        "the ISDCF name never became the title",
+        lambda: session.property("#prop-title", "value") == isdcf_name,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    assert session.property(ISDCF_NAMING_BOX, "checked") is False
+    assert session.property(ISDCF_NAME_ROW, "hidden") is True
+
+    edited_name = SHORT_TITLE + isdcf_name.removeprefix(SHORT_TITLE_IN_ISDCF_NAME[:-1])
+    type_into_field(window, "#prop-title", edited_name)
+    wait_until(
+        "the folder never took the edited name",
+        lambda: session.property(OUTPUT_FOLDER_PREVIEW, "textContent").endswith(f": {edited_name}"),
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+    window.click(ISDCF_NAMING_BOX)
+    wait_until(
+        "ticking ISDCF naming again never cut the title back",
+        lambda: session.property("#prop-title", "value") == SHORT_TITLE,
+        REACTION_TIMEOUT_SECONDS,
+    )
+    wait_until(
+        "the ISDCF name was never shown again",
+        lambda: isdcf_name_shown(session),
+        REACTION_TIMEOUT_SECONDS,
+    )
+
+
 def fill_composition_metadata(window):
     for field, _, value, _ in COMPOSITION_METADATA:
         window.click(field)
