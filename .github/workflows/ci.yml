@@ -21,6 +21,9 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
+    env:
+      # test binaries with full debug info fill the ubuntu runner disk while linking
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
     steps:
       - name: Enable long paths (Windows)
