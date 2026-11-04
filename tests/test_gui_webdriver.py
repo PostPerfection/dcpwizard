@@ -819,7 +819,7 @@ def test_the_reels_view_lists_the_reels_and_follows_playback(window, two_reel_dc
 
 
 # the success path needs grok's plugin and a licence, hand tested
-def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window, tmp_path):
+def test_saving_the_gpu_setting_reports_the_missing_plugin_and_keeps_the_setting(window, tmp_path):
     session = window.session
     window.press("ctrl+9")
     wait_for_view(session, "view-settings")
@@ -833,7 +833,8 @@ def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window,
         STATUS_TIMEOUT_SECONDS,
     )
     assert GPU_UNAVAILABLE_PREFIX in status
-    assert session.property("#set-gpu", "checked") is False
+    assert session.property("#set-gpu", "checked") is True
+    assert session.property("#set-gpu-failure", "hidden") is False
 
     preferences_file = (
         tmp_path
@@ -845,7 +846,7 @@ def test_saving_the_gpu_setting_reports_the_missing_plugin_and_stays_off(window,
         preferences_file.is_file,
         STATUS_TIMEOUT_SECONDS,
     )
-    assert json.loads(preferences_file.read_text())["gpu"] is False
+    assert json.loads(preferences_file.read_text())["gpu"] is True
 
 
 def field_classes(session, css):

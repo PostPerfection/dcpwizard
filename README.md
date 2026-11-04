@@ -392,7 +392,7 @@ Release binary: `gui/src-tauri/target/release/dcpwizard-gui`.
 
 `xvfb-run -a --server-args="-screen 0 2560x1920x24" uv run --no-project --with pytest --with python-xlib python tests/manual_screenshots.py` rewrites the manual's five screenshots in `docs/manual/` from the release binary, with the same tools the webdriver suite in `tests/` needs. Shot names such as `sound.png` after the script name retake only those.
 
-**Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI from a source build, launched without `GRK_PLUGIN_PATH`, finds no plugin, reports `GPU encoding unavailable` and turns the GPU setting off. The GPU rpm and deb set it themselves to `/usr/lib/dcpwizard`. On Metal the same directory must also contain `grok_kernels.metallib`.
+**Running with the GPU plugin.** Needs the commercial Grok accelerator plugin, see [GPU builds](#gpu-builds). grok looks for `libgrokj2k_plugin` in the directory `GRK_PLUGIN_PATH` names, then in the working directory, then in the executable's own directory, and never on `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, or `PATH`. A GUI from a source build, launched without `GRK_PLUGIN_PATH`, finds no plugin, reports `GPU encoding unavailable` with the reason and encodes on the CPU. The GPU rpm and deb set it themselves to `/usr/lib/dcpwizard`. On Metal the same directory must also contain `grok_kernels.metallib`.
 
 ```bash
 # rebuilds the GUI against that grok and launches it with the plugin on the
@@ -431,7 +431,7 @@ dcpwizard --gpu create \
   --twok --frame-rate 24 --content-type FTR
 ```
 
-**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin is missing it reads `GPU encoding unavailable` and the checkbox turns off. The *Encode threads* field below it is stored as `"encodeThreads"` and sets the encoder threads for the GUI and the CLI, and the same count sizes the accelerator plugin's host threads. An empty field saves 0, which runs one thread per available CPU.
+**GPU preview (GUI).** Settings → *Encode on the GPU (grok accelerator plugin)*. The checkbox is stored as `"gpu": true` in `preferences.json` (`~/Library/Application Support/dcpwizard/` on macOS, `~/.config/dcpwizard/` on Linux). The status bar reads `Settings saved`. If the plugin cannot start, a dialog, the status bar and a line under the checkbox give the reason, for example a rejected licence, and every encode runs on the CPU. The checkbox stays on and the plugin is tried again at the next launch or save. Each job log prints the reason as `Accelerator: requested, inactive: <reason>`. The *Encode threads* field below it is stored as `"encodeThreads"` and sets the encoder threads for the GUI and the CLI, and the same count sizes the accelerator plugin's host threads. An empty field saves 0, which runs one thread per available CPU.
 
 Then **Open DCP** (Ctrl+Shift+O) a DCP directory, picture MXF, or CPL, and play. JPEG 2000 plays in-process through grok (not mpv). A device batch prints on stderr:
 

@@ -308,3 +308,7 @@
   margin-bottom: 8px;
 }
 
+.gpu-failure {
+  margin: 4px 0 0;
+  color: #ef4444;
+}

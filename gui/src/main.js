@@ -48,7 +48,7 @@ import { SHARED_BINDINGS, THEME_SHORTCUT, POST_BUILD_SHORTCUTS, sidebarViewShort
 import { askForText } from "../../extern/guikit/src/text-dialog.js";
 import { loadComponentVersions } from "../../extern/guikit/src/component-versions.js";
 import { documentsOrHomeDir } from "../../extern/guikit/src/folders.js";
-import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, uncheckGpu, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
+import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, applyGpuSetting } from "../../extern/guikit/src/gpu-settings.js";
 import { initProjects, readProjectFile, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from "./channel-set.js";
@@ -370,10 +370,15 @@ function loadSettings() {
 
 async function applyGpuPreference(prefs) {
   const gpuFailure = await applyGpuSetting(prefs, prefs.encodeThreads);
+  const failureNotice = document.getElementById("set-gpu-failure");
+  failureNotice.textContent = gpuFailure ? `Encoding runs on the CPU until this is fixed: ${gpuFailure}` : "";
+  failureNotice.hidden = !gpuFailure;
   if (!gpuFailure) return true;
   setStatus(`GPU encoding unavailable: ${gpuFailure}`);
-  uncheckGpu();
-  await savePrefs({ ...getPrefs(), gpu: false });
+  tauriMessage(`${gpuFailure}\n\nEncoding runs on the CPU until this is fixed. Each job log records this reason on its Accelerator line.`, {
+    title: "GPU encoding unavailable",
+    kind: "error",
+  });
   return false;
 }
 
@@ -432,12 +437,12 @@ document.getElementById("settings-form")?.addEventListener("submit", async (e) =
     encodeThreads:
       parseInt(document.getElementById("set-encode-threads")?.value) || AUTOMATIC_ENCODE_THREADS,
   };
-  if (!await applyGpuPreference(prefs)) return;
+  const gpuApplied = await applyGpuPreference(prefs);
   if (!await savePrefs(prefs)) return;
   takeProjectDefaultsFromPreferences();
   refreshSignerLine();
   refreshPackageNamePreview();
-  setStatus("Settings saved");
+  if (gpuApplied) setStatus("Settings saved");
 });
 
 document.getElementById("set-reset")?.addEventListener("click", async () => {
