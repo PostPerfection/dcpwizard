@@ -9,6 +9,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -18,13 +19,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const JOB_TIMEOUT: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+// linux can give a just released port to the next bind on port 0
+static PORT_PICK_UNTIL_LISTENING: Mutex<()> = Mutex::new(());
+
 const FPS: u32 = 24;
 const WIDTH: u32 = 2048;
 const HEIGHT: u32 = 1080;
 const FRAMES: usize = 24;
 
-/// A port the OS handed out and nothing holds any more. Two harnesses racing for
-/// the same number is possible but has not been seen.
+/// A port the OS handed out and nothing holds any more.
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -57,6 +60,7 @@ impl Drop for Harness {
 
 impl Harness {
     fn start(api_key: Option<&str>, with_daemon: bool) -> Self {
+        let _port_pick = PORT_PICK_UNTIL_LISTENING.lock().unwrap();
         let directory = TempDir::new().unwrap();
         let daemon_address = format!("127.0.0.1:{}", free_port());
         let api = format!("127.0.0.1:{}", free_port())
@@ -392,6 +396,7 @@ fn a_posted_config_builds_a_dcp_the_verify_route_then_passes() {
 
 #[test]
 fn serve_answers_health_on_the_address_it_was_given() {
+    let port_pick = PORT_PICK_UNTIL_LISTENING.lock().unwrap();
     let bind = format!("127.0.0.1:{}", free_port());
     let directory = TempDir::new().unwrap();
     let mut child = Command::new(binary())
@@ -403,6 +408,7 @@ fn serve_answers_health_on_the_address_it_was_given() {
 
     let address: SocketAddr = bind.parse().unwrap();
     wait_until(|| health_is_ok(address), "serve to answer /health");
+    drop(port_pick);
     assert!(
         send(
             address,
