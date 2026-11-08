@@ -1,4 +1,5 @@
-FROM registry.fedoraproject.org/fedora:42
+ARG FEDORA_VERSION
+FROM registry.fedoraproject.org/fedora:$FEDORA_VERSION
 
 ARG NODE_VERSION=24.21.0
 ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
@@ -27,6 +28,7 @@ RUN dnf install -y \
         patchelf \
         libtiff-devel \
         libcurl-devel \
+        python3-cryptography \
         binutils \
         git \
         curl \
@@ -40,6 +42,7 @@ RUN dnf config-manager addrepo --from-repofile="$CUDA_REPOSITORY" \
     && dnf install -y \
         "cuda-nvcc-$CUDA_PACKAGE_SUFFIX" \
         "cuda-cudart-devel-$CUDA_PACKAGE_SUFFIX" \
+        "cuda-driver-devel-$CUDA_PACKAGE_SUFFIX" \
         "cuda-cuobjdump-$CUDA_PACKAGE_SUFFIX" \
     && dnf clean all
 

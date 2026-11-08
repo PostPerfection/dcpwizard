@@ -7,7 +7,18 @@ GROK_SOURCE="${1:-}"
 CUDA_ARCH="${2:-}"
 
 if [[ -z "$GROK_SOURCE" || ! "$CUDA_ARCH" =~ ^[0-9]+$ ]]; then
-    echo "usage: $0 /path/to/grok/source <cuda arch, for example 86>" >&2
+    echo "usage: [FEDORA_VERSION=43] [RPM_RELEASE_NUMBER=1] GPUP_KERNEL_KEY_FILE=<hex key file> $0 /path/to/grok/source <cuda arch, for example 86>" >&2
+    exit 2
+fi
+
+if [[ ! -f "${GPUP_KERNEL_KEY_FILE:-}" ]]; then
+    echo "set GPUP_KERNEL_KEY_FILE to the file holding the key the plugin's encode kernels are encrypted with" >&2
+    exit 2
+fi
+
+FEDORA_VERSION="${FEDORA_VERSION:-42}"
+if [[ ! "$FEDORA_VERSION" =~ ^4[23]$ ]]; then
+    echo "no CUDA repository for Fedora $FEDORA_VERSION, use 42 or 43" >&2
     exit 2
 fi
 
@@ -17,20 +28,20 @@ if [[ ! -f "$GROK_SOURCE/extern/grok-gpu-plugin/CMakeLists.txt" ]]; then
     exit 1
 fi
 
-IMAGE=postperfection-fedora42-build
-FEDORA_IMAGE=registry.fedoraproject.org/fedora:42
-CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/fedora42"
+IMAGE="postperfection-fedora$FEDORA_VERSION-build"
+FEDORA_IMAGE="registry.fedoraproject.org/fedora:$FEDORA_VERSION"
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/postperfection/fedora$FEDORA_VERSION"
 GROK_BUILD="$CACHE_ROOT/grok-build-sm$CUDA_ARCH"
 GROK_INSTALL="$CACHE_ROOT/grok-install-sm$CUDA_ARCH"
 CARGO_CACHE="$CACHE_ROOT/cargo"
 PNPM_STORE="$CACHE_ROOT/pnpm-store"
 WORK="$CACHE_ROOT/work-dcpwizard"
 OUTPUT_DIRECTORY="$ROOT/gui/src-tauri/target/release/bundle/rpm"
-RPM_RELEASE="1.sm$CUDA_ARCH.fc42"
+RPM_RELEASE="${RPM_RELEASE_NUMBER:-1}.sm$CUDA_ARCH.fc$FEDORA_VERSION"
 
 mkdir -p "$GROK_BUILD" "$GROK_INSTALL" "$CARGO_CACHE" "$PNPM_STORE" "$WORK" "$OUTPUT_DIRECTORY"
 
-podman build --tag "$IMAGE" --file "$ROOT/scripts/fedora-rpm.Containerfile" "$ROOT/scripts"
+podman build --tag "$IMAGE" --build-arg FEDORA_VERSION="$FEDORA_VERSION" --file "$ROOT/scripts/fedora-rpm.Containerfile" "$ROOT/scripts"
 
 # :z would relabel every file in the grok and wizard trees for selinux
 run_in_image() {
@@ -42,6 +53,7 @@ run_in_image \
     -v "$GROK_SOURCE:/grok:ro" \
     -v "$GROK_BUILD:/grok-build" \
     -v "$GROK_INSTALL:/grok-install" \
+    -v "$GPUP_KERNEL_KEY_FILE:/kernel-key.hex:ro" \
     "$IMAGE" bash -euo pipefail <<'EOF'
 cmake -S /grok -B /grok-build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
@@ -52,6 +64,8 @@ cmake -S /grok -B /grok-build -G Ninja \
     -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCH" \
     -DGPUP_ENABLE_AUTH=ON \
     -DGPUP_USE_LEGACY_AUTH=OFF \
+    -DGPUP_ALLOW_DEV_LICENSE_KEY=OFF \
+    -DGPUP_KERNEL_KEY_FILE=/kernel-key.hex \
     -DGRK_BUILD_CORE_SWIG_BINDINGS=OFF \
     -DGRK_BUILD_JPEG=OFF
 cmake --build /grok-build
@@ -151,4 +165,4 @@ fi
 
 GRK_PLUGIN_PATH=/usr/lib/dcpwizard dcpwizard --version
 EOF
-echo "rpm installs on fedora:42"
+echo "rpm installs on fedora:$FEDORA_VERSION"

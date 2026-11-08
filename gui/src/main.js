@@ -3290,7 +3290,7 @@ async function refreshDiskSpace() {
   }
   const percent = Math.round(space.percent_free);
   el.textContent = `💾 ${percent}%`;
-  el.title = `${formatBytes(space.free_bytes)} free of ${formatBytes(space.total_bytes)} on ${path}`;
+  el.title = `Free disk space on the drive of the output folder ${path}: ${formatBytes(space.free_bytes)} free of ${formatBytes(space.total_bytes)}`;
   el.style.color = percent <= DISK_LOW_PERCENT ? "#ff6b6b" : "";
 }
 
