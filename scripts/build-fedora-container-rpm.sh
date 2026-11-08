@@ -152,7 +152,8 @@ if [[ "$(ldd /usr/bin/dcpwizard-gui | grep -c "not found" || true)" != 0 ]]; the
     exit 1
 fi
 
-if ldd /usr/lib/dcpwizard/libgrokj2k_plugin.so | grep "not found"; then
+# libcuda.so.1 comes with the NVIDIA driver, not with the package
+if ldd /usr/lib/dcpwizard/libgrokj2k_plugin.so | grep "not found" | grep -v "libcuda.so.1"; then
     echo "libgrokj2k_plugin.so has an unresolved library" >&2
     exit 1
 fi
