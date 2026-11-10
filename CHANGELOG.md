@@ -29,6 +29,7 @@
 - **A picture dropped on empty timeline track snaps**: it snaps to a clip edge or the playhead the way a dragged clip does.
 
 ### Fixed
+- **The job log counts each GPU-encoded frame once**: the `Frames on the device` line showed twice the frames the GPU encoded, such as 48 of 24.
 - **Playback at Full shows the picture when the GPU stops returning frames**: with GPU encoding on, a Full decode that gets no frame back from the GPU for two seconds switches to the CPU, and playback stays on the CPU until the app restarts. Before, the picture stayed black while the sound played. The terminal log names the GPU's error on a `grok:` line.
 - **A video with mono sound tracks builds with all of them**: a MOV whose sound is six mono tracks gives a 6-channel sound, one channel per track in track order, where the build took one track and packaged mono. Channel mapping lists those six channels. A video whose tracks are not all mono still takes one track, a default one first, then the widest. The CLI's `create` and trailer packaging, `import`, `conform` and library reels take a video's sound the same way, and an extraction ffmpeg fails on stops the run where it went on with no sound.
 - **The Linux packages run the XSD pass**: the Linux and macOS packages bundle dcpdoctor's XSDs, in `/usr/lib/DCP Wizard/schemas` on Linux. QC reports had a `schema_validation_skipped` warning on every package.
