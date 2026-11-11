@@ -7060,10 +7060,10 @@ fn run() {
 
                     let Some(message) = failure else {
                         let done = watch_dir.join(DONE_DIRECTORY_NAME);
-                        move_aside(master, &done);
                         for sidecar in sidecars {
                             move_aside(sidecar, &done);
                         }
+                        move_aside(master, &done);
                         tracing::info!("built {} in {elapsed_seconds:.1} s", package_dir.display());
                         post_event(
                             webhook.as_ref(),
@@ -7079,10 +7079,10 @@ fn run() {
                     };
 
                     let failed = watch_dir.join(FAILED_DIRECTORY_NAME);
-                    move_aside(master, &failed);
                     for sidecar in sidecars {
                         move_aside(sidecar, &failed);
                     }
+                    move_aside(master, &failed);
                     tracing::error!("create failed for {stem}: see {}", log_path.display());
                     post_event(
                         webhook.as_ref(),
