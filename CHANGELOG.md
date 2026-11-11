@@ -29,6 +29,7 @@
 - **A picture dropped on empty timeline track snaps**: it snaps to a clip edge or the playhead the way a dragged clip does.
 
 ### Fixed
+- **Clicks stop working during playback on a computer with only an NVIDIA GPU** (guikit): under X11, WebKit drew the page through NVIDIA's EGL, which leaked a sync file per frame until the page ran out of open files and stopped answering clicks while the picture kept playing. With an NVIDIA GPU and the app on X11, the page now loads Mesa's EGL, and GTK still draws the preview on the NVIDIA card through GLX. Under Wayland with the display on the NVIDIA card nothing changes. Setting `__EGL_VENDOR_LIBRARY_FILENAMES` yourself still wins.
 - **The job log counts each GPU-encoded frame once**: the `Frames on the device` line showed twice the frames the GPU encoded, such as 48 of 24.
 - **Playback at Full shows the picture when the GPU stops returning frames**: with GPU encoding on, a Full decode that gets no frame back from the GPU for two seconds switches to the CPU, and playback stays on the CPU until the app restarts. Before, the picture stayed black while the sound played. The terminal log names the GPU's error on a `grok:` line.
 - **Playback at Full keeps going after a GPU error**: with GPU encoding on, frames that switch to the CPU after the GPU fails now decode on the CPU. Before, they went back to the GPU and the app closed.

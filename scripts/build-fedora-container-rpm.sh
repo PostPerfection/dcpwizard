@@ -7,7 +7,7 @@ GROK_SOURCE="${1:-}"
 CUDA_ARCH="${2:-}"
 
 if [[ -z "$GROK_SOURCE" || ! "$CUDA_ARCH" =~ ^[0-9]+$ ]]; then
-    echo "usage: [FEDORA_VERSION=43] [RPM_RELEASE_NUMBER=1] GPUP_KERNEL_KEY_FILE=<hex key file> $0 /path/to/grok/source <cuda arch, for example 86>" >&2
+    echo "usage: [FEDORA_VERSION=43] [RPM_RELEASE_NUMBER=1] [GPUP_CUDA_LINE_INFO=ON] GPUP_KERNEL_KEY_FILE=<hex key file> $0 /path/to/grok/source <cuda arch, for example 86>" >&2
     exit 2
 fi
 
@@ -50,6 +50,7 @@ run_in_image() {
 }
 
 run_in_image \
+    -e GPUP_CUDA_LINE_INFO="${GPUP_CUDA_LINE_INFO:-OFF}" \
     -v "$GROK_SOURCE:/grok:ro" \
     -v "$GROK_BUILD:/grok-build" \
     -v "$GROK_INSTALL:/grok-install" \
@@ -66,6 +67,7 @@ cmake -S /grok -B /grok-build -G Ninja \
     -DGPUP_USE_LEGACY_AUTH=OFF \
     -DGPUP_ALLOW_DEV_LICENSE_KEY=OFF \
     -DGPUP_KERNEL_KEY_FILE=/kernel-key.hex \
+    -DGPUP_CUDA_LINE_INFO="$GPUP_CUDA_LINE_INFO" \
     -DGRK_BUILD_CORE_SWIG_BINDINGS=OFF \
     -DGRK_BUILD_JPEG=OFF
 cmake --build /grok-build
