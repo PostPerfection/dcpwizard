@@ -2383,8 +2383,8 @@ pub async fn retitle_dcp(
     let Some(renamed) = retitled_package_dir(&dir, &old_title, &title) else {
         return Ok(path);
     };
-    let log = dcpwizard_core::job_log::job_log_path(&dir)?;
-    let renamed_log = dcpwizard_core::job_log::job_log_path(&renamed)?;
+    let log = postkit::job_log::job_log_path(&dir)?;
+    let renamed_log = postkit::job_log::job_log_path(&renamed)?;
     if renamed.exists() || renamed_log.exists() {
         return Ok(path);
     }
@@ -3528,7 +3528,7 @@ fn run_with_job_log(
     cancelled: impl Fn() -> bool,
     run: impl FnOnce(Arc<Mutex<std::fs::File>>, &Path) -> Result<String, String>,
 ) -> Result<String, String> {
-    let log_path = dcpwizard_core::job_log::job_log_path(output)?;
+    let log_path = postkit::job_log::job_log_path(output)?;
     std::fs::create_dir_all(output)
         .map_err(|e| format!("Cannot create the output folder {}: {e}", output.display()))?;
     let log = std::fs::File::create(&log_path)

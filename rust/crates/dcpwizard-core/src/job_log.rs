@@ -1,25 +1,10 @@
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
-const LOG_EXTENSION: &str = "log";
 const LOG_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const BITS_PER_MEGABIT: f64 = 1_000_000.0;
-
-// dcpdoctor flags any file inside the package that the ASSETMAP does not list
-pub fn job_log_path(output: &Path) -> Result<PathBuf, String> {
-    let Some(folder_name) = output.file_name() else {
-        return Err(format!(
-            "Cannot name a job log beside the output folder {}: it has no folder name",
-            output.display()
-        ));
-    };
-    let mut log_name = folder_name.to_os_string();
-    log_name.push(".");
-    log_name.push(LOG_EXTENSION);
-    Ok(output.with_file_name(log_name))
-}
 
 // the three states the GUI's job log names the accelerator by, so one log reads
 // like the other
@@ -113,7 +98,7 @@ pub struct JobLog {
 
 impl JobLog {
     pub fn create(output: &Path) -> Result<Self, String> {
-        let path = job_log_path(output)?;
+        let path = postkit::job_log::job_log_path(output)?;
         std::fs::create_dir_all(output)
             .map_err(|e| format!("Cannot create the output folder {}: {e}", output.display()))?;
         let file = File::create(&path)
@@ -492,28 +477,6 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "[CRASH] signal SIGSEGV\n"
         );
-    }
-
-    #[test]
-    fn the_log_is_named_after_the_package_folder_beside_it() {
-        assert_eq!(
-            job_log_path(Path::new("/x/my_dcp")).unwrap(),
-            Path::new("/x/my_dcp.log")
-        );
-        assert_eq!(
-            job_log_path(Path::new("/x/my.dcp/")).unwrap(),
-            Path::new("/x/my.dcp.log")
-        );
-        assert_eq!(
-            job_log_path(Path::new("my_dcp")).unwrap(),
-            Path::new("my_dcp.log")
-        );
-    }
-
-    #[test]
-    fn an_output_with_no_folder_name_is_refused_naming_it() {
-        let error = job_log_path(Path::new("/x/..")).unwrap_err();
-        assert!(error.contains("/x/.."), "the error names the path: {error}");
     }
 
     #[test]
