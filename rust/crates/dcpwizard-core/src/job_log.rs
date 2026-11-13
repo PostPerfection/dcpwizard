@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
-const LOG_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 const BITS_PER_MEGABIT: f64 = 1_000_000.0;
 
 // the three states the GUI's job log names the accelerator by, so one log reads
@@ -15,24 +14,6 @@ pub fn accelerator_status(requested: bool, active: bool, error: Option<&str>) ->
         (true, false, Some(error)) => format!("requested, inactive: {error}"),
         (true, false, None) => "requested, inactive".to_string(),
     }
-}
-
-pub fn encode_threads_status(encode_threads: u32) -> String {
-    let count = postkit::grok_encoder::encode_thread_count(encode_threads);
-    if encode_threads == crate::preferences::AUTOMATIC_ENCODE_THREADS {
-        return format!("{count} (automatic)");
-    }
-    count.to_string()
-}
-
-pub fn picture_findings_status(detect_picture_findings: bool) -> &'static str {
-    if detect_picture_findings { "on" } else { "off" }
-}
-
-pub fn log_timestamp() -> String {
-    chrono::Local::now()
-        .format(LOG_TIMESTAMP_FORMAT)
-        .to_string()
 }
 
 pub fn source_line(source: &postkit::probe::VideoInfo) -> String {
@@ -177,7 +158,11 @@ fn close_running_job_log() -> Option<File> {
 // for an exit that has no JobLog in reach
 pub fn finish_running_job(outcome: &JobOutcome) {
     if let Some(log) = close_running_job_log() {
-        let _ = writeln!(&log, "{}", finished_line(&log_timestamp(), outcome));
+        let _ = writeln!(
+            &log,
+            "{}",
+            finished_line(&postkit::job_log::log_timestamp(), outcome)
+        );
     }
 }
 
@@ -304,14 +289,6 @@ mod tests {
             "requested, inactive: the plugin did not initialise"
         );
         assert_eq!(accelerator_status(true, false, None), "requested, inactive");
-    }
-
-    #[test]
-    fn the_thread_count_says_when_it_was_chosen_automatically() {
-        assert_eq!(encode_threads_status(2), "2");
-        let automatic = encode_threads_status(crate::preferences::AUTOMATIC_ENCODE_THREADS);
-        assert!(automatic.ends_with(" (automatic)"), "{automatic}");
-        assert_ne!(automatic, "0 (automatic)");
     }
 
     fn probed_source() -> postkit::probe::VideoInfo {

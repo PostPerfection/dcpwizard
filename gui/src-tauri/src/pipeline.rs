@@ -3553,10 +3553,7 @@ fn run_with_job_log(
     };
     log_to(
         &log_file,
-        &dcpwizard_core::job_log::finished_line(
-            &dcpwizard_core::job_log::log_timestamp(),
-            &outcome,
-        ),
+        &dcpwizard_core::job_log::finished_line(&postkit::job_log::log_timestamp(), &outcome),
     );
     drop(running_job_log);
     result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
@@ -3601,19 +3598,19 @@ fn run_logged_job(
         &log_file,
         &format!(
             "Encode threads: {}",
-            dcpwizard_core::job_log::encode_threads_status(encode_threads)
+            postkit::job_log::encode_threads_status(encode_threads)
         ),
     );
     log_to(
         &log_file,
         &format!(
             "Picture findings: {}",
-            dcpwizard_core::job_log::picture_findings_status(detect_picture_findings)
+            postkit::job_log::picture_findings_status(detect_picture_findings)
         ),
     );
     log_to(
         &log_file,
-        &format!("Started: {}", dcpwizard_core::job_log::log_timestamp()),
+        &format!("Started: {}", postkit::job_log::log_timestamp()),
     );
     for line in
         postkit::machine_info::machine_info_lines(guikit::gpu::accelerator_status().requested)

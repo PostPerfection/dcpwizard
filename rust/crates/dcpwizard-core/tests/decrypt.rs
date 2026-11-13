@@ -240,7 +240,7 @@ fn transcode_dcp_decrypts_encrypted_source() {
         recipient_key: None,
         keys: Some(keys_file),
         watermark: None,
-        encode_threads: dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS,
+        encode_threads: postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
     };
     assert_eq!(
         dcpwizard_core::j2k_transcode::transcode_dcp(&tc),
@@ -269,7 +269,7 @@ fn transcode_dcp_decrypts_encrypted_source() {
         recipient_key: None,
         keys: None,
         watermark: None,
-        encode_threads: dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS,
+        encode_threads: postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
     };
     assert_eq!(
         dcpwizard_core::j2k_transcode::transcode_dcp(&tc2),
@@ -378,7 +378,7 @@ fn markers_survive_decrypt_and_transcode() {
                 recipient_key: None,
                 keys: Some(keys_file),
                 watermark: None,
-                encode_threads: dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS,
+                encode_threads: postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
             }
         ),
         0,

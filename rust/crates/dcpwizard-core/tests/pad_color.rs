@@ -3,7 +3,7 @@
 //! the in-memory decoder, and check the X'Y'Z' code values match an independently
 //! computed expectation within tolerance.
 
-use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
+use postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS;
 use std::path::Path;
 
 const W: u32 = 48;

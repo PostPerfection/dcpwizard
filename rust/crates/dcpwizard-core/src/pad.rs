@@ -176,7 +176,7 @@ pub fn generate_black_frame(width: u32, height: u32, fps: u32, out: &Path) -> Re
         height,
         fps,
         [0, 0, 0],
-        crate::preferences::AUTOMATIC_ENCODE_THREADS,
+        postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
         out,
     )
 }

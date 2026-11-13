@@ -1693,28 +1693,7 @@ enum Commands {
         api_key: Option<String>,
     },
     /// Build a DCP from every master that lands in a watched folder
-    Watch {
-        /// Directory to watch for masters
-        dir: String,
-        /// Directory each package is written to, under the master's file stem
-        #[arg(short, long)]
-        output: String,
-        /// POST a JSON notification to this URL when a package is built or fails
-        #[arg(long)]
-        webhook_url: Option<String>,
-        /// Seconds between polls
-        #[arg(
-            long,
-            default_value_t = postkit::watch::DEFAULT_POLL_INTERVAL_SECONDS,
-            value_parser = clap::value_parser!(u64).range(
-                postkit::watch::MINIMUM_POLL_INTERVAL_SECONDS..
-            )
-        )]
-        interval: u64,
-        /// Flags passed to `create` for every package, after a `--` separator
-        #[arg(last = true)]
-        create_arguments: Vec<String>,
-    },
+    Watch(postkit::watch::WatchArgs),
     /// Export a DCP to a delivery format, decoded by grok and encoded by ffmpeg
     Export {
         /// Picture MXF, DCP directory or CPL
@@ -5152,13 +5131,13 @@ fn run() {
             ));
             job_log.line(&format!(
                 "Encode threads: {}",
-                job_log::encode_threads_status(encode_threads)
+                postkit::job_log::encode_threads_status(encode_threads)
             ));
             job_log.line(&format!(
                 "Picture findings: {}",
-                job_log::picture_findings_status(detect_picture_findings)
+                postkit::job_log::picture_findings_status(detect_picture_findings)
             ));
-            job_log.line(&format!("Started: {}", job_log::log_timestamp()));
+            job_log.line(&format!("Started: {}", postkit::job_log::log_timestamp()));
             for line in postkit::machine_info::machine_info_lines(gpu_enabled) {
                 job_log.line(&line);
             }
@@ -6845,27 +6824,11 @@ fn run() {
             dcpwizard_core::rest_api::start_rest_api(&bind, api_key.as_deref())
         }
 
-        Commands::Watch {
-            dir,
-            output,
-            webhook_url,
-            interval,
-            create_arguments,
-        } => {
-            let output_dir = PathBuf::from(&output);
-            let command = postkit::watch::WatchCommand {
-                watch_dir: Path::new(&dir),
-                output_dir: &output_dir,
-                interval: std::time::Duration::from_secs(interval),
-                subtitle_extension: "srt",
-                create_arguments: &create_arguments,
-                webhook_url,
-                webhook_event_prefix: "dcp",
-            };
-            let watched = postkit::watch::watch_directory(&command, |stem| {
+        Commands::Watch(watch) => {
+            let watched = postkit::watch::watch_directory(&watch.command("srt", "dcp"), |stem| {
                 Ok(postkit::watch::PackageTarget {
-                    package_dir: dcpwizard_core::package_dir::new_package_dir(&output_dir, stem)?,
-                    output_argument: output_dir.clone(),
+                    package_dir: dcpwizard_core::package_dir::new_package_dir(&watch.output, stem)?,
+                    output_argument: watch.output.clone(),
                 })
             });
             if let Err(e) = watched {

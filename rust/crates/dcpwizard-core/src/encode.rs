@@ -277,7 +277,7 @@ mod tests {
             output_dir: PathBuf::from("out"),
             bandwidth_mbps,
             fps: 24,
-            encode_threads: crate::preferences::AUTOMATIC_ENCODE_THREADS,
+            encode_threads: postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
             container: None,
         }
     }

@@ -468,7 +468,10 @@ mod tests {
             JobType::VerifyDcp,
             missing_dcp.to_str().unwrap().into(),
         );
-        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        start_job_queue(
+            queue.clone(),
+            postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
+        );
 
         let failed = wait_until_failed(&queue, id);
         assert!(
@@ -494,7 +497,10 @@ mod tests {
 
         let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
         let id = submit(&queue, JobType::CreateDcp, params);
-        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        start_job_queue(
+            queue.clone(),
+            postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
+        );
 
         let failed = wait_until_failed(&queue, id);
         assert!(
@@ -584,7 +590,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let frames = blocking_codestream_directory(dir.path());
         let queue = Arc::new(JobQueue::new(dir.path().join("jobs.jsonl")));
-        start_job_queue(queue.clone(), crate::preferences::AUTOMATIC_ENCODE_THREADS);
+        start_job_queue(
+            queue.clone(),
+            postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS,
+        );
 
         let finished_output = dir.path().join("finished");
         let started = std::time::Instant::now();

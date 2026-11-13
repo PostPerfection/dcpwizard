@@ -5,7 +5,7 @@
 
 use dcpwizard_core::conform::{assemble_dcp, build_reel_plan, parse_timeline};
 use dcpwizard_core::package_signature::PackageSigner;
-use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
+use postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

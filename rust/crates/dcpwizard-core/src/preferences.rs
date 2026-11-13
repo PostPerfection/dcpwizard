@@ -1,3 +1,4 @@
+use postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS;
 use postkit::preferences::PrefsMigration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,7 +9,6 @@ use std::path::{Path, PathBuf};
 pub const CURRENT_PREFERENCES_VERSION: u32 = 3;
 const FIRST_MIGRATION_VERSION: u32 = 2;
 pub const DEFAULT_GPU_REGISTRATION_URL: &str = "https://grokcompression.com/api/register";
-pub const AUTOMATIC_ENCODE_THREADS: u32 = 0;
 const DEFAULT_BANDWIDTH_MBPS: u32 = 230;
 const AUTOMATIC_RESOLUTION: &str = "auto";
 const RESOLUTION_CHOICES: [&str; 7] = [

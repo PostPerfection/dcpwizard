@@ -5,8 +5,8 @@
 //! preview the wizard shows.
 
 use dcpwizard_core::dcp::{DcpConfig, create_dcp};
-use dcpwizard_core::preferences::AUTOMATIC_ENCODE_THREADS;
 use postkit::colour::{ColourSpace, DcdmTransform};
+use postkit::grok_encoder::AUTOMATIC_ENCODE_THREADS;
 use postkit::j2k::J2kProfile;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
