@@ -26,20 +26,29 @@ const ASDCP_INFO_EXE: &str = if cfg!(windows) {
 
 /// The newest `asdcp-info` any asdcplib-sys build script left under `target/`.
 fn built_asdcp_info() -> Option<PathBuf> {
-    // target/<profile>/deps/<test binary>
-    let target = std::env::current_exe().ok()?;
-    let target = target.parent()?.parent()?.parent()?;
+    let target = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(directory) => PathBuf::from(directory),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+    };
     let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for profile in std::fs::read_dir(target).ok()?.flatten() {
-        let builds = match std::fs::read_dir(profile.path().join("build")) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for build in builds.flatten() {
-            if !file_name(&build.path()).starts_with("asdcplib-sys-") {
-                continue;
+        let build = profile.path().join("build");
+        let mut output_directories = Vec::new();
+        // cargo 1.100 writes build script output to build/<package>/<hash>, older cargo to build/<package>-<hash>
+        for entry in std::fs::read_dir(&build).into_iter().flatten().flatten() {
+            if file_name(&entry.path()).starts_with("asdcplib-sys-") {
+                output_directories.push(entry.path());
             }
-            let tool = build.path().join("out/bin").join(ASDCP_INFO_EXE);
+        }
+        for entry in std::fs::read_dir(build.join("asdcplib-sys"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            output_directories.push(entry.path());
+        }
+        for directory in output_directories {
+            let tool = directory.join("out/bin").join(ASDCP_INFO_EXE);
             if let Ok(meta) = std::fs::metadata(&tool)
                 && let Ok(modified) = meta.modified()
             {
@@ -65,7 +74,8 @@ fn asdcp_info() -> String {
     built_asdcp_info()
         .unwrap_or_else(|| {
             panic!(
-                "no {ASDCP_INFO_EXE} under target/*/build/asdcplib-sys-*/out/bin, and \
+                "no {ASDCP_INFO_EXE} under target/*/build/asdcplib-sys-*/out/bin or \
+                 target/*/build/asdcplib-sys/*/out/bin, and \
                  DCPWIZARD_ASDCP_INFO names none"
             )
         })
