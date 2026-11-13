@@ -1843,11 +1843,14 @@ function isdcfNameRequest() {
   };
 }
 
+let packageNamePreviewGeneration = 0;
+
 async function refreshPackageNamePreview() {
   const isdcfPreview = document.getElementById("prop-isdcf-preview");
   const folderHint = document.getElementById("prop-output-folder-hint");
   const folderPreview = document.getElementById("prop-output-folder-preview");
   if (!isdcfPreview || !folderHint || !folderPreview) return;
+  const generation = ++packageNamePreviewGeneration;
   const request = isdcfNameRequest();
   document.getElementById("prop-isdcf-name").hidden = !request.naming.isdcfNaming || !request.title;
   folderHint.hidden = Boolean(request.title);
@@ -1855,9 +1858,11 @@ async function refreshPackageNamePreview() {
   if (!request.title) return;
   try {
     const name = await invoke("package_name_preview", { request });
+    if (generation !== packageNamePreviewGeneration) return;
     isdcfPreview.textContent = "ISDCF name: " + name.title;
     folderPreview.textContent = "The DCP is written to a new folder inside this one: " + name.folderName;
   } catch (e) {
+    if (generation !== packageNamePreviewGeneration) return;
     isdcfPreview.textContent = String(e);
     folderPreview.textContent = String(e);
   }
