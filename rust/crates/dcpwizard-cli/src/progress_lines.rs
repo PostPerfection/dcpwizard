@@ -1,35 +1,29 @@
-use dcpwizard_core::verify::{VerifyProgress, VerifyStage};
+use dcpwizard_core::verify::VerifyStage;
 
 const WHOLE_PERCENT: u64 = 100;
 
 #[derive(Default)]
 pub struct ProgressLines {
-    last_printed: Option<(VerifyStage, u64)>,
+    last_printed: Option<(&'static str, u64)>,
 }
 
 impl ProgressLines {
     // the GUI parses these lines off stderr, one per whole percent
-    pub fn line_for(&mut self, report: VerifyProgress) -> Option<String> {
-        let percent = report
-            .done
+    pub fn line_for(&mut self, stage: &'static str, done: u64, total: u64) -> Option<String> {
+        let percent = done
             .saturating_mul(WHOLE_PERCENT)
-            .checked_div(report.total)
+            .checked_div(total)
             .unwrap_or(WHOLE_PERCENT);
-        let printed = Some((report.stage, percent));
+        let printed = Some((stage, percent));
         if self.last_printed == printed {
             return None;
         }
         self.last_printed = printed;
-        Some(format!(
-            "progress {} {} {}",
-            stage_name(report.stage),
-            report.done,
-            report.total
-        ))
+        Some(format!("progress {stage} {done} {total}"))
     }
 }
 
-fn stage_name(stage: VerifyStage) -> &'static str {
+pub fn verify_stage_name(stage: VerifyStage) -> &'static str {
     match stage {
         VerifyStage::HashCheck => "hashes",
         VerifyStage::FrameScan => "frames",
@@ -39,6 +33,7 @@ fn stage_name(stage: VerifyStage) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dcpwizard_core::verify::VerifyProgress;
 
     const HASHED_BYTES: u64 = 20_000_000_000;
     const READ_CHUNK_BYTES: u64 = 1 << 20;
@@ -47,7 +42,9 @@ mod tests {
     fn lines_for(lines: &mut ProgressLines, reports: &[VerifyProgress]) -> Vec<String> {
         reports
             .iter()
-            .filter_map(|report| lines.line_for(*report))
+            .filter_map(|report| {
+                lines.line_for(verify_stage_name(report.stage), report.done, report.total)
+            })
             .collect()
     }
 

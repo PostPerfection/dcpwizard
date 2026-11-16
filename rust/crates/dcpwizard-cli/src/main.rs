@@ -5,8 +5,8 @@ use dcpwizard_core::dcp::{NO_CONTAINER, resolve_container};
 use dcpwizard_core::job_log;
 
 mod preset_arguments;
+mod progress_lines;
 mod vendor_credentials;
-mod verify_progress;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum AccessibilityStandardArg {
@@ -1609,6 +1609,9 @@ enum Commands {
         /// Destination drive/directory
         #[arg(long)]
         dst: String,
+        /// Print `progress copy <done bytes> <total bytes>` lines to stderr, counting the read-back
+        #[arg(long)]
+        progress: bool,
     },
     /// Format a delivery drive as ext2/ext3 (cinema hard-drive delivery).
     /// Refuses any mounted target; requires --yes.
@@ -6531,7 +6534,7 @@ fn run() {
             quiet,
             progress,
         } => {
-            let mut progress_lines = verify_progress::ProgressLines::default();
+            let mut progress_lines = progress_lines::ProgressLines::default();
             let result = dcpwizard_core::verify::verify_dcp_with_progress(
                 &PathBuf::from(&dcp_dir),
                 &dcpwizard_core::verify::VerifyCliOptions {
@@ -6547,7 +6550,8 @@ fn run() {
                     if !progress {
                         return;
                     }
-                    if let Some(line) = progress_lines.line_for(report) {
+                    let stage = progress_lines::verify_stage_name(report.stage);
+                    if let Some(line) = progress_lines.line_for(stage, report.done, report.total) {
                         eprintln!("{line}");
                     }
                 },
@@ -6697,8 +6701,22 @@ fn run() {
             kdm_options.into(),
         ),
 
-        Commands::Copy { src, dst } => {
-            dcpwizard_core::copy_drive::copy_to_drive(&PathBuf::from(src), &PathBuf::from(dst))
+        Commands::Copy { src, dst, progress } => {
+            let mut progress_lines = progress_lines::ProgressLines::default();
+            dcpwizard_core::copy_drive::copy_to_drive(
+                &PathBuf::from(src),
+                &PathBuf::from(dst),
+                &mut |report| {
+                    if !progress {
+                        return;
+                    }
+                    let line =
+                        progress_lines.line_for("copy", report.done_bytes, report.total_bytes);
+                    if let Some(line) = line {
+                        eprintln!("{line}");
+                    }
+                },
+            )
         }
 
         Commands::FormatDrive {

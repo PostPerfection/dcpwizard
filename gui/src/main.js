@@ -56,7 +56,7 @@ import { initLoudnessPanel, optionalNumber } from "../../extern/guikit/src/loudn
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
 import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
-import { parseVerifyProgress, verifyProgressDisplay } from "./verify-progress.js";
+import { parseSidecarProgress, sidecarProgressDisplay } from "./sidecar-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { escapeHtml } from "../../extern/guikit/src/html.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -2568,7 +2568,7 @@ function showVerifyRunning(running) {
 }
 
 function showVerifyProgress(progress) {
-  const { percent, text } = verifyProgressDisplay(progress);
+  const { percent, text } = sidecarProgressDisplay(progress);
   document.getElementById("verify-progress").value = percent;
   document.getElementById("verify-progress-text").textContent = text;
 }
@@ -2601,7 +2601,7 @@ async function runVerification() {
   const stderr = [];
   cmd.stdout.on("data", (line) => stdout.push(line));
   cmd.stderr.on("data", (line) => {
-    const progress = parseVerifyProgress(line);
+    const progress = parseSidecarProgress(line);
     if (!progress) stderr.push(line);
     else if (runningVerification === run) showVerifyProgress(progress);
   });
@@ -3405,23 +3405,76 @@ document.getElementById("copy-browse-dest")?.addEventListener("click", async () 
   if (dir) { document.getElementById("copy-dest").value = dir; checkCopyReady(); }
 });
 
+const COPY_CANCELLED_TEXT = "Copy cancelled. The partial copy is still on the destination.";
+let runningCopy = null;
+
 function checkCopyReady() {
   const btn = document.getElementById("copy-start");
-  if (btn) btn.disabled = !(document.getElementById("copy-source")?.value && document.getElementById("copy-dest")?.value);
+  const chosen = document.getElementById("copy-source")?.value && document.getElementById("copy-dest")?.value;
+  if (btn) btn.disabled = Boolean(runningCopy) || !chosen;
+}
+
+function showCopyRunning(running) {
+  checkCopyReady();
+  document.getElementById("copy-cancel").hidden = !running;
+  document.getElementById("copy-progress-section").hidden = !running;
+  document.getElementById("copy-progress").removeAttribute("value");
+  document.getElementById("copy-progress-text").textContent = "";
+}
+
+function endCopy(text) {
+  runningCopy = null;
+  showCopyRunning(false);
+  document.getElementById("copy-results").textContent = text;
 }
 
 document.getElementById("copy-start")?.addEventListener("click", async () => {
+  if (runningCopy) return;
   const source = document.getElementById("copy-source").value;
   const dest = document.getElementById("copy-dest").value;
+  const run = { child: null };
+  runningCopy = run;
+  showCopyRunning(true);
   const resultsBox = document.getElementById("copy-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Copying...";
-  const args = ["copy", "--src", source, "--dst", dest];
-  const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
-  resultsBox.textContent = result.code === 0
-    ? "✓ Copy complete\n\n" + result.stdout
-    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+
+  const cmd = Command.sidecar("dcpwizard", ["copy", "--src", source, "--dst", dest, "--progress"]);
+  const stdout = [];
+  const stderr = [];
+  cmd.stdout.on("data", (line) => stdout.push(line));
+  cmd.stderr.on("data", (line) => {
+    const progress = parseSidecarProgress(line);
+    if (!progress) {
+      stderr.push(line);
+      return;
+    }
+    if (runningCopy !== run) return;
+    const { percent, text } = sidecarProgressDisplay(progress);
+    document.getElementById("copy-progress").value = percent;
+    document.getElementById("copy-progress-text").textContent = text;
+  });
+  cmd.on("error", (error) => stderr.push(`${error}\n`));
+  cmd.on("close", ({ code }) => {
+    if (runningCopy !== run) return;
+    endCopy(code === 0
+      ? "✓ Copy complete\n\n" + stdout.join("")
+      : "✗ Failed\n\n" + (stderr.join("") || stdout.join("")));
+  });
+  try {
+    run.child = await cmd.spawn();
+  } catch (error) {
+    endCopy(`✗ Failed\n\n${error}`);
+    return;
+  }
+  if (runningCopy !== run) await run.child.kill();
+});
+
+document.getElementById("copy-cancel")?.addEventListener("click", () => {
+  const run = runningCopy;
+  if (!run) return;
+  endCopy(COPY_CANCELLED_TEXT);
+  run.child?.kill();
 });
 
 // === Tools: QC Report ===

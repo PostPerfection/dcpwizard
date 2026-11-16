@@ -95,6 +95,46 @@ fn copy_puts_every_file_on_the_drive_with_the_source_hash() {
     }
 }
 
+#[test]
+fn copy_progress_runs_from_no_bytes_to_every_byte_written_and_read_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("MyFilm_FTR_F_EN-XX_OV");
+    write_small_dcp(&source);
+    let source_bytes: u64 = relative_files(&source)
+        .iter()
+        .map(|relative| std::fs::metadata(source.join(relative)).unwrap().len())
+        .sum();
+    let total = 2 * source_bytes;
+    let drive = temp.path().join("drive");
+
+    let output = dcpwizard(&temp.path().join("config"))
+        .args([
+            "copy",
+            "--src",
+            source.to_str().unwrap(),
+            "--dst",
+            drive.to_str().unwrap(),
+            "--progress",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let progress: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.starts_with("progress "))
+        .collect();
+    assert_eq!(
+        progress.first().copied(),
+        Some(format!("progress copy 0 {total}").as_str())
+    );
+    assert_eq!(
+        progress.last().copied(),
+        Some(format!("progress copy {total} {total}").as_str())
+    );
+}
+
 #[cfg(unix)]
 fn limited_dcpwizard(config_home: &Path) -> Command {
     use std::os::unix::process::CommandExt;

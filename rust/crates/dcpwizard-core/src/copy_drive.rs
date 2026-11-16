@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 
 const COPY_BUFFER_BYTES: usize = 1 << 20;
 
+#[derive(Clone, Copy, Debug)]
+pub struct CopyProgress {
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+}
+
 // a cinema server reads the drive as a user other than the one who copied it
 const COPIED_DIRECTORY_MODE: u32 = 0o755;
 const COPIED_FILE_MODE: u32 = 0o644;
@@ -73,7 +79,11 @@ fn drop_page_cache(file: &File) {
 fn drop_page_cache(_file: &File) {}
 
 /// Copy a DCP to a target drive with SHA-1 hash verification.
-pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
+pub fn copy_to_drive(
+    dcp_dir: &Path,
+    target_dir: &Path,
+    progress: &mut dyn FnMut(CopyProgress),
+) -> i32 {
     if !dcp_dir.exists() {
         tracing::error!("Source DCP directory not found: {}", dcp_dir.display());
         return -1;
@@ -111,6 +121,20 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
         dest.display()
     );
 
+    let total_bytes = required * 2;
+    let mut done_bytes = 0;
+    progress(CopyProgress {
+        done_bytes,
+        total_bytes,
+    });
+    let mut count_bytes = |bytes: usize| {
+        done_bytes += bytes as u64;
+        progress(CopyProgress {
+            done_bytes,
+            total_bytes,
+        });
+    };
+
     for (i, src_path) in files.iter().enumerate() {
         let rel = src_path.strip_prefix(dcp_dir).unwrap_or(src_path);
         let dst_path = dest.join(rel);
@@ -125,7 +149,7 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
             return -1;
         }
 
-        let src_hash = match copy_hashing(src_path, &dst_path) {
+        let src_hash = match copy_hashing(src_path, &dst_path, &mut count_bytes) {
             Ok(hash) => hash,
             Err(e) => {
                 tracing::error!(
@@ -137,9 +161,8 @@ pub fn copy_to_drive(dcp_dir: &Path, target_dir: &Path) -> i32 {
             }
         };
 
-        let dst_hash = match postkit::hash::hash_file(&dst_path, postkit::hash::HashAlgorithm::Sha1)
-        {
-            Ok(result) => result.hex,
+        let dst_hash = match hash_reading(&dst_path, &mut count_bytes) {
+            Ok(hash) => hash,
             Err(e) => {
                 tracing::error!("Failed to read back {}: {e}", dst_path.display());
                 return -1;
@@ -193,22 +216,48 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 // a feature's picture MXF is tens of GB
-fn copy_hashing(src_path: &Path, dst_path: &Path) -> std::io::Result<String> {
-    let mut source = File::open(src_path)?;
-    let mut sink = File::create(dst_path)?;
-    set_mode(dst_path, COPIED_FILE_MODE)?;
-    let mut hasher = sha1::Sha1::new();
+fn read_in_chunks(
+    source: &mut File,
+    each_chunk: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     loop {
         let read = source.read(&mut buffer)?;
         if read == 0 {
-            break;
+            return Ok(());
         }
-        hasher.update(&buffer[..read]);
-        sink.write_all(&buffer[..read])?;
+        each_chunk(&buffer[..read])?;
     }
+}
+
+fn copy_hashing(
+    src_path: &Path,
+    dst_path: &Path,
+    count_bytes: &mut dyn FnMut(usize),
+) -> std::io::Result<String> {
+    let mut source = File::open(src_path)?;
+    let mut sink = File::create(dst_path)?;
+    set_mode(dst_path, COPIED_FILE_MODE)?;
+    let mut hasher = sha1::Sha1::new();
+    read_in_chunks(&mut source, &mut |chunk| {
+        hasher.update(chunk);
+        sink.write_all(chunk)?;
+        count_bytes(chunk.len());
+        Ok(())
+    })?;
     sink.sync_all()?;
     drop_page_cache(&sink);
+    Ok(hex_encode(&hasher.finalize()))
+}
+
+fn hash_reading(path: &Path, count_bytes: &mut dyn FnMut(usize)) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = sha1::Sha1::new();
+    read_in_chunks(&mut file, &mut |chunk| {
+        hasher.update(chunk);
+        count_bytes(chunk.len());
+        Ok(())
+    })?;
     Ok(hex_encode(&hasher.finalize()))
 }
 
@@ -229,13 +278,49 @@ mod tests {
         std::fs::write(src.join("sub/picture.mxf"), vec![7u8; 4096]).unwrap();
 
         let target = dir.path().join("drive");
-        assert_eq!(copy_to_drive(&src, &target), 0);
+        assert_eq!(copy_to_drive(&src, &target, &mut |_| {}), 0);
 
         let dst = target.join("MyDCP");
         assert_eq!(std::fs::read(dst.join("ASSETMAP.xml")).unwrap(), b"a");
         assert_eq!(
             std::fs::read(dst.join("sub/picture.mxf")).unwrap(),
             vec![7u8; 4096]
+        );
+    }
+
+    #[test]
+    fn progress_counts_every_byte_once_written_and_once_read_back() {
+        const PICTURE_BYTES: usize = 2 * COPY_BUFFER_BYTES + 1;
+        const ASSETMAP_BYTES: usize = 1;
+        const COPIED_AND_READ_BACK_BYTES: u64 = 2 * (PICTURE_BYTES + ASSETMAP_BYTES) as u64;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("MyDCP");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("ASSETMAP.xml"), [b'a'; ASSETMAP_BYTES]).unwrap();
+        std::fs::write(src.join("picture.mxf"), vec![7u8; PICTURE_BYTES]).unwrap();
+
+        let mut reports = Vec::new();
+        let target = dir.path().join("drive");
+        assert_eq!(
+            copy_to_drive(&src, &target, &mut |report| reports.push(report)),
+            0
+        );
+
+        assert_eq!(reports.first().unwrap().done_bytes, 0);
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.total_bytes == COPIED_AND_READ_BACK_BYTES)
+        );
+        assert!(
+            reports
+                .windows(2)
+                .all(|pair| pair[0].done_bytes < pair[1].done_bytes)
+        );
+        assert_eq!(
+            reports.last().unwrap().done_bytes,
+            COPIED_AND_READ_BACK_BYTES
         );
     }
 
@@ -254,7 +339,7 @@ mod tests {
         let target = dir.path().join("drive");
 
         let previous_umask = unsafe { libc::umask(PRIVATE_UMASK) };
-        let status = copy_to_drive(&src, &target);
+        let status = copy_to_drive(&src, &target, &mut |_| {});
         unsafe { libc::umask(previous_umask) };
         assert_eq!(status, 0);
 
@@ -302,7 +387,7 @@ mod tests {
             .unwrap();
 
         let target = dir.path().join("drive");
-        assert_eq!(copy_to_drive(&src, &target), -1);
+        assert_eq!(copy_to_drive(&src, &target, &mut |_| {}), -1);
 
         let copied = std::fs::read_dir(target.join("MyDCP"))
             .map(|entries| entries.count())

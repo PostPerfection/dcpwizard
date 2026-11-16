@@ -283,8 +283,18 @@ fn process_job(job: &DaemonJob, control: &JobControl, encode_threads: u32) -> Re
             let map = parse_params::<HashMap<String, String>>(&job.params, "CopyToDrive")?;
             let src = std::path::Path::new(map.get("source").map(|s| s.as_str()).unwrap_or(""));
             let dst = std::path::Path::new(map.get("target").map(|s| s.as_str()).unwrap_or(""));
+            let report = &mut |progress: crate::copy_drive::CopyProgress| {
+                let percent = (progress.done_bytes * 100)
+                    .checked_div(progress.total_bytes)
+                    .unwrap_or(100);
+                crate::dcp::ProgressSink::stage(
+                    control,
+                    percent as u32,
+                    &format!("{}/{} bytes", progress.done_bytes, progress.total_bytes),
+                );
+            };
             from_exit_code(
-                crate::copy_drive::copy_to_drive(src, dst),
+                crate::copy_drive::copy_to_drive(src, dst, report),
                 "copying to the drive",
             )
         }

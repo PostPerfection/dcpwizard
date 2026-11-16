@@ -1177,7 +1177,14 @@
                 </div>
               </div>
               <p class="field-hint">Every file is hash-verified against the source after copy.</p>
-              <button id="copy-start" class="btn-primary" disabled data-key="y">Copy DCP</button>
+              <div class="field-row">
+                <button id="copy-start" class="btn-primary" disabled data-key="y">Copy DCP</button>
+                <button id="copy-cancel" class="btn-sm" hidden data-key="a">Cancel</button>
+              </div>
+              <div id="copy-progress-section" class="progress-section" hidden>
+                <progress id="copy-progress" max="100"></progress>
+                <span id="copy-progress-text" class="progress-stats"></span>
+              </div>
               <div id="copy-results" class="results-box"></div>
             </section>
 
