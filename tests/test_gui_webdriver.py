@@ -1668,6 +1668,51 @@ def test_the_preview_in_container_shows_the_frame_the_build_writes(window, tmp_p
     wait_for_shown_frame_size(session, CONTAINER_VIEW_SOURCE_SIZE, "turning the view off never brought the source back")
 
 
+DOUBLE_CLICKED_SIZE = [640, 360]
+ENTERED_SIZE = [320, 240]
+ASSET_ROW_CLIP_SECONDS = 2
+OPEN_ASSET_KEY = "Return"
+FOCUS_ASSET_ROW = """
+document.querySelector(`#asset-list .asset-item[data-asset-id="${arguments[0]}"]`).focus();
+return document.activeElement?.dataset.assetId ?? null;
+"""
+
+
+def test_a_double_click_or_enter_on_an_asset_previews_it(window, tmp_path):
+    session = window.session
+    clips = {}
+    for name, (width, height) in [("double.mov", DOUBLE_CLICKED_SIZE), ("enter.mov", ENTERED_SIZE)]:
+        clips[name] = tmp_path / name
+        run_ffmpeg(
+            "-f", "lavfi",
+            "-i", f"testsrc2=size={width}x{height}:rate={FIXTURE_FPS}:duration={ASSET_ROW_CLIP_SECONDS}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(clips[name]),
+        )
+    wait_until(
+        "the project file handling never started",
+        lambda: session.execute(RECENT_LIST_STORED),
+        PAGE_TIMEOUT_SECONDS,
+    )
+    for clip in clips.values():
+        choose_in_dialog(window, "#import-video", clip)
+    asset_ids = {
+        name: wait_until(
+            f"{name} never reached the asset list",
+            lambda name=name: session.execute(ASSET_ID_NAMED, name),
+            OPEN_TIMEOUT_SECONDS,
+        )
+        for name in clips
+    }
+
+    window.double_click(f'#asset-list .asset-item[data-asset-id="{asset_ids["double.mov"]}"]')
+    wait_for_shown_frame_size(session, DOUBLE_CLICKED_SIZE, "a double-click never previewed the asset")
+
+    assert session.execute(FOCUS_ASSET_ROW, asset_ids["enter.mov"]) == asset_ids["enter.mov"]
+    window.press(OPEN_ASSET_KEY)
+    wait_for_shown_frame_size(session, ENTERED_SIZE, "Enter on a focused asset never previewed it")
+
+
 TIMELINE_CLIP_SECONDS = 10
 TIMELINE_SEEK_SECONDS = 5
 TIMELINE_HALFWAY = "50%"

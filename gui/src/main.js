@@ -655,7 +655,7 @@ function renderAssets() {
     ? `<div class="asset-files">${a.channelFiles.map(f => `<div><span class="asset-file-lane">${f.lane}</span> ${f.path.split(/[/\\]/).pop()}</div>`).join('')}</div>`
     : '';
   list.innerHTML = project.assets.map(a => `
-    <div class="asset-item${isChannelSet(a) ? ' channel-set' : ''}" data-asset-id="${a.id}" draggable="true">
+    <div class="asset-item${isChannelSet(a) ? ' channel-set' : ''}" data-asset-id="${a.id}" draggable="true" tabindex="0">
       <span class="asset-icon">${icons[a.type]}</span>
       <span class="asset-name" title="${a.path ?? a.name}">${a.name}</span>
       <span class="asset-meta">${a.meta || a.type}</span>
@@ -684,6 +684,12 @@ function renderAssets() {
       if (previewPath) selectPreview("source", previewPath);
       else setStatus(CHANNEL_SET_PREVIEW_STATUS);
     });
+    el.addEventListener('dblclick', () => previewAsset(parseInt(el.dataset.assetId)));
+    el.addEventListener('keydown', (event) => {
+      if (event.key !== "Enter" || event.target !== el) return;
+      event.preventDefault();
+      previewAsset(parseInt(el.dataset.assetId));
+    });
   });
   list.querySelectorAll('.asset-remove').forEach(el => {
     el.addEventListener('click', (e) => { e.stopPropagation(); removeAsset(parseInt(el.dataset.removeId)); });
@@ -702,6 +708,14 @@ function renderAssets() {
 }
 
 const CHANNEL_SET_PREVIEW_STATUS = "A channel set previews after the build";
+
+function previewAsset(assetId) {
+  const asset = project.assets.find(a => a.id === assetId);
+  if (!asset) return;
+  const previewPath = channelSetPreviewPath(asset);
+  if (previewPath) previewSource(previewPath);
+  else setStatus(CHANNEL_SET_PREVIEW_STATUS);
+}
 
 function soundTrackLabel(sound) {
   if (!sound) return 'Drop audio here';
@@ -3718,9 +3732,7 @@ ctxMenu?.querySelectorAll("button").forEach(btn => {
     const asset = project.assets.find(a => a.id === ctxAssetId);
     if (!asset) return;
     if (action === "preview") {
-      const previewPath = channelSetPreviewPath(asset);
-      if (previewPath) previewSource(previewPath);
-      else setStatus(CHANNEL_SET_PREVIEW_STATUS);
+      previewAsset(ctxAssetId);
     } else if (action === "remove") {
       removeAsset(ctxAssetId);
     } else if (action === "reveal") {
