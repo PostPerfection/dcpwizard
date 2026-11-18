@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Command } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as _open, save, confirm as tauriConfirm, message as tauriMessage } from "@tauri-apps/plugin-dialog";
@@ -4009,6 +4010,8 @@ refreshLibrary();
 updateStatusStats();
 initPreview();
 preferencesLoaded.then(() => initPlayerControlsPanel({ preferences: getPrefs(), save: (controls) => savePrefs({ ...getPrefs(), ...controls }) }));
+// wry leaves a macOS WKWebView white until its page paints, whatever the window background
+preferencesLoaded.finally(() => getCurrentWindow().show());
 watchPreviewShown((path, ended) => {
   previewShownPath = path;
   previewPlaybackEnded = ended;
