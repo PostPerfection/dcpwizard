@@ -3222,7 +3222,7 @@ fn encode_still(
         },
         cancel,
         pause,
-        on_progress,
+        |progress| on_progress(&progress.into()),
     )?;
     log(&format!(
         "[ENCODE] Still held for {} frame(s) at {}x{}",

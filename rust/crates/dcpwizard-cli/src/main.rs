@@ -5968,7 +5968,7 @@ fn run() {
                         },
                         &cancel,
                         &std::sync::atomic::AtomicBool::new(false),
-                        print_encode_progress,
+                        |progress| print_encode_progress(&progress.into()),
                     );
                     eprintln!();
                     if let Err(e) = result {
