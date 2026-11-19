@@ -1105,9 +1105,6 @@ fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
         }
     }
     let fades_picture = video_fade_in_seconds.is_some() || video_fade_out_seconds.is_some();
-    if fades_picture && still_input {
-        return Err("Video fades are not applied to a still hold".into());
-    }
     if fades_picture
         && dcpwizard_core::preflight::is_precompressed(postkit::encode::detect_input_type(&video))
     {
@@ -2634,8 +2631,7 @@ fn format_stage_timing(stage: &str, duration: std::time::Duration) -> String {
     )
 }
 
-/// The `[TIMING]` line naming where the time inside an encode went, or None
-/// when nothing was measured, which is a still or a J2K sequence.
+/// The `[TIMING]` line naming where the time inside an encode went, when measured.
 fn format_encode_breakdown(progress: &postkit::pipeline::PipelineProgress) -> Option<String> {
     let measured = progress.decode_wait_secs > 0.0
         || progress.prepare_secs > 0.0
@@ -3145,7 +3141,7 @@ fn job_video_fade_filter(
     window: Option<postkit::encode::FrameRange>,
     fps: postkit::encode::FrameRate,
 ) -> Result<Option<String>, String> {
-    if !job.fades_picture() {
+    if job.still_length_frames > 0 || !job.fades_picture() {
         return Ok(None);
     }
     let source_frames = job
@@ -3189,35 +3185,45 @@ fn job_subtitle_burn(
     .map(Some)
 }
 
-/// Build a still's frame directory: one encode, linked for every frame of the
-/// hold. Shaped as an [`postkit::pipeline::EncodeResult`] so the rest of the job
-/// does not care which kind of input it got.
+/// Build a still's frame directory, linking frames wherever the picture holds.
+#[allow(clippy::too_many_arguments)]
 fn encode_still(
     job: &JobConfig,
-    output: &std::path::Path,
     fps: postkit::encode::FrameRate,
     picture: &dcpwizard_core::source_picture::ResolvedPicture,
     encode_threads: u32,
+    cancel: &Arc<AtomicBool>,
+    pause: &AtomicBool,
+    on_progress: impl Fn(&postkit::pipeline::PipelineProgress),
     log: impl Fn(&str),
 ) -> Result<postkit::pipeline::EncodeResult, String> {
     let started = std::time::Instant::now();
-    let j2k_dir = output.join("j2k");
+    let j2k_dir = job.output_dir.join("j2k");
     let route = dcpwizard_core::encode::xyz_route(job.source_colourspace)?;
-    postkit::still::build_still_frames(&postkit::still::StillHold {
-        image: &job.video_path,
-        frames: job.still_length_frames,
-        fps,
-        width: picture.encode_width,
-        height: picture.encode_height,
-        filters: &picture.plan.filters,
-        apply_xyz_transform: route.compressor_transform(),
-        rsiz: postkit::encode::default_rsiz(),
-        encode_threads,
-        colour_transform: route.frame_transform()?,
-        burn: job_subtitle_burn(job, fps)?,
-        watermark: None,
-        out_dir: &j2k_dir,
-    })?;
+    postkit::still::build_still_frames_with_fades(
+        &postkit::still::StillHold {
+            image: &job.video_path,
+            frames: job.still_length_frames,
+            fps,
+            width: picture.encode_width,
+            height: picture.encode_height,
+            filters: &picture.plan.filters,
+            apply_xyz_transform: route.compressor_transform(),
+            rsiz: postkit::encode::default_rsiz(),
+            encode_threads,
+            colour_transform: route.frame_transform()?,
+            burn: job_subtitle_burn(job, fps)?,
+            watermark: None,
+            out_dir: &j2k_dir,
+        },
+        postkit::still::StillFades {
+            fade_in_seconds: job.video_fade_in_seconds,
+            fade_out_seconds: job.video_fade_out_seconds,
+        },
+        cancel,
+        pause,
+        on_progress,
+    )?;
     log(&format!(
         "[ENCODE] Still held for {} frame(s) at {}x{}",
         job.still_length_frames, picture.encode_width, picture.encode_height
@@ -3817,17 +3823,17 @@ fn run_logged_job(
                 }),
             };
 
-            // Encode using shared pipeline. A still never reaches it: it is one encode
-            // whose codestream is linked for every frame of the hold.
             encode_started = Instant::now();
             let device_frames_before = postkit::grok_encoder::accelerated_frames();
             let encode_result = if job.still_length_frames > 0 {
                 encode_still(
                     job,
-                    output,
                     encode_fps,
                     &resolved_picture,
                     encode_threads,
+                    &cancel,
+                    &pause,
+                    on_progress,
                     |msg| log_to(&log_ref, msg),
                 )?
             } else {
@@ -3866,7 +3872,7 @@ fn run_logged_job(
                     )?,
                 }
             };
-            // a still is one encode linked for every frame of the hold
+            // The still's frame count includes linked codestreams.
             if job.still_length_frames == 0 {
                 log_device_frames(device_frames_before, encode_result.frames_encoded);
             }
@@ -7354,18 +7360,24 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_fade_on_a_still_hold_is_refused() {
+    fn picture_fades_are_checked_against_the_still_hold() {
         let dir = tempfile::tempdir().unwrap();
-        let still = dir.path().join("card.png");
-        std::fs::write(&still, b"").unwrap();
-        let request = SubmitRequest {
-            video_path: still.to_string_lossy().into_owned(),
-            still_length: Some("2s".into()),
-            video_fade_out_seconds: Some(1.0),
-            ..SubmitRequest::default()
-        };
-        let refusal = job_config_of(1, request).err().unwrap();
-        assert_eq!(refusal, "Video fades are not applied to a still hold");
+        let card = still_image(dir.path());
+        let mut job = job_config_of(
+            1,
+            SubmitRequest {
+                timeline: Some(timeline_of(vec![timeline_clip(&card, 0, 0, 120)])),
+                video_fade_in_seconds: Some(1.5),
+                video_fade_out_seconds: Some(1.5),
+                ..SubmitRequest::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(job.still_length_frames, 120);
+        assert!(checked_job_plan(&job).is_ok());
+        job.video_fade_out_seconds = Some(5.5);
+        let refusal = checked_job_plan(&job).err().unwrap();
+        assert!(refusal.contains("video fade-out of 5.5s is longer than the 5s it fades"));
     }
 
     #[test]

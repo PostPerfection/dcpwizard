@@ -467,6 +467,16 @@ fn video_encode_window(
 }
 
 fn check_video_fades(plan: &CreatePlan) -> Result<(), String> {
+    if plan.picture_kind == PictureKind::Still && plan.still_frames > 0 {
+        return postkit::still::StillFades {
+            fade_in_seconds: plan.video_fade_in_seconds,
+            fade_out_seconds: plan.video_fade_out_seconds,
+        }
+        .validate(
+            plan.still_frames,
+            postkit::encode::FrameRate::whole(plan.fps.max(1)),
+        );
+    }
     let Some(source) = plan.source.as_ref().filter(|_| plan.video_file().is_some()) else {
         return Ok(());
     };

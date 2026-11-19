@@ -5917,8 +5917,7 @@ fn run() {
                     materialised
                 });
 
-                // a still becomes a codestream directory here: one encode, then
-                // the codestream linked for every frame of the hold
+                // Encode changes in a still and link the codestreams through the hold.
                 let still_j2k_dir = output_dir.join(postkit::still::HELD_PICTURE_DIR);
                 let source_j2k_dir = if let Some(materialised) = &materialised {
                     materialised.j2k_dir.clone()
@@ -5941,22 +5940,39 @@ fn run() {
                             exit_failed(e);
                         }
                     };
-                    if let Err(e) = postkit::still::build_still_frames(&postkit::still::StillHold {
-                        image: &video_path,
-                        frames,
-                        fps: postkit::encode::FrameRate::whole(fps),
-                        width,
-                        height,
-                        filters: &still_filters,
-                        apply_xyz_transform: xyz_route.compressor_transform(),
-                        rsiz: postkit::encode::default_rsiz(),
-                        encode_threads,
-                        colour_transform,
-                        burn: build_subtitle_burn(postkit::encode::FrameRate::whole(fps)),
-                        watermark: build_watermark(postkit::encode::FrameRate::whole(fps)),
-                        out_dir: &still_j2k_dir,
-                    }) {
-                        exit_failed(e);
+                    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let cancel_clone = cancel.clone();
+                    let _ = ctrlc::set_handler(move || {
+                        cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    });
+                    let rate = postkit::encode::FrameRate::whole(fps);
+                    let result = postkit::still::build_still_frames_with_fades(
+                        &postkit::still::StillHold {
+                            image: &video_path,
+                            frames,
+                            fps: rate,
+                            width,
+                            height,
+                            filters: &still_filters,
+                            apply_xyz_transform: xyz_route.compressor_transform(),
+                            rsiz: postkit::encode::default_rsiz(),
+                            encode_threads,
+                            colour_transform,
+                            burn: build_subtitle_burn(rate),
+                            watermark: build_watermark(rate),
+                            out_dir: &still_j2k_dir,
+                        },
+                        postkit::still::StillFades {
+                            fade_in_seconds: video_fade_in,
+                            fade_out_seconds: video_fade_out,
+                        },
+                        &cancel,
+                        &std::sync::atomic::AtomicBool::new(false),
+                        print_encode_progress,
+                    );
+                    eprintln!();
+                    if let Err(e) = result {
+                        exit_encode_failed(&cancel, e);
                     }
                     tracing::info!("Held the still for {frames} frame(s) at {width}x{height}");
                     still_j2k_dir.clone()

@@ -176,3 +176,61 @@ fn fades_land_on_the_kept_frames_of_a_trimmed_source() {
         peak(opening)
     );
 }
+
+#[test]
+fn a_five_second_still_rebuilds_under_a_new_title_with_picture_fades() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let card = directory.path().join("card.png");
+    run(
+        ffmpeg()
+            .args(["-f", "lavfi", "-i", "color=c=0xc0c0c0:s=320x180"])
+            .args(["-frames:v", "1"])
+            .arg(&card),
+        "ffmpeg has to write the still",
+    );
+    let output = directory.path().join("dcp");
+    let build = |title: &str| {
+        let mut command = Command::cargo_bin("dcpwizard").unwrap();
+        command
+            .env("XDG_CONFIG_HOME", config_home.path())
+            .args(["create", "--title", title, "--video"])
+            .arg(&card)
+            .args([
+                "--still-length",
+                "5s",
+                "--frame-rate",
+                "24",
+                "--container",
+                "2k-scope",
+            ])
+            .args(["--threads", "4", "-o"])
+            .arg(&output);
+        command
+    };
+    build("Still").assert().success();
+    build("Still Fades")
+        .args(["--video-fade-in", "1.5", "--video-fade-out", "1.5"])
+        .assert()
+        .success();
+
+    let still = frame_means(&only_file_starting_with(&output.join("Still"), "picture_"));
+    let faded = frame_means(&only_file_starting_with(
+        &output.join("Still Fades"),
+        "picture_",
+    ));
+    const FRAMES: usize = 120;
+    const FADE_FRAMES: usize = 36;
+    const MIDDLE: usize = FRAMES / 2;
+    assert_eq!(still.len(), FRAMES);
+    assert_eq!(faded.len(), FRAMES);
+    assert!(still[0] > LIT_FLOOR);
+    assert!(faded[0] < DARK_CEILING && faded[FRAMES - 1] < DARK_CEILING);
+    assert!(faded[0] < faded[FADE_FRAMES / 2] && faded[FADE_FRAMES / 2] < faded[MIDDLE]);
+    assert!(faded[MIDDLE] > faded[FRAMES - 1 - FADE_FRAMES / 2]);
+    assert!(faded[FRAMES - 1 - FADE_FRAMES / 2] > faded[FRAMES - 1]);
+    assert_eq!(
+        faded[FADE_FRAMES..FRAMES - FADE_FRAMES],
+        still[FADE_FRAMES..FRAMES - FADE_FRAMES]
+    );
+}
