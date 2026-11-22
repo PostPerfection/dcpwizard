@@ -13,7 +13,7 @@ then
 fi
 
 for candidate in "$GROK_INSTALL/lib" "$GROK_INSTALL/lib64"; do
-    if [[ -f "$candidate/libgrokj2k.1.dylib" && -f "$candidate/libgrokj2k_plugin.dylib" && -f "$candidate/grok_kernels.metallib" ]]; then
+    if [[ -f "$candidate/libgrokj2k.2.dylib" && -f "$candidate/libgrokj2k_plugin.dylib" && -f "$candidate/grok_kernels.metallib" ]]; then
         GROK_LIBRARY_DIRECTORY="$candidate"
         break
     fi
@@ -40,7 +40,7 @@ export FFMPEG_DIR="$FFMPEG_MPV_DIR"
 
 cargo build --release -p dcpwizard-cli --manifest-path "$ROOT/rust/Cargo.toml"
 "$ROOT/scripts/setup-tauri-bin.sh"
-cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.1.dylib" "$ROOT/gui/src-tauri/libgrokj2k.1.dylib"
+cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.2.dylib" "$ROOT/gui/src-tauri/libgrokj2k.2.dylib"
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.dylib" "$ROOT/gui/src-tauri/libgrokj2k_plugin.dylib"
 TARGET_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
 STAGED_HOMEBREW_LIBRARIES="$ROOT/gui/src-tauri/homebrew-libraries"

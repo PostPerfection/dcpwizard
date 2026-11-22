@@ -102,9 +102,9 @@ def install_sidecar():
 
 def grok_runtime_library():
     if sys.platform.startswith("linux"):
-        return "libgrokj2k.so.1"
+        return "libgrokj2k.so.2"
     if sys.platform == "darwin":
-        return "libgrokj2k.1.dylib"
+        return "libgrokj2k.2.dylib"
     if sys.platform == "win32":
         return "grokj2k.dll"
     return None

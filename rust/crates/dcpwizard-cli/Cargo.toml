@@ -51,7 +51,7 @@ conflicts = "dcp-wizard"
 replaces = "dcp-wizard"
 assets = [
     ["target/release/dcpwizard", "usr/bin/", "755"],
-    ["target/release/libgrokj2k.so.1", "usr/lib/dcpwizard/", "644"],
+    ["target/release/libgrokj2k.so.2", "usr/lib/dcpwizard/", "644"],
     # sonames of the ffmpeg-mpv-builds v1.0.0 release the workflows pin
     ["target/release/libavcodec.so.62", "usr/lib/dcpwizard/", "644"],
     ["target/release/libavfilter.so.11", "usr/lib/dcpwizard/", "644"],

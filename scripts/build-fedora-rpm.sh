@@ -13,7 +13,7 @@ then
 fi
 
 for candidate in "$GROK_INSTALL/lib64" "$GROK_INSTALL/lib"; do
-    if [[ -f "$candidate/libgrokj2k.so.1" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
+    if [[ -f "$candidate/libgrokj2k.so.2" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
         GROK_LIBRARY_DIRECTORY="$candidate"
         break
     fi
@@ -31,7 +31,7 @@ export FFMPEG_DIR="$FFMPEG_MPV_DIR"
 
 cargo build --release -p dcpwizard-cli --manifest-path "$ROOT/rust/Cargo.toml"
 "$ROOT/scripts/setup-tauri-bin.sh"
-cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.1" "$ROOT/gui/src-tauri/libgrokj2k.so.1"
+cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.2" "$ROOT/gui/src-tauri/libgrokj2k.so.2"
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.so" "$ROOT/gui/src-tauri/libgrokj2k_plugin.so"
 
 CUDA_ARCH="$(cuobjdump --list-elf "$ROOT/gui/src-tauri/libgrokj2k_plugin.so" | grep -oE 'sm_[0-9]+' | head -1)"
@@ -46,7 +46,7 @@ FFMPEG_MPV_FILES="$("$ROOT/scripts/ffmpeg-mpv-bundle-config.sh" "$FFMPEG_MPV_DIR
 cd "$ROOT/gui"
 pnpm install --frozen-lockfile
 # the plugin is private, the committed config leaves it out
-PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"release":"'"$RPM_RELEASE"'","files":{"/usr/lib/dcpwizard/libgrokj2k.so.1":"libgrokj2k.so.1","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
+PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"release":"'"$RPM_RELEASE"'","files":{"/usr/lib/dcpwizard/libgrokj2k.so.2":"libgrokj2k.so.2","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
 pnpm tauri build --bundles rpm --config "$FFMPEG_MPV_FILES" --config "$PLUGIN_FILES"
 
 # tauri names the file after the product name, which has a space

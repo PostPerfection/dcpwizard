@@ -89,7 +89,7 @@ run_in_image \
     -e CARGO_HOME=/cache/cargo \
     "$IMAGE" bash -euo pipefail <<'EOF'
 for candidate in /grok-install/lib64 /grok-install/lib; do
-    if [[ -f "$candidate/libgrokj2k.so.1" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
+    if [[ -f "$candidate/libgrokj2k.so.2" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
         GROK_LIBRARY_DIRECTORY="$candidate"
         break
     fi
@@ -109,7 +109,7 @@ export FFMPEG_DIR="$FFMPEG_MPV_DIR"
 cd /wizard
 cargo build --release -p dcpwizard-cli --manifest-path rust/Cargo.toml
 scripts/setup-tauri-bin.sh
-cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.1" gui/src-tauri/libgrokj2k.so.1
+cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.2" gui/src-tauri/libgrokj2k.so.2
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.so" gui/src-tauri/libgrokj2k_plugin.so
 
 CUBIN_ARCH="$(cuobjdump --list-elf gui/src-tauri/libgrokj2k_plugin.so | grep -oE 'sm_[0-9]+' | head -1 || true)"
@@ -124,7 +124,7 @@ pnpm install --frozen-lockfile --store-dir /cache/pnpm-store
 DEB_CONFIG="$(../scripts/ffmpeg-mpv-bundle-config.sh "$FFMPEG_MPV_DIR" Linux | jq -c '{bundle: {linux: {deb: {
     depends: (.bundle.linux.deb.depends + ["libtiff6", "libcurl4t64"]),
     files: (.bundle.linux.deb.files + {
-        "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
+        "/usr/lib/dcpwizard/libgrokj2k.so.2": "libgrokj2k.so.2",
         "/usr/lib/dcpwizard/libgrokj2k_plugin.so": "libgrokj2k_plugin.so"
     })
 }}}}')"

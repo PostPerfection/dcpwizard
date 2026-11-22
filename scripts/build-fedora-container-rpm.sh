@@ -91,7 +91,7 @@ run_in_image \
     -e RPM_RELEASE="$RPM_RELEASE" \
     "$IMAGE" bash -euo pipefail <<'EOF'
 for candidate in /grok-install/lib64 /grok-install/lib; do
-    if [[ -f "$candidate/libgrokj2k.so.1" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
+    if [[ -f "$candidate/libgrokj2k.so.2" && -f "$candidate/libgrokj2k_plugin.so" ]]; then
         GROK_LIBRARY_DIRECTORY="$candidate"
         break
     fi
@@ -109,7 +109,7 @@ export LD_LIBRARY_PATH="$FFMPEG_MPV_DIR/lib:$GROK_LIBRARY_DIRECTORY"
 cd /wizard
 cargo build --release -p dcpwizard-cli --manifest-path rust/Cargo.toml
 scripts/setup-tauri-bin.sh
-cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.1" gui/src-tauri/libgrokj2k.so.1
+cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k.so.2" gui/src-tauri/libgrokj2k.so.2
 cp -L "$GROK_LIBRARY_DIRECTORY/libgrokj2k_plugin.so" gui/src-tauri/libgrokj2k_plugin.so
 
 CUBIN_ARCH="$(cuobjdump --list-elf gui/src-tauri/libgrokj2k_plugin.so | grep -oE 'sm_[0-9]+' | head -1 || true)"
@@ -123,7 +123,7 @@ FFMPEG_MPV_FILES="$(scripts/ffmpeg-mpv-bundle-config.sh "$FFMPEG_MPV_DIR" Linux)
 cd gui
 pnpm install --frozen-lockfile --store-dir /cache/pnpm-store
 # the plugin is private, the committed config leaves it out
-PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"release":"'"$RPM_RELEASE"'","files":{"/usr/lib/dcpwizard/libgrokj2k.so.1":"libgrokj2k.so.1","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
+PLUGIN_FILES='{"bundle":{"linux":{"rpm":{"release":"'"$RPM_RELEASE"'","files":{"/usr/lib/dcpwizard/libgrokj2k.so.2":"libgrokj2k.so.2","/usr/lib/dcpwizard/libgrokj2k_plugin.so":"libgrokj2k_plugin.so"}}}}}'
 pnpm tauri build --bundles rpm --config "$FFMPEG_MPV_FILES" --config "$PLUGIN_FILES"
 EOF
 

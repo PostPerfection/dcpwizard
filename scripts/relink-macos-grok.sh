@@ -6,7 +6,7 @@ shopt -s nullglob
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TAURI_DIR="${ROOT}/gui/src-tauri"
 TARGET_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
-DYLIB_NAME="libgrokj2k.1.dylib"
+DYLIB_NAME="libgrokj2k.2.dylib"
 INSTALL_NAME="@executable_path/../Frameworks/${DYLIB_NAME}"
 PLUGIN_NAME="libgrokj2k_plugin.dylib"
 FRAMEWORKS_RPATH="@executable_path/../Frameworks"

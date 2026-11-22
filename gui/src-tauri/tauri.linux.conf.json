@@ -21,7 +21,7 @@
           "dcpwizard"
         ],
         "files": {
-          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
+          "/usr/lib/dcpwizard/libgrokj2k.so.2": "libgrokj2k.so.2",
           "/usr/share/mime/packages/dcpwizard.xml": "linux/dcpwizard-mime.xml"
         },
         "desktopTemplate": "linux/dcpwizard-gui.desktop"
@@ -36,7 +36,7 @@
           "libtiff.so.6()(64bit)"
         ],
         "files": {
-          "/usr/lib/dcpwizard/libgrokj2k.so.1": "libgrokj2k.so.1",
+          "/usr/lib/dcpwizard/libgrokj2k.so.2": "libgrokj2k.so.2",
           "/usr/share/mime/packages/dcpwizard.xml": "linux/dcpwizard-mime.xml"
         },
         "desktopTemplate": "linux/dcpwizard-gui.desktop"
