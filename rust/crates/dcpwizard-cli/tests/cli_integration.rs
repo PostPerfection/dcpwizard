@@ -708,6 +708,27 @@ fn encode_compresses_a_still_sequence_into_a_j2k_directory() {
 }
 
 #[test]
+fn encode_with_progress_prints_a_line_for_the_last_frame() {
+    let dir = TempDir::new().unwrap();
+    let stills = dir.path().join("stills");
+    write_test_stills(&stills, 2048, 1080);
+    let out = dir.path().join("out");
+
+    let run = cmd()
+        .args(["encode", "--input", stills.to_str().unwrap()])
+        .args(["--output", out.to_str().unwrap(), "--progress"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(run.status.success(), "{stderr}");
+    let last = stderr
+        .lines()
+        .rfind(|line| line.starts_with("progress encode "));
+    assert_eq!(last, Some("progress encode 3 3"), "{stderr}");
+}
+
+#[test]
 fn encode_fits_the_stills_into_the_named_container() {
     let dir = TempDir::new().unwrap();
     let stills = dir.path().join("stills");

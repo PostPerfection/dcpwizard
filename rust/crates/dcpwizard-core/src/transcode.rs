@@ -15,7 +15,10 @@ pub struct TranscodeConfig {
 }
 
 /// Transcode video to an image sequence using ffmpeg.
-pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
+pub fn transcode_to_sequence(
+    config: &TranscodeConfig,
+    on_progress: impl FnMut(postkit::transcode::FfmpegProgress),
+) -> i32 {
     if !config.input_file.exists() {
         tracing::error!("Input file not found: {}", config.input_file.display());
         return -1;
@@ -40,8 +43,8 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
 
     let pattern = config.output_dir.join(format!("frame_%08d.{ext}"));
 
-    let mut cmd = std::process::Command::new("ffmpeg");
-    cmd.arg("-y").arg("-i").arg(&config.input_file);
+    let mut args: Vec<std::ffi::OsString> =
+        vec!["-y".into(), "-i".into(), config.input_file.clone().into()];
 
     // Build filter chain
     let mut filters = Vec::new();
@@ -56,21 +59,27 @@ pub fn transcode_to_sequence(config: &TranscodeConfig) -> i32 {
     }
 
     if !filters.is_empty() {
-        cmd.arg("-vf").arg(filters.join(","));
+        args.extend(["-vf".into(), filters.join(",").into()]);
     }
 
     if !config.pixel_format.is_empty() {
-        cmd.arg("-pix_fmt").arg(&config.pixel_format);
+        args.extend(["-pix_fmt".into(), config.pixel_format.clone().into()]);
     } else if ext == "tiff" || ext == "dpx" {
-        cmd.arg("-pix_fmt").arg("rgb48le");
+        args.extend(["-pix_fmt".into(), "rgb48le".into()]);
     }
 
     // Disable audio
-    cmd.arg("-an");
-    cmd.arg(&pattern);
+    args.push("-an".into());
+    args.push(pattern.clone().into());
 
     let never_cancelled = AtomicBool::new(false);
-    match postkit::transcode::run_ffmpeg_until_cancelled(cmd, &pattern, &never_cancelled) {
+    match postkit::transcode::run_ffmpeg_until_cancelled(
+        args,
+        &config.input_file,
+        &pattern,
+        &never_cancelled,
+        on_progress,
+    ) {
         Ok(()) => {
             let frame_count = std::fs::read_dir(&config.output_dir)
                 .into_iter()

@@ -31,7 +31,7 @@ pub fn import_video(config: &ImportConfig) -> i32 {
         target_fps: config.target_fps,
         pixel_format: String::new(),
     };
-    let frames_exit_code = crate::transcode::transcode_to_sequence(&frames);
+    let frames_exit_code = crate::transcode::transcode_to_sequence(&frames, |_| {});
     if frames_exit_code != 0 {
         return frames_exit_code;
     }

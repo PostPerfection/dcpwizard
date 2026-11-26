@@ -234,6 +234,35 @@ fn transcode_writes_one_still_per_source_frame_at_the_source_rate() {
 }
 
 #[test]
+fn transcode_with_progress_prints_lines_up_to_the_whole_master() {
+    let directory = TempDir::new().unwrap();
+    let master = write_transcode_master(directory.path());
+    let stills = directory.path().join("stills");
+
+    let run = Command::cargo_bin("dcpwizard")
+        .unwrap()
+        .args(["transcode", "--input", master.to_str().unwrap()])
+        .args(["--output", stills.to_str().unwrap()])
+        .args(["--format", "png", "--bit-depth", "8", "--progress"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(run.status.success(), "{stderr}");
+    let progress: Vec<(u64, u64)> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("progress transcode "))
+        .map(|counts| {
+            let (done, total) = counts.split_once(' ').unwrap();
+            (done.parse().unwrap(), total.parse().unwrap())
+        })
+        .collect();
+    let (done, total) = *progress.last().expect("no progress line printed");
+    assert!(total > 0);
+    assert_eq!(done, total, "{stderr}");
+}
+
+#[test]
 fn transcode_refuses_an_image_format_it_does_not_know() {
     let directory = TempDir::new().unwrap();
     let master = write_transcode_master(directory.path());

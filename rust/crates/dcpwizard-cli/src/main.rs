@@ -5,7 +5,6 @@ use dcpwizard_core::dcp::{NO_CONTAINER, resolve_container};
 use dcpwizard_core::job_log;
 
 mod preset_arguments;
-mod progress_lines;
 mod vendor_credentials;
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -1381,6 +1380,9 @@ enum Commands {
         /// 2k-full, 4k-scope, 4k-flat, or 4k-full. Unset keeps each frame's own size
         #[arg(long)]
         container: Option<String>,
+        /// Print `progress encode <done> <total>` lines to stderr, counting frames
+        #[arg(long)]
+        progress: bool,
     },
     /// Full pipeline: video → J2K → DCP (streaming, no intermediate files)
     Pipeline {
@@ -1424,6 +1426,9 @@ enum Commands {
         /// Bit depth: 16 (default), 10, or 8
         #[arg(long, default_value = "16")]
         bit_depth: u32,
+        /// Print `progress transcode <done> <total>` lines to stderr, counting microseconds
+        #[arg(long)]
+        progress: bool,
     },
     /// Re-encode an existing DCP's picture essence at another bandwidth or in another container
     TranscodeDcp {
@@ -1822,6 +1827,9 @@ enum Commands {
         /// encoder's default
         #[arg(long)]
         crf: Option<u32>,
+        /// Print `progress burnin <done> <total>` lines to stderr, counting microseconds
+        #[arg(long)]
+        progress: bool,
     },
     /// Convert video to a target DCI container (scale/crop/letterbox)
     Convert {
@@ -6241,6 +6249,7 @@ fn run() {
             bandwidth,
             fps,
             container,
+            progress,
         } => {
             use std::sync::Arc;
             use std::sync::atomic::AtomicBool;
@@ -6266,12 +6275,21 @@ fn run() {
                 encode_threads,
                 container,
             };
-            let result = dcpwizard_core::encode::encode_image_sequence(
-                &encode,
-                &cancel,
-                print_encode_progress,
+            let progress_lines = std::cell::RefCell::new(
+                progress.then(postkit::progress_lines::ProgressLines::default),
             );
-            eprintln!();
+            let result =
+                dcpwizard_core::encode::encode_image_sequence(&encode, &cancel, |report| {
+                    match &mut *progress_lines.borrow_mut() {
+                        Some(progress_lines) => {
+                            progress_lines.print("encode", report.frame, report.total_frames)
+                        }
+                        None => print_encode_progress(report),
+                    }
+                });
+            if !progress {
+                eprintln!();
+            }
             match result {
                 Ok(result) => {
                     tracing::info!(
@@ -6457,6 +6475,7 @@ fn run() {
             output,
             format,
             bit_depth,
+            progress,
         } => {
             // 8/10/16-bit packed RGB pixel formats ffmpeg understands for these codecs
             let pixel_format = match bit_depth {
@@ -6474,7 +6493,16 @@ fn run() {
                 pixel_format: pixel_format.to_string(),
                 ..Default::default()
             };
-            dcpwizard_core::transcode::transcode_to_sequence(&config)
+            let mut progress_lines = progress.then(postkit::progress_lines::ProgressLines::default);
+            dcpwizard_core::transcode::transcode_to_sequence(&config, |report| {
+                if let Some(progress_lines) = &mut progress_lines {
+                    progress_lines.print(
+                        "transcode",
+                        report.done_microseconds,
+                        report.total_microseconds,
+                    );
+                }
+            })
         }
 
         Commands::TranscodeDcp {
@@ -6550,7 +6578,7 @@ fn run() {
             quiet,
             progress,
         } => {
-            let mut progress_lines = progress_lines::ProgressLines::default();
+            let mut progress_lines = progress.then(postkit::progress_lines::ProgressLines::default);
             let result = dcpwizard_core::verify::verify_dcp_with_progress(
                 &PathBuf::from(&dcp_dir),
                 &dcpwizard_core::verify::VerifyCliOptions {
@@ -6563,13 +6591,14 @@ fn run() {
                     ov_dir: ov.map(PathBuf::from),
                 },
                 &mut |report| {
-                    if !progress {
+                    let Some(progress_lines) = &mut progress_lines else {
                         return;
-                    }
-                    let stage = progress_lines::verify_stage_name(report.stage);
-                    if let Some(line) = progress_lines.line_for(stage, report.done, report.total) {
-                        eprintln!("{line}");
-                    }
+                    };
+                    let stage = match report.stage {
+                        dcpwizard_core::verify::VerifyStage::HashCheck => "hashes",
+                        dcpwizard_core::verify::VerifyStage::FrameScan => "frames",
+                    };
+                    progress_lines.print(stage, report.done, report.total);
                 },
             );
 
@@ -6718,18 +6747,13 @@ fn run() {
         ),
 
         Commands::Copy { src, dst, progress } => {
-            let mut progress_lines = progress_lines::ProgressLines::default();
+            let mut progress_lines = progress.then(postkit::progress_lines::ProgressLines::default);
             dcpwizard_core::copy_drive::copy_to_drive(
                 &PathBuf::from(src),
                 &PathBuf::from(dst),
                 &mut |report| {
-                    if !progress {
-                        return;
-                    }
-                    let line =
-                        progress_lines.line_for("copy", report.done_bytes, report.total_bytes);
-                    if let Some(line) = line {
-                        eprintln!("{line}");
+                    if let Some(progress_lines) = &mut progress_lines {
+                        progress_lines.print("copy", report.done_bytes, report.total_bytes);
                     }
                 },
             )
@@ -7091,6 +7115,7 @@ fn run() {
             position,
             video_codec,
             crf,
+            progress,
         } => {
             let opts = dcpwizard_core::burnin::BurninOptions {
                 input: PathBuf::from(&input),
@@ -7103,7 +7128,17 @@ fn run() {
                 video_crf: crf,
                 ..Default::default()
             };
-            match dcpwizard_core::burnin::burnin(&opts) {
+            let mut progress_lines = progress.then(postkit::progress_lines::ProgressLines::default);
+            let burnt = dcpwizard_core::burnin::burnin(&opts, |report| {
+                if let Some(progress_lines) = &mut progress_lines {
+                    progress_lines.print(
+                        "burnin",
+                        report.done_microseconds,
+                        report.total_microseconds,
+                    );
+                }
+            });
+            match burnt {
                 Ok(()) => {
                     tracing::info!("Burned subtitles into: {output}");
                     0

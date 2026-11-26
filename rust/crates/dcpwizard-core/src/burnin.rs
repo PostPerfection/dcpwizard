@@ -9,13 +9,16 @@ use crate::subtitle_extract::PackagedTrack;
 use crate::subtitle_preview::{PACKAGED_EXTENSIONS, playable_subtitle_file};
 use std::path::Path;
 
-pub fn burnin(opts: &BurninOptions) -> Result<(), String> {
+pub fn burnin(
+    opts: &BurninOptions,
+    on_progress: impl FnMut(postkit::transcode::FfmpegProgress),
+) -> Result<(), String> {
     let Some(subtitle) = opts
         .subtitle_file
         .as_deref()
         .filter(|subtitle| is_packaged_subtitle(subtitle))
     else {
-        return postkit::burnin::burnin(opts).map_err(|e| e.to_string());
+        return postkit::burnin::burnin(opts, on_progress).map_err(|e| e.to_string());
     };
     let work_dir = tempfile::tempdir()
         .map_err(|e| format!("cannot create a folder for the converted subtitles: {e}"))?;
@@ -24,7 +27,7 @@ pub fn burnin(opts: &BurninOptions) -> Result<(), String> {
         subtitle_file: Some(srt),
         ..opts.clone()
     };
-    postkit::burnin::burnin(&converted).map_err(|e| e.to_string())
+    postkit::burnin::burnin(&converted, on_progress).map_err(|e| e.to_string())
 }
 
 fn is_packaged_subtitle(subtitle: &Path) -> bool {
@@ -109,8 +112,8 @@ mod tests {
             ..Default::default()
         };
 
-        burnin(&options(&burnt, Some(subtitle))).unwrap();
-        burnin(&options(&plain, None)).unwrap();
+        burnin(&options(&burnt, Some(subtitle)), |_| {}).unwrap();
+        burnin(&options(&plain, None), |_| {}).unwrap();
 
         assert_ne!(
             grey_frame_at(&burnt, SECONDS_INTO_CUE),

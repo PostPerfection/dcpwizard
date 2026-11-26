@@ -462,9 +462,10 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
         <li>Pick the folder of images as Input, and an Output Directory.</li>
         <li>Set Bandwidth (Mbps) and press Encode.</li>
     </ol>
-    <p>The JPEG 2000 files go in a <code>j2k</code> folder inside the output.</p>
+    <p>The results box shows the percent encoded while it runs. The JPEG 2000 files go in a <code>j2k</code> folder inside the output.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard encode -i ./frames -o ./encoded --bandwidth 230</pre>
+    <p><code>--progress</code> prints <code>progress encode &lt;frames done&gt; &lt;total&gt;</code> lines to stderr.</p>
 
     <h2 id="transcode">Transcode a video to frames</h2>
     <h3>In the app</h3>
@@ -473,9 +474,10 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
         <li>Pick the Input Video and an Output Directory.</li>
         <li>Choose Format and Bit Depth, and press Transcode.</li>
     </ol>
-    <p>The frames are named <code>frame_00000001.tiff</code> and on. A 16-bit 2K TIFF is about 12 MB, so a feature needs over a terabyte.</p>
+    <p>The results box shows the percent transcoded while it runs. The frames are named <code>frame_00000001.tiff</code> and on. A 16-bit 2K TIFF is about 12 MB, so a feature needs over a terabyte.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard transcode -i movie.mov -o ./frames --format tiff --bit-depth 16</pre>
+    <p><code>--progress</code> prints <code>progress transcode &lt;done&gt; &lt;total&gt;</code> lines to stderr, counting microseconds of the input.</p>
 
     <h2 id="loudness">Measure loudness</h2>
     <h3>In the app</h3>
@@ -541,9 +543,10 @@ dcpwizard verify "./dcp/My Film" --strict --progress</pre>
         <li>Pick the Video Input and the Subtitle File. SRT, ASS/SSA, WebVTT, and SMPTE or Interop XML or MXF all work.</li>
         <li>Press Burn In.</li>
     </ol>
-    <p>The result is <code>&lt;video name&gt;_burnin.mp4</code>.</p>
+    <p>The results box shows the percent done while it runs. The result is <code>&lt;video name&gt;_burnin.mp4</code>.</p>
     <h3>From a terminal</h3>
 <pre>dcpwizard burnin -i movie.mov -s subs.srt -o review.mp4</pre>
+    <p><code>--progress</code> prints <code>progress burnin &lt;done&gt; &lt;total&gt;</code> lines to stderr, counting microseconds of the input.</p>
 
     <h2 id="convert">Convert to a DCI container</h2>
     <h3>In the app</h3>

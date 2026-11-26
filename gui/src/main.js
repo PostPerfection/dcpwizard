@@ -57,7 +57,7 @@ import { initLoudnessPanel, initLoudnessToolPanel, optionalNumber } from "../../
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
 import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
-import { parseSidecarProgress, sidecarProgressDisplay } from "./sidecar-progress.js";
+import { parseSidecarProgress, runWithProgress, sidecarProgressDisplay } from "../../extern/guikit/src/sidecar-progress.js";
 import { setDragLabel } from "../../extern/guikit/src/drag-label.js";
 import { escapeHtml } from "../../extern/guikit/src/html.js";
 import { dropIntoJoin, joinedPayload, libraryPayload } from "./library-joins.js";
@@ -3366,9 +3366,8 @@ document.getElementById("run-encode")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("encode-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Encoding...";
-  const args = ["encode", "-i", input, "-o", output, "--bandwidth", bandwidth, "--fps", framerate, "--container", container];
-  const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
+  const args = ["encode", "-i", input, "-o", output, "--bandwidth", bandwidth, "--fps", framerate, "--container", container, "--progress"];
+  const result = await runWithProgress(Command.sidecar("dcpwizard", args), ({ text }) => { resultsBox.textContent = text; });
   resultsBox.textContent = result.code === 0
     ? "✓ Encode complete\n\n" + result.stdout
     : "✗ Failed\n\n" + (result.stderr || result.stdout);
@@ -3397,9 +3396,8 @@ document.getElementById("tc-start")?.addEventListener("click", async () => {
   const resultsBox = document.getElementById("tc-results");
   resultsBox.classList.add("visible");
   resultsBox.textContent = "Transcoding...";
-  const args = ["transcode", "-i", input, "-o", output, "--format", format, "--bit-depth", bitdepth];
-  const cmd = Command.sidecar("dcpwizard", args);
-  const result = await cmd.execute();
+  const args = ["transcode", "-i", input, "-o", output, "--format", format, "--bit-depth", bitdepth, "--progress"];
+  const result = await runWithProgress(Command.sidecar("dcpwizard", args), ({ text }) => { resultsBox.textContent = text; });
   resultsBox.textContent = result.code === 0
     ? "✓ Transcode complete\n\n" + result.stdout
     : "✗ Failed\n\n" + (result.stderr || result.stdout);
@@ -4153,9 +4151,8 @@ document.getElementById("burnin-start")?.addEventListener("click", async () => {
 
   try {
     const outputFile = outputFileInFolder({ folder: output, input: video, nameParts: [BURN_IN_NAME_PART], extension: BURN_IN_EXTENSION });
-    const args = ["burnin", "-i", video, "-s", sub, "-o", outputFile];
-    const cmd = Command.sidecar("dcpwizard", args);
-    const result = await cmd.execute();
+    const args = ["burnin", "-i", video, "-s", sub, "-o", outputFile, "--progress"];
+    const result = await runWithProgress(Command.sidecar("dcpwizard", args), ({ text }) => { resultsEl.textContent = text; });
     resultsEl.textContent = result.code === 0
       ? `✓ Burn-in complete\n${result.stdout}`
       : `✗ Error:\n${result.stderr || result.stdout}`;
