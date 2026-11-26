@@ -54,6 +54,15 @@ postkit = { path = "../../extern/postkit" }
 [profile.dev.package.postkit]
 opt-level = 2
 
+[profile.dev.package.g2g-core]
+opt-level = 3
+
+[profile.dev.package.g2g-plugins]
+opt-level = 3
+
+[profile.dev.package.g2g-player]
+opt-level = 3
+
 # bindgen in the ffmpeg-sys-next build script overflows the stack on Windows when unoptimised
 [profile.dev.build-override]
 opt-level = 1

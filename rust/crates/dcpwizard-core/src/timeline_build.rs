@@ -187,15 +187,14 @@ fn resolve_clip(
 }
 
 fn clip_source_size(picture: &Path) -> Result<(u32, u32), String> {
-    let size = match postkit::encode::detect_input_type(picture) {
-        InputType::ImageSequence if picture.is_dir() => crate::encode::first_image_raster(picture),
-        InputType::J2kSequence => crate::reel::collect_frames(picture)
-            .first()
-            .map(|frame| crate::pad::read_j2k_dimensions(frame))
-            .transpose()?,
-        _ => crate::probe::probe_video(picture).map(|info| (info.width, info.height)),
-    };
-    size.ok_or_else(|| format!("cannot read the size of {}", picture.display()))
+    if postkit::encode::detect_input_type(picture) == InputType::J2kSequence {
+        let frame = crate::reel::collect_frames(picture)
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("cannot read the size of {}", picture.display()))?;
+        return crate::pad::read_j2k_dimensions(&frame);
+    }
+    postkit::encode::source_raster(picture)
 }
 
 #[derive(Debug)]

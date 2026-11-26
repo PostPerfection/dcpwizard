@@ -527,8 +527,8 @@ document.getElementById("import-video")?.addEventListener("click", async () => {
 });
 
 document.getElementById("import-image-sequence")?.addEventListener("click", async () => {
-  const directory = await open({ directory: true });
-  if (directory) importAssetFromPath(directory, 'video');
+  const directories = await open({ directory: true, multiple: true });
+  for (const directory of directories ?? []) importAssetFromPath(directory, 'video', { noAudioStream: true });
 });
 
 document.getElementById("import-audio")?.addEventListener("click", async () => {
@@ -578,9 +578,9 @@ async function groupAudioIntoChannelSets() {
   setStatus(channelSetStatus([...new Set(absorbedInto.values())], groups));
 }
 
-function importAssetFromPath(path, type) {
+function importAssetFromPath(path, type, { noAudioStream = false } = {}) {
   const name = path.split(/[/\\]/).pop();
-  const asset = { id: nextAssetId++, type, path, name, meta: '' };
+  const asset = { id: nextAssetId++, type, path, name, meta: '', ...(noAudioStream ? { noAudioStream } : {}) };
   project.assets.push(asset);
   storeActiveTimeline(withImportedAsset(activeTimeline(), asset));
 
@@ -602,6 +602,7 @@ function importAssetFromPath(path, type) {
         const raster = await probeSourceRaster(asset);
         asset.meta = raster ? `${raster.width}×${raster.height} ${length.frames} frames` : `${length.frames} frames`;
       }
+      if (!project.assets.includes(asset)) return;
       if (length) takeProbedLength(asset);
       if (probed && !probed.hasAudio) takeNoAudioStream(asset);
       if (probed && project.assets.filter(a => a.type === 'video').length === 1) showDetectedValues(probed);
@@ -658,9 +659,9 @@ function renderAssets() {
   list.innerHTML = project.assets.map(a => `
     <div class="asset-item${isChannelSet(a) ? ' channel-set' : ''}" data-asset-id="${a.id}" draggable="true" tabindex="0">
       <span class="asset-icon">${icons[a.type]}</span>
-      <span class="asset-name" title="${a.path ?? a.name}">${a.name}</span>
+      <span class="asset-name" title="${escapeHtml(a.path ?? a.name)}">${escapeHtml(a.name)}</span>
       <span class="asset-meta">${a.meta || a.type}</span>
-      <button class="asset-remove" data-remove-id="${a.id}" title="Remove from project">✕</button>
+      <button class="asset-remove" type="button" data-remove-id="${a.id}" aria-label="Remove ${escapeHtml(a.name)} from project">Remove</button>
       ${channelFileList(a)}
     </div>
   `).join('');
@@ -685,11 +686,17 @@ function renderAssets() {
       if (previewPath) selectPreview("source", previewPath);
       else setStatus(CHANNEL_SET_PREVIEW_STATUS);
     });
-    el.addEventListener('dblclick', () => previewAsset(parseInt(el.dataset.assetId)));
+    el.addEventListener('dblclick', (event) => {
+      if (!event.target.closest('.asset-remove')) previewAsset(Number(el.dataset.assetId));
+    });
     el.addEventListener('keydown', (event) => {
-      if (event.key !== "Enter" || event.target !== el) return;
+      if (event.target !== el || (event.key !== "Enter" && event.key !== "Delete")) return;
       event.preventDefault();
-      previewAsset(parseInt(el.dataset.assetId));
+      if (event.key === "Delete") {
+        if (!event.repeat) removeAsset(Number(el.dataset.assetId));
+      } else {
+        previewAsset(Number(el.dataset.assetId));
+      }
     });
   });
   list.querySelectorAll('.asset-remove').forEach(el => {
@@ -2077,11 +2084,12 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
   const statsEl = document.getElementById("progress-stats");
   if (!anotherBuildInFlight) {
     progressSection.style.display = "flex";
-    progressBar.value = 0;
-    stageEl.textContent = "Queued...";
+    progressBar.removeAttribute("value");
+    stageEl.textContent = "Checking build settings…";
     statsEl.textContent = "";
     paused = false;
     resetStatusBar();
+    setStatus("Preparing DCP build…");
   }
   let projectRecordPath = null;
   let jobId = null;
@@ -2170,6 +2178,7 @@ document.getElementById("btn-build")?.addEventListener("click", async () => {
       setStatus(`Queued "${buildTitle}" behind the running build`);
     } else {
       currentJobId = jobId;
+      stageEl.textContent = "Preparing picture encode…";
       setStatus("Building DCP...");
     }
     projectRecordPath = await saveProjectBesidePackage(output);
@@ -2369,7 +2378,11 @@ async function previewSourcePicture(path, clipIndex = clipIndexShowing(path, nul
   if (cancelled) return;
   previewGeneration += 1;
   const generation = previewGeneration;
-  const loaded = previewFile(path, contentKeys, [], { paused });
+  const [numerator, denominator] = clipRate(activeTimeline().clips[clipIndex]);
+  const loaded = previewFile(path, contentKeys, [], {
+    paused,
+    imageSequenceFps: { numerator, denominator },
+  });
   forgetContentKeysIfRefused(path, loaded);
   previewedPackage = null;
   previewShowsJobPicture = clipIndex !== null;
@@ -2389,7 +2402,7 @@ function clipSubtitlePath(clipIndex) {
 }
 
 function clipRate(clip) {
-  return parseFrameRate(assetById(clip.picture).fps) ?? activeTimeline().fps;
+  return (clip ? parseFrameRate(assetById(clip.picture).fps) : null) ?? activeTimeline().fps;
 }
 
 // a frame in another clip loads that clip's picture first
@@ -3718,13 +3731,15 @@ document.addEventListener("click", () => { if (ctxMenu) ctxMenu.hidden = true; }
 async function removeAsset(assetId) {
   const asset = project.assets.find(a => a.id === assetId);
   if (!asset) return;
-  if (!(await tauriConfirm(`Remove "${asset.name}" from project?`))) return;
+  if (!(await tauriConfirm(`Remove "${asset.name}" from Assets and every composition that uses it? The source files will stay on disk.`))) return;
+  if (!project.assets.includes(asset)) return;
   project.assets = project.assets.filter(a => a.id !== assetId);
+  if (asset.path && previewShownPath === asset.path) stopPreview();
   if (selectedPreview?.kind === "source" && selectedPreview.path === asset.path) clearPreviewSelection();
   for (const composition of project.compositions) composition.timeline = withoutAsset(composition.timeline, assetId);
-  fillTimelineFromUnplacedAssets();
   renderAssets();
   showActiveTimeline();
+  setStatus(`Removed "${asset.name}" from the project`);
 }
 
 ctxMenu?.querySelectorAll("button").forEach(btn => {

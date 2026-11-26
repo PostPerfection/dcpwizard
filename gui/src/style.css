@@ -122,6 +122,15 @@
   cursor: not-allowed;
 }
 
+#asset-list .asset-remove {
+  color: inherit;
+  opacity: 1;
+}
+
+#asset-list .asset-remove:hover {
+  text-decoration: underline;
+}
+
 /* the mono files of a channel set, under its asset row */
 .asset-item.channel-set {
   flex-wrap: wrap;

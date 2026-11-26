@@ -789,6 +789,70 @@ fn an_image_sequence_clip_is_checked_as_a_picture_to_encode() {
     assert!(printed(&run).contains("Pre-build check passed"));
 }
 
+#[test]
+fn a_dpx_timeline_ignores_appledouble_sidecars_and_names_unreadable_frames() {
+    let directory = TempDir::new().unwrap();
+    let config_home = TempDir::new().unwrap();
+    let first = directory.path().join("First DPX sequence");
+    let second = directory.path().join("Second DPX sequence");
+    let frames_per_clip = 3;
+    for sequence in [&first, &second] {
+        std::fs::create_dir(sequence).unwrap();
+        run(
+            ffmpeg()
+                .args(["-f", "lavfi", "-i", "testsrc=size=320x180:rate=24"])
+                .args(["-frames:v", "3", "-pix_fmt", "gbrp10le"])
+                .arg(sequence.join("frame_%03d.dpx")),
+            "ffmpeg must be installed to write a DPX sequence",
+        );
+    }
+    let sidecar = second.join("._frame_001.dpx");
+    std::fs::write(&sidecar, b"\x00\x05\x16\x07\x00\x02\x00\x00").unwrap();
+    let clip = |picture, start| Clip {
+        sound: ClipSound::None,
+        ..clip(picture, start, 0, frames_per_clip)
+    };
+    let timeline = write_timeline(
+        directory.path(),
+        vec![clip(first, 0), clip(second.clone(), frames_per_clip)],
+        Vec::new(),
+    );
+    let output = directory.path().join("dcp");
+
+    let length = postkit::timeline::probe_source(&second).unwrap();
+    assert_eq!(
+        length,
+        postkit::timeline::SourceLength::Counted {
+            frames: frames_per_clip,
+            rate: None,
+        }
+    );
+    create(config_home.path(), &timeline, &output)
+        .assert()
+        .success();
+    let package = output.join(TITLE);
+    assert_eq!(reel_picture_durations(&package), vec![2 * frames_per_clip]);
+    let verified = dcpwizard_core::verify::verify_dcp(&package);
+    assert!(verified.valid, "verify errors: {:?}", verified.errors);
+    assert!(sidecar.is_file());
+
+    let damaged_frame = second.join("frame_001.dpx");
+    std::fs::write(&damaged_frame, b"incomplete DPX").unwrap();
+    let failed = create(config_home.path(), &timeline, &directory.path().join("bad"))
+        .output()
+        .unwrap();
+    let message = printed(&failed);
+    assert!(!failed.status.success(), "{message}");
+    assert!(
+        message.contains(&format!(
+            "clip 2 ({}): cannot read the picture size of {}",
+            second.display(),
+            damaged_frame.display()
+        )),
+        "{message}"
+    );
+}
+
 const CODESTREAM_SIZE: &str = "1998x1080";
 
 // a second of blue stills compressed by the encode command, as a mastered J2K sequence arrives

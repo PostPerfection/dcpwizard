@@ -886,7 +886,28 @@ fn timeline_shape_of(
     Ok(Some(shape))
 }
 
-fn job_config_of(id: u64, request: SubmitRequest) -> Result<JobConfig, String> {
+fn clear_image_sequence_embedded_sound(timeline: &mut postkit::timeline::Timeline) {
+    use postkit::encode::{detect_input_type, InputType};
+    use postkit::timeline::ClipSound;
+
+    // saved projects can mark an image sequence clip as having embedded sound
+    for clip in &mut timeline.clips {
+        if clip.sound == ClipSound::Embedded
+            && clip.picture.is_dir()
+            && matches!(
+                detect_input_type(&clip.picture),
+                InputType::ImageSequence | InputType::J2kSequence
+            )
+        {
+            clip.sound = ClipSound::None;
+        }
+    }
+}
+
+fn job_config_of(id: u64, mut request: SubmitRequest) -> Result<JobConfig, String> {
+    if let Some(timeline) = &mut request.timeline {
+        clear_image_sequence_embedded_sound(timeline);
+    }
     let timeline_shape = timeline_shape_of(&request)?;
     let SubmitRequest {
         video_path,
@@ -1896,13 +1917,14 @@ pub async fn check_timeline(timeline: postkit::timeline::Timeline) -> Result<(),
 #[tauri::command(async)]
 pub fn preview_load_timeline(
     app: AppHandle,
-    timeline: postkit::timeline::Timeline,
+    mut timeline: postkit::timeline::Timeline,
     request: SubmitRequest,
     play_state: guikit::preview::PlayState,
     state: tauri::State<'_, guikit::preview::PreviewPlayer>,
 ) -> Result<guikit::preview::TimelinePreview, String> {
     let preferences = dcpwizard_core::preferences::load_preferences()
         .map_err(|e| format!("Cannot load the preferences: {e}"))?;
+    clear_image_sequence_embedded_sound(&mut timeline);
     let (timeline, options) = timeline_preview_input(timeline, request, &preferences)?;
     guikit::preview::load_timeline_preview(&app, &state, timeline, options, play_state)
 }

@@ -64,12 +64,7 @@ fn container_fit(
     sequence: &Path,
     container: (u32, u32),
 ) -> Result<postkit::picture_processing::PictureProcessing, String> {
-    let (width, height) = first_image_raster(sequence).ok_or_else(|| {
-        format!(
-            "cannot read the size of the first image in {}",
-            sequence.display()
-        )
-    })?;
+    let (width, height) = postkit::encode::source_raster(sequence)?;
     let resolved = crate::source_picture::resolve_picture(
         &crate::source_picture::SourcePictureOptions::default(),
         sequence,
@@ -86,19 +81,10 @@ fn container_fit(
 }
 
 pub fn first_image_raster(sequence: &Path) -> Option<(u32, u32)> {
-    let mut images: Vec<PathBuf> = std::fs::read_dir(sequence)
-        .ok()?
+    sequence
+        .is_dir()
+        .then(|| postkit::encode::source_raster(sequence).ok())
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && postkit::encode::detect_input_type(path)
-                    == postkit::encode::InputType::ImageSequence
-        })
-        .collect();
-    images.sort();
-    let info = crate::probe::probe_video(images.first()?)?;
-    Some((info.width, info.height))
 }
 
 /// Compression ratio used when no target bandwidth is given: 10:1 is the
