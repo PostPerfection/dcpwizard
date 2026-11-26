@@ -53,7 +53,7 @@ import { initGpuSettings, fillGpuSettings, gpuSettingsFromForm, applyGpuSetting 
 import { initProjects, readProjectFile, PROJECT_FILE_SHORTCUTS, saveProjectBesidePackage, projectPathBeside, packagePathBeside, existsInScope, moveProjectFile, addRecentProject, getRecentProjects, renderRecentProjects, setWindowTitleStatus } from "../../extern/guikit/src/project.js";
 import { serializeForm, restoreFormState, audioMapCells, audioMapSpecFrom, OUTPUT_FIELDS, TEXT_FIELDS, PROJECT_FILE_VERSION, PROJECT_FILE_MIGRATIONS } from "./project-form.js";
 import { isChannelSet, channelSetPreviewPath, channelSetStatus, mergeChannelSets, soundSource } from "./channel-set.js";
-import { initLoudnessPanel, optionalNumber } from "../../extern/guikit/src/loudness-panel.js";
+import { initLoudnessPanel, initLoudnessToolPanel, optionalNumber } from "../../extern/guikit/src/loudness-panel.js";
 import { initPreviewResize } from "../../extern/guikit/src/preview-resize.js";
 import { initProjectPropertiesLayout, syncPreviewDock } from "../../extern/guikit/src/properties-layout.js";
 import { initVerifyReport, setVerifyReportSavable, verifyReportOutputArgs } from "./verify-report.js";
@@ -3411,16 +3411,8 @@ document.getElementById("loud-browse")?.addEventListener("click", async () => {
   if (file) { document.getElementById("loud-input").value = file; document.getElementById("loud-measure").disabled = false; }
 });
 
-document.getElementById("loud-measure")?.addEventListener("click", async () => {
-  const input = document.getElementById("loud-input").value;
-  const resultsBox = document.getElementById("loud-results");
-  resultsBox.classList.add("visible");
-  resultsBox.textContent = "Measuring loudness...";
-  const cmd = Command.sidecar("dcpwizard", ["loudness", input]);
-  const result = await cmd.execute();
-  resultsBox.textContent = result.code === 0
-    ? "✓ Loudness measured\n\n" + result.stdout
-    : "✗ Failed\n\n" + (result.stderr || result.stdout);
+initLoudnessToolPanel({
+  measureSoundFile: (sound, onPercent) => invoke("measure_sound_file", { sound, progress: new Channel(onPercent) }),
 });
 
 // === Tools: Copy DCP ===

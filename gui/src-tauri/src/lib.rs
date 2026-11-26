@@ -83,6 +83,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             guikit::source_length::picture_source_length,
             guikit::source_raster::picture_source_raster,
+            guikit::sound_file_levels::measure_sound_file,
             guikit::preview::preview_load,
             pipeline::preview_load_timeline,
             guikit::preview::preview_cancel_timeline_render,
