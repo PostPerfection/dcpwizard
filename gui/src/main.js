@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -2043,7 +2043,7 @@ function jobRequest({ title, output, encrypt, keyOut }) {
 }
 
 initLoudnessPanel({
-  measureSound: () => invoke("measure_sound", { request: currentJobRequest() }),
+  measureSound: (onProgress) => invoke("measure_sound", { request: currentJobRequest(), progress: new Channel(onProgress) }),
   soundMissing: () => {
     const timeline = activeTimeline();
     if (timeline.clips.length === 0 && !firstSoundAsset(timeline, assetById)) return "Import a video or sound asset first";

@@ -1,3 +1,4 @@
+use postkit::loudness::SoundMeasurementProgress;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1527,6 +1528,7 @@ const SOUND_MEASUREMENT_DIRECTORY: &str = "sound-measurement";
 pub async fn measure_sound(
     app: AppHandle,
     request: SubmitRequest,
+    progress: tauri::ipc::Channel<SoundMeasurementProgress>,
 ) -> Result<postkit::loudness::SoundMeasurement, String> {
     let scratch_parent = app
         .path()
@@ -1535,7 +1537,11 @@ pub async fn measure_sound(
         .join(SOUND_MEASUREMENT_DIRECTORY);
     tokio::task::spawn_blocking(move || {
         let job = job_config_of(0, request)?;
-        measure_job_sound(&job, &scratch_parent)
+        measure_job_sound(&job, &scratch_parent, |shown| {
+            if let Err(error) = progress.send(shown) {
+                eprintln!("[measure] {error}");
+            }
+        })
     })
     .await
     .map_err(|e| format!("the sound measurement stopped: {e}"))?
@@ -1545,6 +1551,7 @@ pub async fn measure_sound(
 fn measure_job_sound(
     job: &JobConfig,
     scratch_parent: &Path,
+    on_progress: impl Fn(SoundMeasurementProgress),
 ) -> Result<postkit::loudness::SoundMeasurement, String> {
     std::fs::create_dir_all(scratch_parent).map_err(|e| e.to_string())?;
     let scratch = tempfile::tempdir_in(scratch_parent).map_err(|e| e.to_string())?;
@@ -1552,6 +1559,9 @@ fn measure_job_sound(
     let log = |line: &str| {
         if let Some(step) = line.strip_prefix("[AUDIO] ") {
             steps.borrow_mut().push(step.to_string());
+            on_progress(SoundMeasurementProgress::Step {
+                text: step.to_string(),
+            });
         }
     };
     let (fps_num, _) = frame_rate_of(&job.framerate);
@@ -1601,6 +1611,7 @@ fn measure_job_sound(
         &delivered_sound,
         steps.into_inner(),
         dcp_channel_labels(channels),
+        |percent| on_progress(SoundMeasurementProgress::Measuring { percent }),
     )
 }
 
@@ -5576,7 +5587,7 @@ mod tests {
         };
         let job = job_config_of(0, request).unwrap();
 
-        let measured = measure_job_sound(&job, &dir.path().join("scratch")).unwrap();
+        let measured = measure_job_sound(&job, &dir.path().join("scratch"), |_| {}).unwrap();
 
         // the second clip's tone sets the peak, the first alone would peak 14 dB lower
         let loud_peak_dbfs = 20.0 * LOUD.log10();
@@ -7471,7 +7482,7 @@ mod tests {
         };
         let job = job_config_of(0, request).unwrap();
         let scratch_parent = dir.path().join("scratch");
-        let measured = measure_job_sound(&job, &scratch_parent).unwrap();
+        let measured = measure_job_sound(&job, &scratch_parent, |_| {}).unwrap();
 
         assert!(
             (measured.before.integrated_lufs - expected.integrated_lufs).abs() < 0.05,
